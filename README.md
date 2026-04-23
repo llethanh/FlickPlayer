@@ -79,7 +79,10 @@ conda config --set channel_priority strict
 ```
 
 **`ImportError: No module named OpenImageIO`:**
-OpenImageIO is not available on PyPI. It MUST be installed via conda from conda-forge.
+OpenImageIO is not available on PyPI for Windows. It MUST be installed via conda from conda-forge.
+
+**`ImportError: No module named PyOpenColorIO`:**
+OpenColorIO (on Windows) is not available on conda-forge. We install it via pip (`opencolorio` PyPI package from ASWF). This is wired into `environment.yml` automatically.
 
 **Windows: `conda` not found in PowerShell:**
 From the Miniforge Prompt, run `conda init powershell` and restart PowerShell.
