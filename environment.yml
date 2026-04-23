@@ -4,6 +4,7 @@ channels:
 dependencies:
   - python=3.11
   - openimageio          # conda-forge only — not reliably on PyPI for Windows
+  - py-openimageio       # Python bindings (shipped separately on conda-forge)
   - pyside6
   - numpy
   - pip
