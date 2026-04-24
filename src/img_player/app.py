@@ -83,6 +83,10 @@ class ImgPlayerApp:
         self._scan_generation = 0
         self._scan_runner: _ScanRunner | None = None
 
+        # Last frame we actually pushed to the viewport — used to avoid
+        # redundant uploads when play falls back to the same nearest frame.
+        self._last_displayed: int | None = None
+
         self._wire()
 
         # Push the initial color params so the GL shader is ready before any
@@ -139,18 +143,46 @@ class ImgPlayerApp:
         arr = self._cache.get(frame)
         if arr is not None:
             self._display_array(arr)
+            self._last_displayed = frame
             self._wait_timer.stop()
-        elif not self._controller.state.is_playing:
-            # Parked on this frame but cache hasn't decoded it yet —
-            # poll until it lands. During playback we drop instead.
+            return
+
+        # Cache miss. What we do depends on whether we're playing.
+        if self._controller.state.is_playing:
+            # Don't freeze the view — show the nearest already-decoded
+            # frame behind the playhead so the user sees continuous
+            # (slower but moving) progress while the prefetcher catches up.
+            fallback = self._nearest_cached_fallback(frame)
+            if fallback is not None and fallback != self._last_displayed:
+                fallback_arr = self._cache.get(fallback)
+                if fallback_arr is not None:
+                    self._display_array(fallback_arr)
+                    self._last_displayed = fallback
+        else:
+            # Parked on this frame (user scrubbed / stopped) — poll until
+            # it lands so the display snaps to the exact requested frame.
             if not self._wait_timer.isActive():
                 self._wait_timer.start()
+
+    def _nearest_cached_fallback(self, frame: int) -> int | None:
+        """Pick the closest cached frame behind (for forward play) or ahead
+        (for reverse play) of `frame`. Returns None if the cache is empty."""
+        cached = self._cache.cached_frames()
+        if not cached:
+            return None
+        direction = self._controller.state.direction
+        if direction >= 0:
+            candidates = [f for f in cached if f <= frame]
+            return max(candidates) if candidates else min(cached)
+        candidates = [f for f in cached if f >= frame]
+        return min(candidates) if candidates else max(cached)
 
     def _try_display_current_frame(self) -> None:
         frame = self._controller.state.current_frame
         arr = self._cache.get(frame)
         if arr is not None:
             self._display_array(arr)
+            self._last_displayed = frame
             self._wait_timer.stop()
             # Populate channel panel lazily from the first decoded frame
             # when probe was skipped at scan time.

@@ -136,21 +136,16 @@ class PlayerController(QObject):  # type: ignore[misc]  # mypy: QObject is Any
             return
         next_frame, next_dir, should_stop = self._advance()
 
-        # Wait-for-cache playback: if the next frame hasn't been decoded yet,
-        # don't advance. Keep asking for it and let the next tick try again.
-        # This makes playback match whatever rate the cache can deliver, so
-        # the user sees steady progress instead of a frozen image with
-        # silently-dropped frames.
-        if next_frame != self._state.current_frame and not self._cache.contains(next_frame):
-            self._cache.request(next_frame, priority=0)
-            self._prefetch_from(self._state.current_frame, self._state.direction)
-            self._update(dropped_frames=self._state.dropped_frames + 1)
-            return
-
+        # The playhead always moves forward at the configured FPS —
+        # otherwise the user sees no sign of playback while the cache
+        # catches up. On a cache miss we count a dropped frame and let
+        # the UI pick the nearest available frame to display.
         self._update(current_frame=next_frame, direction=next_dir)
         self._cache.set_current_frame(next_frame)
         self._prefetch_from(next_frame, next_dir)
-        self._try_render(count_misses=False)
+        if not self._cache.contains(next_frame):
+            self._update(dropped_frames=self._state.dropped_frames + 1)
+        self.frame_changed.emit(next_frame)
         if should_stop:
             self.pause()
 
