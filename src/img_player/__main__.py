@@ -24,32 +24,32 @@ def main(argv: list[str] | None = None) -> int:
         version=f"img_player {__version__}",
     )
     parser.add_argument(
+        "--scan",
+        action="store_true",
+        help="Print a CLI summary of the sequence at PATH instead of launching the GUI.",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="With --scan, list every sequence in the directory, not just the largest.",
+    )
+    parser.add_argument(
         "--gui",
         action="store_true",
-        help="Launch the Qt GUI.",
+        help="Force the Qt GUI (implied when a PATH is given and --scan is not).",
     )
     parser.add_argument(
         "path",
         type=Path,
         nargs="?",
         default=None,
-        help="Optional file or directory to open (launches the GUI automatically).",
+        help="File or directory. With no flag, launches the GUI on that sequence.",
     )
-
-    subparsers = parser.add_subparsers(dest="command")
-    scan_parser = subparsers.add_parser(
-        "scan", help="Detect sequences at PATH and print a summary."
-    )
-    scan_parser.add_argument("path", type=Path, help="File or directory to scan.")
-    scan_parser.add_argument(
-        "--all",
-        action="store_true",
-        help="List every sequence in the directory, not just the largest.",
-    )
-
     args = parser.parse_args(argv)
 
-    if args.command == "scan":
+    if args.scan:
+        if args.path is None:
+            parser.error("--scan requires a PATH.")
         return _cmd_scan(args.path, list_all=args.all)
 
     if args.gui or args.path is not None:
@@ -59,7 +59,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(
         f"img_player {__version__} — pass --gui to launch the window, "
-        "a PATH to open one, or `scan PATH` for a CLI summary."
+        "a PATH to open one, or --scan PATH for a CLI summary."
     )
     return 0
 
