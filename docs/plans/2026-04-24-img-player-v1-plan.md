@@ -253,4 +253,5 @@ Script `scripts/headless_player.py` qui charge une séquence, lance play, imprim
 
 - [x] Spec écrit et committé (commit c2e7994)
 - [x] Plan d'implémentation écrit (ce doc)
-- [ ] **Prochaine action : Jalon 1, tâche 1.1 (pyproject.toml)**
+- [x] **Jalon 1 clôturé** : PR #1 mergée, tag `v0.1.0-setup` posé. Env conda validé (OIIO 2.5.18, OCIO 2.5.1, PySide6 6.11, Python 3.11.15). `pytest` 2/2.
+- [ ] **Prochaine action : Jalon 2 — sequence detection + image I/O**
