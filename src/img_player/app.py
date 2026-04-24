@@ -78,6 +78,16 @@ class ImgPlayerApp:
         self._cache_bar_timer.setInterval(200)
         self._cache_bar_timer.timeout.connect(self._refresh_cache_bar)
 
+        # Debounce timeline scrubs: rapid slider dragging would otherwise
+        # clear + re-enqueue dozens of prefetch requests per second. We
+        # coalesce into one real seek every ~20 ms. The display is updated
+        # immediately (from cache only, no prefetch thrash).
+        self._pending_seek: int | None = None
+        self._scrub_debounce = QTimer(self._window)
+        self._scrub_debounce.setSingleShot(True)
+        self._scrub_debounce.setInterval(20)
+        self._scrub_debounce.timeout.connect(self._apply_pending_seek)
+
         # Track active scan requests so a newer drag&drop supersedes an older
         # one still running in a background thread.
         self._scan_generation = 0
@@ -113,6 +123,7 @@ class ImgPlayerApp:
         self._status_timer.stop()
         self._wait_timer.stop()
         self._cache_bar_timer.stop()
+        self._scrub_debounce.stop()
         self._controller.shutdown()
         self._cache.shutdown()
 
@@ -128,7 +139,7 @@ class ImgPlayerApp:
         self._window.stop_clicked.connect(self._controller.stop)
         self._window.step_clicked.connect(self._controller.step)
         self._window.jump_to_ends.connect(self._on_jump_to_ends)
-        self._window.frame_requested.connect(self._controller.seek)
+        self._window.frame_requested.connect(self._on_scrub_requested)
         self._window.open_requested.connect(self._open_path)
         self._window.exposure_step.connect(self._window.color_panel.bump_exposure)
         self._window.fps_changed.connect(self._controller.set_fps)
@@ -204,6 +215,38 @@ class ImgPlayerApp:
             self._controller.pause()
         else:
             self._controller.play()
+
+    def _on_scrub_requested(self, frame: int) -> None:
+        """Timeline scrub: update the display immediately from the cache, but
+        defer the full seek (which re-does prefetch planning) to coalesce
+        rapid slider events."""
+        # Immediate visual feedback: show whatever's closest in cache.
+        self._show_best_available(frame)
+        self._window.timeline.set_current_frame(frame)
+        # Defer the expensive part.
+        self._pending_seek = frame
+        self._scrub_debounce.start()
+
+    def _apply_pending_seek(self) -> None:
+        if self._pending_seek is None:
+            return
+        frame = self._pending_seek
+        self._pending_seek = None
+        self._controller.seek(frame)
+
+    def _show_best_available(self, frame: int) -> None:
+        arr = self._cache.get(frame)
+        if arr is None:
+            fallback = self._nearest_cached_fallback(frame)
+            if fallback is None:
+                return
+            arr = self._cache.get(fallback)
+            if arr is None:
+                return
+            self._last_displayed = fallback
+        else:
+            self._last_displayed = frame
+        self._display_array(arr)
 
     def _on_jump_to_ends(self, direction: int) -> None:
         seq = self._controller.sequence

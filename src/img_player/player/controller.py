@@ -27,8 +27,8 @@ class PlayerController(QObject):  # type: ignore[misc]  # mypy: QObject is Any
     ``frame_changed`` and pull the array out of the cache themselves.
     """
 
-    PREFETCH_AHEAD = 150
-    PREFETCH_BEHIND = 20
+    PREFETCH_AHEAD = 64
+    PREFETCH_BEHIND = 8
 
     frame_changed = Signal(int)
     state_changed = Signal(object)  # emits PlaybackState
