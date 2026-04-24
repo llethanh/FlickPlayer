@@ -254,4 +254,5 @@ Script `scripts/headless_player.py` qui charge une séquence, lance play, imprim
 - [x] Spec écrit et committé (commit c2e7994)
 - [x] Plan d'implémentation écrit (ce doc)
 - [x] **Jalon 1 clôturé** : PR #1 mergée, tag `v0.1.0-setup` posé. Env conda validé (OIIO 2.5.18, OCIO 2.5.1, PySide6 6.11, Python 3.11.15). `pytest` 2/2.
-- [ ] **Prochaine action : Jalon 2 — sequence detection + image I/O**
+- [x] **Jalon 2 : code prêt, PR en attente de review** — [PR #2](https://github.com/llethanh/img_player/pull/2). 28 tests verts, ruff + mypy strict OK. Branche `jalon-2-sequence-io` non mergée.
+- [ ] **Prochaine action (nouvelle session) :** review PR #2 → merge → tag `v0.2.0-sequence-io` → démarrer Jalon 3 (cache RAM + PlayerController).
