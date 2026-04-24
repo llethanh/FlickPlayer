@@ -58,6 +58,7 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
     mark_in_requested = Signal()  # set in-point at current frame (I)
     mark_out_requested = Signal()  # set out-point at current frame (O)
     clear_in_out_requested = Signal()  # reset in/out range (Shift+R)
+    loop_mode_requested = Signal(object)  # LoopMode
 
     def __init__(self, ocio_manager: OCIOManager, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -164,10 +165,32 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         quit_act.triggered.connect(self.close)
         file_menu.addAction(quit_act)
 
+        # --- View menu : timeline display mode ----------------------------
+        view_menu = menu_bar.addMenu("&View")
+        self._show_tc_act = QAction("Show &timecode", self, checkable=True)
+        self._show_tc_act.setShortcut(QKeySequence("Ctrl+T"))
+        self._show_tc_act.triggered.connect(self._on_toggle_timecode)
+        view_menu.addAction(self._show_tc_act)
+
+        # --- Help menu ----------------------------------------------------
         help_menu = menu_bar.addMenu("&Help")
+        shortcuts_act = QAction("&Keyboard shortcuts…", self)
+        shortcuts_act.setShortcut(QKeySequence("F1"))
+        shortcuts_act.triggered.connect(self._show_shortcuts)
+        help_menu.addAction(shortcuts_act)
+        help_menu.addSeparator()
         about_act = QAction("&About img_player", self)
         about_act.triggered.connect(self._show_about)
         help_menu.addAction(about_act)
+
+    def _on_toggle_timecode(self, checked: bool) -> None:
+        self._timeline.set_display_mode("tc" if checked else "frames")
+
+    def _show_shortcuts(self) -> None:
+        from img_player.ui.shortcuts_dialog import ShortcutsDialog
+
+        dlg = ShortcutsDialog(self)
+        dlg.exec()
 
     def install_recent_provider(
         self,
@@ -256,6 +279,10 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         self._transport.step_clicked.connect(self.step_clicked.emit)
         self._transport.jump_to_ends.connect(self.jump_to_ends.emit)
         self._transport.fps_changed.connect(self.fps_changed.emit)
+        self._transport.mark_in_clicked.connect(self.mark_in_requested.emit)
+        self._transport.mark_out_clicked.connect(self.mark_out_requested.emit)
+        self._transport.clear_in_out_clicked.connect(self.clear_in_out_requested.emit)
+        self._transport.loop_mode_requested.connect(self.loop_mode_requested.emit)
         self._timeline.frame_requested.connect(self.frame_requested.emit)
 
     # --------------------------------------------------------------- Menu handlers
