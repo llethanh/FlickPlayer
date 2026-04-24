@@ -167,6 +167,7 @@ class ImgPlayerApp:
         self._window.mark_in_requested.connect(self._on_mark_in)
         self._window.mark_out_requested.connect(self._on_mark_out)
         self._window.clear_in_out_requested.connect(lambda: self._controller.set_in_out(None, None))
+        self._window.loop_mode_requested.connect(self._controller.set_loop_mode)
 
         # Recent-files menu uses callbacks into preferences.
         self._window.install_recent_provider(
@@ -239,6 +240,9 @@ class ImgPlayerApp:
 
     def _on_state_changed(self, state: PlaybackState) -> None:
         self._window.transport.update_from_state(state)
+        # Timeline needs in/out markers and the fps for its timecode labels.
+        self._window.timeline.set_in_out(state.in_frame, state.out_frame)
+        self._window.timeline.set_fps(state.fps)
 
     def _on_play_toggled(self) -> None:
         if self._controller.state.is_playing:
@@ -432,8 +436,9 @@ def _apply_preferences_to_window(app: ImgPlayerApp) -> None:
     if prefs.view and prefs.display and prefs.view in set(app._ocio.list_views(prefs.display)):
         app._window.color_panel._view_combo.setCurrentText(prefs.view)
 
-    # FPS
-    app._window.transport._fps_spin.setValue(prefs.fps)
+    # FPS — push through the controller so transport + timeline pick up
+    # the value via state_changed (keeps the FPS combo / timeline TC in sync).
+    app._controller.set_fps(prefs.fps)
 
 
 def run_gui(

@@ -1,151 +1,315 @@
-"""Timeline widget: scrub slider + cache-fill indicator + frame number display."""
+"""Nuke-inspired custom-painted timeline with tick marks, in/out markers, cache bar."""
 
 from __future__ import annotations
 
-from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPaintEvent
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget
+from typing import Literal
+
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetrics,
+    QMouseEvent,
+    QPainter,
+    QPaintEvent,
+    QPen,
+    QPolygonF,
+)
+from PySide6.QtWidgets import QWidget
+
+DisplayMode = Literal["frames", "tc"]
 
 
-class CacheBar(QWidget):  # type: ignore[misc]
-    """Thin strip that paints which frames are currently in the RAM cache."""
-
-    BG_COLOR = QColor(32, 32, 32)
-    CACHED_COLOR = QColor(56, 180, 100)
-    PLAYHEAD_COLOR = QColor(240, 240, 240)
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setFixedHeight(6)
-        self._first = 0
-        self._last = 0
-        self._cached: frozenset[int] = frozenset()
-        self._current = 0
-
-    def set_range(self, first: int, last: int) -> None:
-        self._first = first
-        self._last = max(first, last)
-        self.update()
-
-    def set_cached_frames(self, frames: frozenset[int]) -> None:
-        if frames != self._cached:
-            self._cached = frames
-            self.update()
-
-    def set_current_frame(self, frame: int) -> None:
-        if frame != self._current:
-            self._current = frame
-            self.update()
-
-    def paintEvent(self, event: QPaintEvent) -> None:
-        painter = QPainter(self)
-        painter.fillRect(self.rect(), self.BG_COLOR)
-
-        total = self._last - self._first + 1
-        if total <= 0:
-            return
-
-        w = self.width()
-        h = self.height()
-        pixel_per_frame = w / total
-        in_range = [f for f in self._cached if self._first <= f <= self._last]
-        if in_range:
-            painter.setBrush(self.CACHED_COLOR)
-            painter.setPen(Qt.PenStyle.NoPen)
-            # Group consecutive frames into runs so we draw O(runs) rectangles
-            # instead of one per frame — much faster for long sequences.
-            in_range.sort()
-            run_start = in_range[0]
-            prev = run_start
-            for f in in_range[1:]:
-                if f == prev + 1:
-                    prev = f
-                    continue
-                self._draw_run(painter, run_start, prev, pixel_per_frame, h)
-                run_start = f
-                prev = f
-            self._draw_run(painter, run_start, prev, pixel_per_frame, h)
-
-        # Playhead marker
-        if self._first <= self._current <= self._last:
-            x = (self._current - self._first) * pixel_per_frame
-            painter.setPen(self.PLAYHEAD_COLOR)
-            painter.drawLine(int(x), 0, int(x), h)
-
-    def _draw_run(self, painter: QPainter, start: int, end: int, ppf: float, h: int) -> None:
-        x1 = (start - self._first) * ppf
-        x2 = (end + 1 - self._first) * ppf
-        painter.drawRect(QRectF(x1, 0, max(1.0, x2 - x1), h))
+def frame_to_timecode(frame: int, fps: float) -> str:
+    """Non-drop-frame timecode ``HH:MM:SS:FF`` for a frame index."""
+    fps_int = max(1, round(fps))
+    frame = max(0, frame)
+    total_seconds = frame // fps_int
+    ff = frame % fps_int
+    hours = total_seconds // 3600
+    minutes = (total_seconds // 60) % 60
+    seconds = total_seconds % 60
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}:{ff:02d}"
 
 
 class Timeline(QWidget):  # type: ignore[misc]
-    """Slider bound to the current frame, with a cache bar and frame-range labels."""
+    """Custom timeline: ticks + labels + range + in/out + playhead triangle + cache bar.
 
-    frame_requested = Signal(int)  # user scrubbed the slider
+    Scrubbing emits ``frame_requested`` continuously during the drag.
+    """
+
+    frame_requested = Signal(int)
+
+    # ---- Palette -----------------------------------------------------
+    COLOR_BG = QColor(24, 24, 24)
+    COLOR_TICK_MINOR = QColor(60, 60, 60)
+    COLOR_TICK_MAJOR = QColor(120, 120, 120)
+    COLOR_LABEL = QColor(180, 180, 180)
+    COLOR_RANGE = QColor(90, 180, 110)
+    COLOR_IN_OUT = QColor(220, 60, 60)
+    COLOR_PLAYHEAD = QColor(245, 170, 40)
+    COLOR_PLAYHEAD_OUTLINE = QColor(20, 20, 20)
+    COLOR_CACHE = QColor(56, 180, 100)
+    COLOR_CACHE_BG = QColor(40, 40, 40)
+
+    # ---- Geometry ----------------------------------------------------
+    MARGIN_X = 8
+    LABEL_H = 14
+    TICK_TOP = 14
+    TICK_MINOR_H = 6
+    TICK_MAJOR_H = 10
+    RANGE_Y = 30
+    RANGE_H = 3
+    CACHE_TOP = 42
+    CACHE_H = 6
+    TOTAL_H = CACHE_TOP + CACHE_H + 2
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setMinimumHeight(self.TOTAL_H)
+        self.setFixedHeight(self.TOTAL_H)
+        self.setMouseTracking(True)
+
         self._first = 0
         self._last = 0
+        self._current = 0
+        self._in_frame: int | None = None
+        self._out_frame: int | None = None
+        self._fps = 24.0
+        self._display_mode: DisplayMode = "frames"
+        self._cached_frames: frozenset[int] = frozenset()
+        self._scrubbing = False
 
-        self._slider = QSlider(Qt.Orientation.Horizontal)
-        self._slider.setMinimum(0)
-        self._slider.setMaximum(0)
-        self._slider.setTracking(True)
-        self._slider.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._slider.valueChanged.connect(self._on_slider_value_changed)
-
-        self._cache_bar = CacheBar()
-
-        self._frame_label = QLabel("—")
-        self._frame_label.setMinimumWidth(120)
-        self._frame_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        # Slider + cache bar stacked vertically (inside a small column),
-        # frame label to the right of the column.
-        stack = QVBoxLayout()
-        stack.setContentsMargins(0, 0, 0, 0)
-        stack.setSpacing(0)
-        stack.addWidget(self._slider)
-        stack.addWidget(self._cache_bar)
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 4, 8, 4)
-        layout.setSpacing(8)
-        layout.addLayout(stack, stretch=1)
-        layout.addWidget(self._frame_label)
+        # Font for tick labels.
+        self._label_font = QFont()
+        self._label_font.setPointSize(8)
 
     # ------------------------------------------------------------------ Public API
 
     def set_range(self, first: int, last: int) -> None:
         self._first = first
         self._last = max(first, last)
-        self._slider.blockSignals(True)
-        self._slider.setMinimum(first)
-        self._slider.setMaximum(self._last)
-        self._slider.blockSignals(False)
-        self._cache_bar.set_range(first, self._last)
-        self._refresh_label(self._slider.value())
+        self.update()
 
     def set_current_frame(self, frame: int) -> None:
-        self._slider.blockSignals(True)
-        self._slider.setValue(frame)
-        self._slider.blockSignals(False)
-        self._cache_bar.set_current_frame(frame)
-        self._refresh_label(frame)
+        if frame == self._current:
+            return
+        self._current = frame
+        self.update()
+
+    def set_in_out(self, in_frame: int | None, out_frame: int | None) -> None:
+        self._in_frame = in_frame
+        self._out_frame = out_frame
+        self.update()
+
+    def set_fps(self, fps: float) -> None:
+        if abs(fps - self._fps) < 1e-6:
+            return
+        self._fps = max(0.1, fps)
+        if self._display_mode == "tc":
+            self.update()
+
+    def set_display_mode(self, mode: DisplayMode) -> None:
+        if mode == self._display_mode:
+            return
+        self._display_mode = mode
+        self.update()
 
     def set_cached_frames(self, frames: frozenset[int]) -> None:
-        self._cache_bar.set_cached_frames(frames)
+        if frames == self._cached_frames:
+            return
+        self._cached_frames = frames
+        self.update()
 
-    # ------------------------------------------------------------------ Internals
+    # ------------------------------------------------------------------ Painting
 
-    def _on_slider_value_changed(self, value: int) -> None:
-        self._refresh_label(value)
-        self._cache_bar.set_current_frame(value)
-        self.frame_requested.emit(value)
+    def paintEvent(self, event: QPaintEvent) -> None:
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.fillRect(self.rect(), self.COLOR_BG)
 
-    def _refresh_label(self, current: int) -> None:
         if self._last <= self._first:
-            self._frame_label.setText("—")
-        else:
-            self._frame_label.setText(f"{current} / {self._first}-{self._last}")
+            return
+
+        painter.setFont(self._label_font)
+        self._draw_ticks_and_labels(painter)
+        self._draw_range_bar(painter)
+        self._draw_in_out_markers(painter)
+        self._draw_playhead(painter)
+        self._draw_cache_bar(painter)
+
+    def _usable_width(self) -> int:
+        return max(1, int(self.width() - 2 * self.MARGIN_X))
+
+    def _total_frames(self) -> int:
+        return max(1, self._last - self._first + 1)
+
+    def _frame_to_x(self, frame: int) -> float:
+        ppf = self._usable_width() / self._total_frames()
+        return self.MARGIN_X + (frame - self._first + 0.5) * ppf
+
+    def _x_to_frame(self, x: float) -> int:
+        ppf = self._usable_width() / self._total_frames()
+        raw = round((x - self.MARGIN_X) / ppf - 0.5 + self._first)
+        return max(self._first, min(self._last, raw))
+
+    def _tick_spacings(self) -> tuple[int, int]:
+        """Pick (minor_step, major_step) based on the zoom level."""
+        ppf = self._usable_width() / self._total_frames()
+        if ppf >= 8:
+            return 1, 5
+        if ppf >= 2:
+            return 5, 25
+        if ppf >= 0.5:
+            return 25, 100
+        if ppf >= 0.1:
+            return 100, 500
+        return 500, 2500
+
+    def _format_label(self, frame: int) -> str:
+        if self._display_mode == "tc":
+            return frame_to_timecode(frame, self._fps)
+        return str(frame)
+
+    def _draw_ticks_and_labels(self, painter: QPainter) -> None:
+        minor, major = self._tick_spacings()
+        tick_baseline = self.TICK_TOP
+        metrics = QFontMetrics(self._label_font)
+        label_y = self.LABEL_H - 2
+
+        minor_pen = QPen(self.COLOR_TICK_MINOR, 1)
+        major_pen = QPen(self.COLOR_TICK_MAJOR, 1)
+
+        # Iterate only over the visible range.
+        last_label_x = -9999
+        for frame in range(self._first, self._last + 1):
+            is_major = (frame - self._first) % major == 0 or frame == self._last
+            is_minor = (frame - self._first) % minor == 0
+            if not (is_minor or is_major):
+                continue
+            x = round(self._frame_to_x(frame))
+            if is_major:
+                painter.setPen(major_pen)
+                painter.drawLine(x, tick_baseline, x, tick_baseline + self.TICK_MAJOR_H)
+                label = self._format_label(frame)
+                label_w = metrics.horizontalAdvance(label)
+                lx = x - label_w // 2
+                if lx - last_label_x > label_w + 8:  # don't overlap
+                    painter.setPen(self.COLOR_LABEL)
+                    painter.drawText(lx, label_y, label)
+                    last_label_x = lx
+            else:
+                painter.setPen(minor_pen)
+                painter.drawLine(x, tick_baseline, x, tick_baseline + self.TICK_MINOR_H)
+
+    def _draw_range_bar(self, painter: QPainter) -> None:
+        in_x = self._frame_to_x(self._in_frame if self._in_frame is not None else self._first)
+        out_x = self._frame_to_x(self._out_frame if self._out_frame is not None else self._last)
+        if out_x <= in_x:
+            return
+        rect = QRectF(in_x, self.RANGE_Y, out_x - in_x, self.RANGE_H)
+        painter.fillRect(rect, self.COLOR_RANGE)
+
+    def _draw_in_out_markers(self, painter: QPainter) -> None:
+        painter.setPen(QPen(self.COLOR_IN_OUT, 2))
+        painter.setBrush(self.COLOR_IN_OUT)
+        y_top = self.TICK_TOP
+        y_bot = self.RANGE_Y + self.RANGE_H + 4
+
+        if self._in_frame is not None:
+            x = self._frame_to_x(self._in_frame)
+            painter.drawLine(QPointF(x, y_top), QPointF(x, y_bot))
+            # Small flag facing right
+            flag = QPolygonF(
+                [
+                    QPointF(x, y_top),
+                    QPointF(x + 6, y_top + 3),
+                    QPointF(x, y_top + 6),
+                ]
+            )
+            painter.drawPolygon(flag)
+        if self._out_frame is not None:
+            x = self._frame_to_x(self._out_frame)
+            painter.drawLine(QPointF(x, y_top), QPointF(x, y_bot))
+            flag = QPolygonF(
+                [
+                    QPointF(x, y_top),
+                    QPointF(x - 6, y_top + 3),
+                    QPointF(x, y_top + 6),
+                ]
+            )
+            painter.drawPolygon(flag)
+
+    def _draw_playhead(self, painter: QPainter) -> None:
+        x = self._frame_to_x(self._current)
+        # Thin vertical line through the tick area.
+        painter.setPen(QPen(self.COLOR_PLAYHEAD, 1))
+        painter.drawLine(QPointF(x, self.TICK_TOP), QPointF(x, self.RANGE_Y + self.RANGE_H))
+        # Orange triangle perched on top of the ticks, pointing down.
+        triangle = QPolygonF(
+            [
+                QPointF(x - 5, self.LABEL_H - 1),
+                QPointF(x + 5, self.LABEL_H - 1),
+                QPointF(x, self.TICK_TOP + 6),
+            ]
+        )
+        painter.setPen(QPen(self.COLOR_PLAYHEAD_OUTLINE, 1))
+        painter.setBrush(self.COLOR_PLAYHEAD)
+        painter.drawPolygon(triangle)
+
+    def _draw_cache_bar(self, painter: QPainter) -> None:
+        bar_rect = QRectF(self.MARGIN_X, self.CACHE_TOP, self._usable_width(), self.CACHE_H)
+        painter.fillRect(bar_rect, self.COLOR_CACHE_BG)
+        if not self._cached_frames:
+            return
+        painter.setBrush(self.COLOR_CACHE)
+        painter.setPen(Qt.PenStyle.NoPen)
+
+        in_range = sorted(f for f in self._cached_frames if self._first <= f <= self._last)
+        if not in_range:
+            return
+        # Collapse consecutive frame numbers into rectangles — O(runs) draw calls.
+        run_start = in_range[0]
+        prev = run_start
+        for f in in_range[1:]:
+            if f == prev + 1:
+                prev = f
+                continue
+            self._draw_cache_run(painter, run_start, prev)
+            run_start = f
+            prev = f
+        self._draw_cache_run(painter, run_start, prev)
+
+    def _draw_cache_run(self, painter: QPainter, start: int, end: int) -> None:
+        x1 = self._frame_to_x(start) - self._half_frame_width()
+        x2 = self._frame_to_x(end) + self._half_frame_width()
+        painter.drawRect(QRectF(x1, self.CACHE_TOP, max(1.0, x2 - x1), self.CACHE_H))
+
+    def _half_frame_width(self) -> float:
+        return 0.5 * self._usable_width() / self._total_frames()
+
+    # ------------------------------------------------------------------ Mouse
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        self._scrubbing = True
+        self._emit_for_x(event.position().x())
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if self._scrubbing:
+            self._emit_for_x(event.position().x())
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        del event
+        self._scrubbing = False
+
+    def _emit_for_x(self, x: float) -> None:
+        if self._last <= self._first:
+            return
+        frame = self._x_to_frame(x)
+        if frame != self._current:
+            self._current = frame
+            self.update()
+        self.frame_requested.emit(frame)
