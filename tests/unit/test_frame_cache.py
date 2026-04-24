@@ -10,8 +10,9 @@ import pytest
 from img_player.cache.frame_cache import FrameCache
 from img_player.sequence.scanner import scan
 
-# One 16x16 RGBA float32 frame is 16*16*4*4 = 4096 bytes.
-_FRAME_BYTES = 16 * 16 * 4 * 4
+# One 16x16 RGBA half-float frame is 16*16*4*2 = 2048 bytes (the reader
+# defaults to float16 for memory efficiency).
+_FRAME_BYTES = 16 * 16 * 4 * 2
 
 
 @pytest.fixture
@@ -42,7 +43,7 @@ def test_requested_frame_eventually_cached(cache_roomy: FrameCache, sequence_dir
     assert cache_roomy.wait_idle(timeout=3.0)
     arr = cache_roomy.get(seq.first_frame)
     assert arr is not None
-    assert arr.dtype == np.float32
+    assert arr.dtype in (np.float16, np.float32)
 
 
 def test_request_range_populates_cache(cache_roomy: FrameCache, sequence_dir: Path) -> None:

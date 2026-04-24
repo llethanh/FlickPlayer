@@ -64,6 +64,9 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
         self._lut_3d_ids: dict[str, int] = {}
         self._image_size: tuple[int, int] = (0, 0)
         self._image_channels = 4
+        # Tracks the most recent texture allocation so same-sized frames
+        # can use the much cheaper glTexSubImage2D upload.
+        self._tex_alloc: tuple[int, int, int] = (0, 0, 0)  # (w, h, channels)
 
     def sizeHint(self) -> QSize:
         return QSize(960, 540)
@@ -74,7 +77,7 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
         """Upload a new frame. Non-blocking in the Qt main thread."""
         if pixels.ndim != 3 or pixels.shape[2] not in (3, 4):
             raise ValueError(f"Expected HxWx3 or HxWx4, got shape {pixels.shape}")
-        if pixels.dtype != np.float32:
+        if pixels.dtype not in (np.float16, np.float32):
             pixels = pixels.astype(np.float32, copy=False)
         self._pending_frame = np.ascontiguousarray(pixels)
         self.update()
@@ -191,21 +194,44 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
         self._image_size = (width, height)
         self._image_channels = channels
         gl_format = GL.GL_RGBA if channels == 4 else GL.GL_RGB
-        internal = GL.GL_RGBA32F if channels == 4 else GL.GL_RGB32F
+        gl_type = GL.GL_HALF_FLOAT if pixels.dtype == np.float16 else GL.GL_FLOAT
+        # Always use 16F internal storage — plenty of precision for display,
+        # halves VRAM compared to RGBA32F.
+        internal = GL.GL_RGBA16F if channels == 4 else GL.GL_RGB16F
 
         GL.glPixelStorei(GL.GL_UNPACK_ALIGNMENT, 1)
         GL.glBindTexture(GL.GL_TEXTURE_2D, self._image_tex)
-        GL.glTexImage2D(
-            GL.GL_TEXTURE_2D,
-            0,
-            internal,
-            width,
-            height,
-            0,
-            gl_format,
-            GL.GL_FLOAT,
-            pixels,
-        )
+
+        if (width, height, channels) != self._tex_alloc:
+            # Texture storage must be (re)allocated for a new size / format.
+            # glTexImage2D is slow because it allocates on the GPU.
+            GL.glTexImage2D(
+                GL.GL_TEXTURE_2D,
+                0,
+                internal,
+                width,
+                height,
+                0,
+                gl_format,
+                gl_type,
+                pixels,
+            )
+            self._tex_alloc = (width, height, channels)
+        else:
+            # Same-sized frame: reuse the texture storage and only push the
+            # pixels. This is the fast path during playback — no GPU-side
+            # reallocation, just a DMA transfer into existing memory.
+            GL.glTexSubImage2D(
+                GL.GL_TEXTURE_2D,
+                0,
+                0,
+                0,
+                width,
+                height,
+                gl_format,
+                gl_type,
+                pixels,
+            )
 
     # ------------------------------------------------------------------ Shader / LUT setup
 

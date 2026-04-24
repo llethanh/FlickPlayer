@@ -24,34 +24,56 @@ def main(argv: list[str] | None = None) -> int:
         version=f"img_player {__version__}",
     )
     parser.add_argument(
-        "--gui",
+        "--scan",
         action="store_true",
-        help="Launch the Qt GUI (smoke test at this stage).",
+        help="Print a CLI summary of the sequence at PATH instead of launching the GUI.",
     )
-
-    subparsers = parser.add_subparsers(dest="command")
-    scan_parser = subparsers.add_parser(
-        "scan", help="Detect sequences at PATH and print a summary."
-    )
-    scan_parser.add_argument("path", type=Path, help="File or directory to scan.")
-    scan_parser.add_argument(
+    parser.add_argument(
         "--all",
         action="store_true",
-        help="List every sequence in the directory, not just the largest.",
+        help="With --scan, list every sequence in the directory, not just the largest.",
     )
-
+    parser.add_argument(
+        "--gui",
+        action="store_true",
+        help="Force the Qt GUI (implied when a PATH is given and --scan is not).",
+    )
+    parser.add_argument(
+        "--cache-gb",
+        type=float,
+        default=None,
+        help="RAM cache budget in GiB (default: 8). Bigger = more frames kept.",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help="Number of decode workers (default: 6). Bump for heavy-disk loads.",
+    )
+    parser.add_argument(
+        "path",
+        type=Path,
+        nargs="?",
+        default=None,
+        help="File or directory. With no flag, launches the GUI on that sequence.",
+    )
     args = parser.parse_args(argv)
 
-    if args.command == "scan":
+    if args.scan:
+        if args.path is None:
+            parser.error("--scan requires a PATH.")
         return _cmd_scan(args.path, list_all=args.all)
 
-    if args.gui:
-        from img_player.app import run_gui
+    # Default: launch the GUI (empty if no path, opening the given
+    # sequence otherwise). Users can still drag & drop once the window
+    # is open.
+    from img_player.app import DEFAULT_CACHE_BUDGET_BYTES, DEFAULT_NUM_WORKERS, run_gui
 
-        return run_gui()
-
-    print(f"img_player {__version__} — CLI placeholder. Use --gui or `scan` subcommand.")
-    return 0
+    budget = (
+        int(args.cache_gb * 1024**3) if args.cache_gb is not None else DEFAULT_CACHE_BUDGET_BYTES
+    )
+    workers = args.workers if args.workers is not None else DEFAULT_NUM_WORKERS
+    return run_gui(initial_path=args.path, cache_budget_bytes=budget, num_workers=workers)
 
 
 def _cmd_scan(path: Path, *, list_all: bool) -> int:

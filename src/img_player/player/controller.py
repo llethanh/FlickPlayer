@@ -27,8 +27,8 @@ class PlayerController(QObject):  # type: ignore[misc]  # mypy: QObject is Any
     ``frame_changed`` and pull the array out of the cache themselves.
     """
 
-    PREFETCH_AHEAD = 150
-    PREFETCH_BEHIND = 20
+    PREFETCH_AHEAD = 64
+    PREFETCH_BEHIND = 8
 
     frame_changed = Signal(int)
     state_changed = Signal(object)  # emits PlaybackState
@@ -135,10 +135,17 @@ class PlayerController(QObject):  # type: ignore[misc]  # mypy: QObject is Any
         if self._sequence is None or not self._state.is_playing:
             return
         next_frame, next_dir, should_stop = self._advance()
+
+        # The playhead always moves forward at the configured FPS —
+        # otherwise the user sees no sign of playback while the cache
+        # catches up. On a cache miss we count a dropped frame and let
+        # the UI pick the nearest available frame to display.
         self._update(current_frame=next_frame, direction=next_dir)
         self._cache.set_current_frame(next_frame)
         self._prefetch_from(next_frame, next_dir)
-        self._try_render(count_misses=True)
+        if not self._cache.contains(next_frame):
+            self._update(dropped_frames=self._state.dropped_frames + 1)
+        self.frame_changed.emit(next_frame)
         if should_stop:
             self.pause()
 
