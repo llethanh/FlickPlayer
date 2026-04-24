@@ -10,18 +10,24 @@ import pytest
 from img_player.io.reader import FrameReadError, read_frame, read_header
 
 
-def test_read_png_returns_float32_hwc(png_path: Path) -> None:
+def test_read_png_returns_float_hwc(png_path: Path) -> None:
     arr = read_frame(png_path)
-    assert arr.dtype == np.float32
+    # Default is half-float for bandwidth; caller can ask for float32.
+    assert arr.dtype in (np.float16, np.float32)
     assert arr.ndim == 3
     assert arr.shape[2] in (3, 4)
-    assert 0.0 <= arr.min() and arr.max() <= 1.0
+    assert 0.0 <= float(arr.min()) and float(arr.max()) <= 1.0
+
+
+def test_read_frame_force_float32(png_path: Path) -> None:
+    arr = read_frame(png_path, as_half=False)
+    assert arr.dtype == np.float32
 
 
 def test_read_exr_returns_rgba(exr_path: Path) -> None:
     arr = read_frame(exr_path)
     assert arr.shape[2] == 4
-    assert arr.dtype == np.float32
+    assert arr.dtype in (np.float16, np.float32)
 
 
 def test_read_multichannel_exr_default_is_rgba(exr_multichannel_path: Path) -> None:
@@ -37,7 +43,7 @@ def test_read_multichannel_exr_explicit_full(exr_multichannel_path: Path) -> Non
 
 
 def test_read_multichannel_exr_subset(exr_multichannel_path: Path) -> None:
-    arr = read_frame(exr_multichannel_path, channels=["Z", "AO"])
+    arr = read_frame(exr_multichannel_path, channels=["Z", "AO"], as_half=False)
     assert arr.shape[2] == 2
     # Z was set to 10.0, AO to 0.75 in the fixture
     assert np.allclose(arr[:, :, 0], 10.0)

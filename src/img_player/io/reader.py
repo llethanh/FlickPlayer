@@ -13,8 +13,13 @@ class FrameReadError(RuntimeError):
     """Raised when a frame cannot be decoded (missing file, bad format, ...)."""
 
 
-def read_frame(path: Path | str, channels: Sequence[str] | None = None) -> np.ndarray:
-    """Decode a frame to a float32 HxWxC numpy array.
+def read_frame(
+    path: Path | str,
+    channels: Sequence[str] | None = None,
+    *,
+    as_half: bool = True,
+) -> np.ndarray:
+    """Decode a frame to a float HxWxC numpy array.
 
     Values are returned in the file's native color space — no OCIO transform
     is applied here. That's the job of the render layer.
@@ -30,6 +35,11 @@ def read_frame(path: Path | str, channels: Sequence[str] | None = None) -> np.nd
         This is critical for multichannel EXRs (AOVs, depth, normals,
         cryptomattes): reading only the beauty can be 3-4x smaller in RAM
         and faster to decode than pulling every layer.
+    as_half:
+        When True (default) decodes to ``float16`` — half the RAM and half
+        the PCIe upload bandwidth, which matters for realtime 4K playback.
+        Precision is still fine for display (EXR's native format anyway).
+        Set to False to force float32 output.
 
     Raises
     ------
@@ -45,6 +55,9 @@ def read_frame(path: Path | str, channels: Sequence[str] | None = None) -> np.nd
     if inp is None:
         raise FrameReadError(f"Failed to open {path}: {oiio.geterror()}")
 
+    oiio_type = oiio.HALF if as_half else oiio.FLOAT
+    numpy_dtype = np.float16 if as_half else np.float32
+
     try:
         spec = inp.spec()
         available = list(spec.channelnames)
@@ -56,16 +69,16 @@ def read_frame(path: Path | str, channels: Sequence[str] | None = None) -> np.nd
         if _is_contiguous(indices):
             chbegin = indices[0]
             chend = indices[-1] + 1
-            pixels = inp.read_image(chbegin, chend, oiio.FLOAT)
+            pixels = inp.read_image(chbegin, chend, oiio_type)
         else:
             # Rare: non-contiguous selection. Read everything and subset.
-            pixels = inp.read_image(oiio.FLOAT)
+            pixels = inp.read_image(oiio_type)
             pixels = pixels[..., indices]
 
         if pixels is None:
             raise FrameReadError(f"{path}: OIIO read returned None ({inp.geterror()})")
 
-        arr = np.asarray(pixels, dtype=np.float32)
+        arr = np.asarray(pixels, dtype=numpy_dtype)
         if arr.ndim == 2:
             arr = arr[:, :, np.newaxis]
         return arr
