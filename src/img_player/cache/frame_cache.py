@@ -64,6 +64,12 @@ class FrameCache:
         # +1 = forward play, -1 = reverse. Used to skew eviction so frames
         # ahead of the playhead are preserved over frames already behind.
         self._direction = 1
+        # Active channel selection. ``None`` means "let the reader pick
+        # its sensible default" (R/G/B/A when available). A list like
+        # ``["Z"]`` or ``["N.X"]`` means "decode only this channel" —
+        # the reader broadcasts a single-channel readout to RGB so the
+        # GL viewport renders it as monochrome.
+        self._active_channels: list[str] | None = None
         self._pool = WorkerPool(num_workers=num_workers, name="decode")
 
         # Counters (guarded by _lock)
@@ -123,6 +129,24 @@ class FrameCache:
         is "future" (cheap to evict on the past side)."""
         with self._lock:
             self._direction = 1 if direction >= 0 else -1
+
+    def set_channels(self, channels: list[str] | None) -> None:
+        """Switch which channels are decoded for subsequent frames.
+
+        Currently-cached frames belong to the *previous* channel set,
+        so we drop them — they were decoded with different OIIO
+        ``read_image`` parameters and would re-display the wrong
+        channels until naturally evicted. The pending decode queue
+        is dropped too; the controller will request fresh prefetches
+        once it sees the next frame_changed.
+
+        Pass ``None`` to revert to the reader's default (R/G/B/A).
+        """
+        self._pool.clear()
+        with self._lock:
+            self._active_channels = list(channels) if channels else None
+            self._frames.clear()
+            self._bytes_used = 0
 
     def get(self, frame: int) -> np.ndarray | None:
         """Non-blocking fetch. Returns None if the frame is not cached."""
@@ -193,8 +217,13 @@ class FrameCache:
         # outside the timing window only when disabled.
         bench_enabled = recorder.is_enabled()
         t_start = time.monotonic() if bench_enabled else 0.0
+        # Capture the active channels under the lock — set_channels can
+        # be called from the Qt thread while a decode is in flight,
+        # but we want this single decode to use a stable selection.
+        with self._lock:
+            channels = list(self._active_channels) if self._active_channels else None
         try:
-            arr = read_frame(path)
+            arr = read_frame(path, channels=channels)
         except FrameReadError as err:
             log.warning("decode failed frame=%d path=%s: %s", frame, path, err)
             with self._lock:

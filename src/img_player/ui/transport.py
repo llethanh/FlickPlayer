@@ -53,6 +53,13 @@ class TransportBar(QWidget):  # type: ignore[misc]
     # User typed a frame / timecode in the FrameDisplay and pressed
     # Enter. Carries the absolute frame index.
     frame_seek_requested  = Signal(int)
+    # Multichannel EXR: user picked a different channel to display.
+    # Carries either ``None`` (= "RGB" composite, default) or a list
+    # like ``["Z"]`` / ``["N.X"]`` for a single channel readout.
+    channels_requested = Signal(object)
+    # Zoom — either ``None`` for fit-to-window, or a float factor
+    # (1.0 = 100 %, 0.5 = 50 %, 2.0 = 200 %).
+    zoom_requested = Signal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -126,6 +133,36 @@ class TransportBar(QWidget):  # type: ignore[misc]
         self._fps_combo.setToolTip("Playback rate (fps)")
         self._fps_combo.currentTextChanged.connect(self._on_fps_text)
 
+        # --- Channel selector ----------------------------------------------
+        # Multichannel EXR support: pick which channel(s) to display.
+        # "RGB" is the composite default; the others appear once a
+        # sequence is loaded (populated via ``set_channels``).
+        self._channel_combo = QComboBox()
+        self._channel_combo.setFixedWidth(96)
+        self._channel_combo.setFixedHeight(G.INPUT_H)
+        self._channel_combo.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self._channel_combo.setToolTip("Channel to display")
+        self._channel_combo.addItem("RGB")  # always the first entry
+        self._channel_combo.currentIndexChanged.connect(self._on_channel_changed)
+
+        # --- Zoom selector -------------------------------------------------
+        # Fit at the top of the list, then 200 / 150 / 100 / 50 %. The
+        # combo also reflects what the wheel did, even if the wheel
+        # picks an arbitrary value between presets — we just clear the
+        # current text in that case (the user can read the actual
+        # zoom in the viewport).
+        self._zoom_combo = QComboBox()
+        self._zoom_combo.setEditable(True)
+        self._zoom_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        for label in ("Fit", "200%", "150%", "100%", "50%"):
+            self._zoom_combo.addItem(label)
+        self._zoom_combo.setCurrentText("Fit")
+        self._zoom_combo.setFixedWidth(78)
+        self._zoom_combo.setFixedHeight(G.INPUT_H)
+        self._zoom_combo.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self._zoom_combo.setToolTip("Zoom level — wheel zooms in / out in the viewer")
+        self._zoom_combo.currentTextChanged.connect(self._on_zoom_text)
+
         # --- Layout ---------------------------------------------------------
         layout = QHBoxLayout(self)
         layout.setContentsMargins(S.MD, S.SM, S.MD, S.SM)
@@ -158,6 +195,18 @@ class TransportBar(QWidget):  # type: ignore[misc]
         fps_label.setFixedWidth(24)
         layout.addWidget(fps_label)
         layout.addWidget(self._fps_combo)
+
+        layout.addWidget(_separator())
+        channel_label = QLabel("CH")
+        channel_label.setFixedWidth(20)
+        layout.addWidget(channel_label)
+        layout.addWidget(self._channel_combo)
+
+        layout.addWidget(_separator())
+        zoom_label = QLabel("Zoom")
+        zoom_label.setFixedWidth(34)
+        layout.addWidget(zoom_label)
+        layout.addWidget(self._zoom_combo)
         layout.addStretch(1)
 
         self._refresh_loop_button()
@@ -202,6 +251,22 @@ class TransportBar(QWidget):  # type: ignore[misc]
         the FrameDisplay so it stays in sync with the timeline."""
         self._frame_display.set_display_mode(mode)
 
+    def set_available_channels(self, channels: tuple[str, ...]) -> None:
+        """Replace the channel-selector content with the channels of
+        the loaded sequence. ``"RGB"`` (the composite) is always the
+        first item; individual channels follow in their EXR order.
+
+        Selecting ``"RGB"`` emits ``channels_requested(None)``;
+        picking a single channel emits ``channels_requested([name])``.
+        """
+        self._channel_combo.blockSignals(True)
+        self._channel_combo.clear()
+        self._channel_combo.addItem("RGB")
+        for ch in channels:
+            self._channel_combo.addItem(ch)
+        self._channel_combo.setCurrentIndex(0)
+        self._channel_combo.blockSignals(False)
+
     # ------------------------------------------------------------------ Internals
 
     def _cycle_loop_mode(self) -> None:
@@ -222,6 +287,53 @@ class TransportBar(QWidget):  # type: ignore[misc]
         fps = self._parse_fps(text)
         if fps is not None:
             self.fps_changed.emit(fps)
+
+    def _on_channel_changed(self, index: int) -> None:
+        """Translate the combo selection into a `channels_requested`
+        signal. Index 0 is always the ``"RGB"`` composite, which we
+        emit as ``None`` so the cache reverts to the reader's default
+        (R/G/B/A). Any other index sends ``[channel_name]``.
+        """
+        if index <= 0:
+            self.channels_requested.emit(None)
+            return
+        name = self._channel_combo.itemText(index)
+        self.channels_requested.emit([name])
+
+    def _on_zoom_text(self, text: str) -> None:
+        """Parse the zoom combo text and emit ``zoom_requested``.
+
+        Accepts: ``"Fit"`` (case-insensitive) → ``None``;
+        ``"100%"`` / ``"100"`` → ``1.0``; arbitrary editable input
+        the user types is parsed as a percentage too.
+        """
+        stripped = text.strip().lower().rstrip("%")
+        if stripped in ("", "fit"):
+            self.zoom_requested.emit(None)
+            return
+        try:
+            percent = float(stripped)
+        except ValueError:
+            return  # ignore unparseable input
+        self.zoom_requested.emit(percent / 100.0)
+
+    def set_zoom_display(self, factor: object) -> None:
+        """Reflect a zoom value in the combo without re-emitting.
+
+        Called from the wiring code when the *wheel* (not the combo)
+        changed the zoom — keeps the combo in sync without bouncing
+        a second ``zoom_requested`` back through the same path.
+        """
+        self._zoom_combo.blockSignals(True)
+        if factor is None:
+            self._zoom_combo.setCurrentText("Fit")
+        else:
+            try:
+                pct = round(float(factor) * 100)
+                self._zoom_combo.setCurrentText(f"{pct}%")
+            except (TypeError, ValueError):
+                pass
+        self._zoom_combo.blockSignals(False)
 
     @staticmethod
     def _parse_fps(text: str) -> float | None:

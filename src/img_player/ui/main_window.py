@@ -53,6 +53,8 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
 
     open_requested = Signal(Path)
     play_toggled = Signal()
+    channels_requested = Signal(object)   # list[str] | None
+    zoom_requested = Signal(object)       # float | None ; None = fit
     step_clicked = Signal(int)  # +1 / -1
     jump_to_ends = Signal(int)  # -1 first, +1 last
     frame_requested = Signal(int)
@@ -163,10 +165,14 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
     # --------------------------------------------------------------- Public updates
 
     def update_sequence_info(self, sequence: SequenceInfo) -> None:
-        """Refresh the title bar, timeline range, and channel panel."""
+        """Refresh the title bar, timeline range, channel panel and the
+        transport bar's channel selector."""
         self.setWindowTitle(f"img_player — {sequence.display_pattern()}")
         self._timeline.set_range(sequence.first_frame, sequence.last_frame)
         self._channel_panel.set_channels(sequence.channel_names)
+        # Populate the channel-selector combo so the user can pick
+        # individual channels (Z, normals, AOVs, …).
+        self._transport.set_available_channels(sequence.channel_names)
 
     def set_status(self, message: str) -> None:
         """Set the contextual message on the *left* side of the status bar.
@@ -395,6 +401,12 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         # Frame display: typing a frame number / TC and pressing Enter
         # asks the controller to seek there.
         self._transport.frame_seek_requested.connect(self.frame_requested.emit)
+        self._transport.channels_requested.connect(self.channels_requested.emit)
+        # Zoom: combo → viewport (forward), wheel → combo (back-channel
+        # so the displayed value follows the wheel without us
+        # re-emitting and ping-ponging).
+        self._transport.zoom_requested.connect(self.zoom_requested.emit)
+        self._viewer.gl.zoom_changed.connect(self._transport.set_zoom_display)
         self._timeline.frame_requested.connect(self.frame_requested.emit)
         # Drag-scrub inside the image viewport routes through the same
         # frame_requested → app._on_scrub_requested pipeline as the
