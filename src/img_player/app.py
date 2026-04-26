@@ -183,6 +183,11 @@ class ImgPlayerApp:
         self._window.mark_out_requested.connect(self._on_mark_out)
         self._window.clear_in_out_requested.connect(lambda: self._controller.set_in_out(None, None))
         self._window.loop_mode_requested.connect(self._controller.set_loop_mode)
+        self._window.channels_requested.connect(self._on_channels_requested)
+        # Zoom from the combo box → propagate to the GL viewport.
+        # The wheel-zoom path (viewport → combo) is wired inside
+        # MainWindow so app.py doesn't have to care.
+        self._window.zoom_requested.connect(self._on_zoom_requested)
 
         # Recent-files menu uses callbacks into preferences.
         self._window.install_recent_provider(
@@ -267,6 +272,37 @@ class ImgPlayerApp:
             self._controller.pause()
         else:
             self._controller.play()
+
+    def _on_zoom_requested(self, factor: object) -> None:
+        """Forward a zoom request from the combo to the GL viewport.
+
+        ``factor`` is either ``None`` (= fit-to-window) or a float.
+        """
+        try:
+            zoom: float | None = None if factor is None else float(factor)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return
+        self._window.viewer.gl.set_zoom(zoom)
+
+    def _on_channels_requested(self, channels: object) -> None:
+        """Switch which channels the cache decodes for subsequent frames.
+
+        ``channels`` is either ``None`` (RGB composite default) or a
+        list like ``["Z"]``. We push it to the cache, which clears
+        currently-cached frames (they were decoded with the previous
+        selection) and re-prefetches around the playhead.
+        """
+        # mypy gets a Signal(object) here, normalise the type at the boundary.
+        cs: list[str] | None = list(channels) if isinstance(channels, list) else None
+        self._cache.set_channels(cs)
+        self._window.set_status(
+            f"Channel: {'RGB (composite)' if cs is None else ', '.join(cs)}"
+        )
+        # Re-trigger the prefetch so the new channel set fills the
+        # cache around the playhead immediately. Easiest path: drive
+        # through the existing seek-to-current-frame route.
+        if self._controller.sequence is not None:
+            self._controller.seek(self._controller.state.current_frame)
 
     def _on_scrub_requested(self, frame: int) -> None:
         """Timeline scrub: update the display immediately from the cache, but

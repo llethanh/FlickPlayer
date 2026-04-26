@@ -15,7 +15,7 @@ from dataclasses import dataclass
 import numpy as np
 from OpenGL import GL
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QMouseEvent, QSurfaceFormat
+from PySide6.QtGui import QMouseEvent, QSurfaceFormat, QWheelEvent
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
 from img_player.bench import recorder
@@ -49,8 +49,20 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
     # overshoot, while still being responsive. The timeline scrubber
     # remains the absolute random-access path for big jumps.
     DRAG_PIXELS_PER_FRAME = 6
+    # Wheel-zoom step. One notch of the wheel multiplies the zoom
+    # factor by this; deltas accumulate in 120-unit increments per
+    # notch (Qt convention). 1.10 gives ~10 % per notch, smooth.
+    WHEEL_ZOOM_STEP = 1.10
+    # Hard limits on the zoom factor. The combo box exposes 0.5 …
+    # 2.0; the wheel can go a bit beyond for fine inspection.
+    MIN_ZOOM = 0.10
+    MAX_ZOOM = 8.0
 
     frame_requested = Signal(int)
+    # Emitted when the wheel changes the zoom — lets the transport's
+    # zoom combo follow. Carries the new zoom factor (1.0 = 100%) or
+    # ``None`` when fit-to-window mode is engaged.
+    zoom_changed = Signal(object)
 
     # ------------------------------------------------------------------ Lifecycle
 
@@ -96,6 +108,11 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
         # "you can drag me horizontally" affordance.
         self.setCursor(Qt.CursorShape.SizeHorCursor)
 
+        # Zoom state. ``None`` = fit-to-window (the legacy behaviour);
+        # any float = user-set zoom factor where 1.0 means "1 image
+        # pixel = 1 widget pixel" (= "Actual size" / 100 %).
+        self._zoom_factor: float | None = None
+
     def sizeHint(self) -> QSize:
         return QSize(960, 540)
 
@@ -134,6 +151,24 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
         """
         self._current_frame = frame
 
+    def set_zoom(self, factor: float | None) -> None:
+        """Set the zoom factor, or pass ``None`` for fit-to-window.
+
+        ``factor`` is interpreted as image-pixels-per-widget-pixel:
+        ``1.0`` is "Actual size" (100 %), ``0.5`` is half size,
+        ``2.0`` is 2× zoom. Clamped to :attr:`MIN_ZOOM` /
+        :attr:`MAX_ZOOM`.
+
+        The combo box in the transport bar drives this; the wheel
+        also calls it with the new factor and emits ``zoom_changed``
+        so the combo can stay in sync.
+        """
+        if factor is None:
+            self._zoom_factor = None
+        else:
+            self._zoom_factor = max(self.MIN_ZOOM, min(self.MAX_ZOOM, float(factor)))
+        self.update()
+
     # ------------------------------------------------------------------ Mouse — drag-to-scrub
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
@@ -167,6 +202,33 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
             event.accept()
             return
         super().mouseReleaseEvent(event)
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        """Mouse-wheel zoom. Scroll up zooms in, down zooms out.
+
+        Qt's ``angleDelta()`` reports 120 units per "notch" of a
+        traditional wheel. We use that as our quantum: each notch
+        multiplies the zoom by :attr:`WHEEL_ZOOM_STEP`. Smooth-scroll
+        wheels (mac trackpads) report fractional deltas — the same
+        formula Just Works because we use a power.
+        """
+        delta_steps = event.angleDelta().y() / 120.0
+        if delta_steps == 0:
+            super().wheelEvent(event)
+            return
+        # Starting point: if we're in fit mode, treat current as
+        # 1.0 (so the first wheel notch zooms in/out around 100 %
+        # rather than re-fitting). Otherwise multiply from where we
+        # already are.
+        base = 1.0 if self._zoom_factor is None else self._zoom_factor
+        new_zoom = base * (self.WHEEL_ZOOM_STEP ** delta_steps)
+        new_zoom = max(self.MIN_ZOOM, min(self.MAX_ZOOM, new_zoom))
+        self.set_zoom(new_zoom)
+        # Tell the rest of the UI (= the transport's zoom combo) so
+        # it can reflect the new value without us setting it from
+        # here.
+        self.zoom_changed.emit(new_zoom)
+        event.accept()
 
     # ------------------------------------------------------------------ QOpenGLWidget overrides
 
@@ -381,22 +443,40 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
             GL.glUniformMatrix4fv(loc, 1, GL.GL_FALSE, matrix)
 
     def _fit_matrix(self) -> np.ndarray:
-        """Letterbox matrix: scale the fullscreen quad so the image aspect
-        ratio is preserved inside the widget's aspect ratio."""
+        """View matrix combining aspect-ratio fit + user zoom.
+
+        Two regimes:
+
+        * ``self._zoom_factor is None`` — legacy "fit" mode: scale the
+          fullscreen quad so the image fits the widget while preserving
+          aspect ratio (letterbox or pillarbox as needed).
+        * ``self._zoom_factor`` is a float — user-set zoom, where the
+          image is rendered at ``factor`` widget-pixels per image-pixel
+          (centred). The image can extend beyond the widget at large
+          zooms; that's the user's intent (inspect a region pixel-by-
+          pixel).
+        """
         win_w = max(1, self.width())
         win_h = max(1, self.height())
         img_w, img_h = self._image_size
         if img_w == 0 or img_h == 0:
             return np.identity(4, dtype=np.float32)
 
-        win_aspect = win_w / win_h
-        img_aspect = img_w / img_h
-        sx, sy = 1.0, 1.0
-        if img_aspect > win_aspect:
-            # image is wider relative to window: fit width, shrink height
-            sy = win_aspect / img_aspect
+        if self._zoom_factor is None:
+            # Aspect-fit (the original behaviour).
+            win_aspect = win_w / win_h
+            img_aspect = img_w / img_h
+            sx, sy = 1.0, 1.0
+            if img_aspect > win_aspect:
+                sy = win_aspect / img_aspect
+            else:
+                sx = img_aspect / win_aspect
         else:
-            sx = img_aspect / win_aspect
+            # Zoom factor = "image pixels covered per widget pixel".
+            # The fullscreen quad spans [-1, 1] in both axes, so we
+            # scale by (image_size_in_widget_pixels / widget_size).
+            sx = (img_w * self._zoom_factor) / win_w
+            sy = (img_h * self._zoom_factor) / win_h
 
         m = np.identity(4, dtype=np.float32)
         m[0, 0] = sx

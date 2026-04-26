@@ -121,6 +121,17 @@ def read_frame(
         arr = np.asarray(pixels, dtype=numpy_dtype)
         if arr.ndim == 2:
             arr = arr[:, :, np.newaxis]
+        # Single-channel readout (e.g. just "Z" or just "A") needs to be
+        # broadcast to RGB so the GL viewport's RGBA pipeline can show
+        # it as monochrome. We use np.broadcast_to (zero-copy) followed
+        # by ascontiguousarray only if the upload path needs contiguous
+        # memory — typical OpenGL pipelines handle the broadcasted
+        # (strided) view fine for read-only data.
+        if arr.shape[2] == 1:
+            arr = np.broadcast_to(arr, (arr.shape[0], arr.shape[1], 3))
+            # Make it contiguous so glTexSubImage2D doesn't choke on
+            # the zero-stride dimension.
+            arr = np.ascontiguousarray(arr)
         return arr
     finally:
         inp.close()
