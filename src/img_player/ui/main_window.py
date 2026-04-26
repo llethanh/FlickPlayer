@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
 from img_player.color.ocio_manager import OCIOManager
 from img_player.ui.channel_panel import ChannelPanel
 from img_player.ui.color_panel import ColorPanel
-from img_player.ui.theme import F, H
+from img_player.ui.theme import F, H, S
 from img_player.ui.timeline import Timeline
 from img_player.ui.transport import TransportBar
 from img_player.ui.viewer_widget import ViewerWidget
@@ -79,8 +79,8 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         # Central: viewer on top, then timeline + transport stacked at the bottom
         central = QWidget(self)
         layout = QVBoxLayout(central)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(4)
+        layout.setContentsMargins(S.SM, S.SM, S.SM, S.SM)
+        layout.setSpacing(S.SM)
         layout.addWidget(self._viewer, stretch=1)
         layout.addWidget(self._timeline)
         layout.addWidget(self._transport)

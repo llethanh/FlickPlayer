@@ -212,5 +212,5 @@ def _separator() -> QWidget:
     line.setFrameShadow(QFrame.Shadow.Plain)
     line.setFixedWidth(1)
     line.setFixedHeight(18)
-    line.setStyleSheet("background-color: #38383C;")
+    line.setStyleSheet(f"background-color: {H.BORDER_DEFAULT};")
     return line
