@@ -6,6 +6,28 @@ REM and invokes PyInstaller via the spec file at the repo root.
 setlocal enableextensions
 set ENV_NAME=img_player
 
+REM ---- Refuse to build inside a synced cloud folder -------------------
+REM Google Drive Stream / OneDrive will fight Windows Defender and end
+REM up deleting img_player.exe (or worse, the OIIO DLLs). PyInstaller
+REM bootloader is a known false-positive AV target. Build on a *local*
+REM SSD path instead, e.g. C:\Users\you\dev\img_player\.
+echo %CD% | findstr /I /C:"\Mon Drive" /C:"\My Drive" /C:"\OneDrive" /C:"\Dropbox" >nul
+if not errorlevel 1 (
+    echo.
+    echo [build_exe] ERROR: This folder is inside a synced cloud drive
+    echo            ^(Google Drive / OneDrive / Dropbox^). PyInstaller
+    echo            output gets corrupted by the sync + antivirus
+    echo            interaction. Build will fail or produce an
+    echo            incomplete bundle.
+    echo.
+    echo            Move ^(or clone^) the repo to a local SSD path first:
+    echo              git clone https://github.com/llethanh/img_player.git C:\Users\%USERNAME%\dev\img_player
+    echo            Then re-run build_exe.bat from there.
+    echo.
+    pause
+    exit /b 1
+)
+
 REM ---- Locate conda activate script -----------------------------------
 set ACTIVATE=
 if exist "%USERPROFILE%\miniforge3\Scripts\activate.bat" set ACTIVATE="%USERPROFILE%\miniforge3\Scripts\activate.bat"
@@ -67,7 +89,23 @@ if %EXIT_CODE% EQU 0 (
     echo.
     echo To deploy: copy the entire dist\img_player\ folder to the target
     echo machine. The .exe finds its DLLs via the _internal subfolder.
+) else (
+    echo.
+    echo [build_exe] PyInstaller FAILED with exit code %EXIT_CODE%.
+    echo Common causes:
+    echo   - Building inside a synced cloud folder ^(handled above, but
+    echo     check for symlinks pointing into one^).
+    echo   - Antivirus removing the bootloader. Whitelist the dist folder
+    echo     in Windows Defender and re-run.
+    echo   - Out of disk space ^(PyInstaller needs ~2 GB free temporarily^).
+    echo   - The conda env "img_player" missing PyInstaller. Run:
+    echo       pip install -e .[build]
 )
+
+REM Always pause so the user can read the message — the cmd window
+REM auto-closes on double-click otherwise.
+echo.
+pause
 
 popd
 endlocal & exit /b %EXIT_CODE%

@@ -4,6 +4,36 @@ This document explains how to package img_player into a self-contained
 Windows folder you can copy to any machine — no Python, no conda, no
 admin rights required on the target.
 
+> **TL;DR — just want the binary?** Grab the latest pre-built bundle
+> from **[GitHub Releases](https://github.com/llethanh/img_player/releases)**.
+> Unzip, double-click `img_player.exe`. The rest of this document is
+> only useful if you want to rebuild yourself.
+
+## ⚠️ Don't build inside Google Drive / OneDrive / Dropbox
+
+PyInstaller produces an `img_player.exe` that contains a small
+"bootloader" stub. **Windows Defender flags this stub as suspicious**
+(false positive — extremely well-documented; see [PyInstaller FAQ][1]).
+On its own, that's manageable — you whitelist the folder.
+
+The catastrophic combo is **PyInstaller output sitting in a synced
+cloud folder** (Google Drive Stream, OneDrive, Dropbox):
+
+1. Defender deletes `img_player.exe` minutes after the build.
+2. The cloud client syncs the deletion across all your machines.
+3. The whole bundle becomes useless.
+
+`build_exe.bat` now refuses to run inside such folders. **Clone the
+repo to a local SSD path first**:
+
+```
+git clone https://github.com/llethanh/img_player.git C:\Users\%USERNAME%\dev\img_player
+cd C:\Users\%USERNAME%\dev\img_player
+build_exe.bat
+```
+
+[1]: https://pyinstaller.org/en/stable/when-things-go-wrong.html#my-anti-virus-quarantines-my-frozen-app
+
 ## Why a bundle?
 
 Installing img_player on a locked-down work machine often hits a wall:
