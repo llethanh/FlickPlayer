@@ -35,3 +35,8 @@ logs/
 
 # Heavy test fixtures (to be discussed case by case)
 tests/fixtures/large/
+
+# Claude Code local config — per-developer install, not project-wide.
+# Skills installed via `npx claude-code-templates@latest` go under
+# .claude/skills/ — re-runnable on any clone, no need to commit them.
+.claude/

@@ -1,0 +1,1373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>img_player — Studio Dark · Design Charter</title>
+<style>
+  /* ── Reset & Base ─────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg-deep:    #141416;
+    --bg-base:    #1C1C1F;
+    --bg-raised:  #242428;
+    --bg-surface: #2C2C30;
+    --bg-hover:   #35353A;
+    --bg-select:  #3A3A40;
+
+    --border-subtle:  #28282C;
+    --border-default: #38383C;
+    --border-strong:  #56565C;
+
+    --text-primary:   #E4E4E6;
+    --text-secondary: #8A8A8E;
+    --text-disabled:  #52525A;
+
+    --accent:        #E8901C;
+    --accent-bright: #F5A830;
+    --accent-dim:    #7A4210;
+
+    --playhead:   #F5AA28;
+    --marker-io:  #DC3C3C;
+    --range-bar:  #56B46A;
+    --cache-bar:  #38B464;
+
+    --font-ui:   'Segoe UI', 'Helvetica Neue', sans-serif;
+    --font-mono: 'JetBrains Mono', 'Consolas', monospace;
+
+    --radius-sm: 2px;
+    --radius-md: 3px;
+    --radius-lg: 5px;
+  }
+
+  body {
+    background: #0E0E10;
+    color: var(--text-primary);
+    font-family: var(--font-ui);
+    font-size: 11px;
+    line-height: 1.5;
+  }
+
+  /* ── Page scaffold ────────────────────────────────────────────────── */
+  .page {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 40px 32px 80px;
+  }
+
+  /* ── Charter header ───────────────────────────────────────────────── */
+  .charter-header {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    margin-bottom: 40px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .charter-header h1 {
+    font-family: var(--font-mono);
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: -0.3px;
+  }
+  .charter-header .tagline {
+    font-size: 10px;
+    color: var(--text-secondary);
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+  }
+  .accent-dot {
+    color: var(--accent);
+  }
+
+  /* ── Section titles ───────────────────────────────────────────────── */
+  .section {
+    margin-bottom: 48px;
+  }
+  .section-label {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 1.8px;
+    text-transform: uppercase;
+    color: var(--text-disabled);
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .section-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border-subtle);
+  }
+
+  /* ── Color swatches ───────────────────────────────────────────────── */
+  .swatch-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 8px;
+  }
+  .swatch {
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    border: 1px solid var(--border-subtle);
+  }
+  .swatch-color {
+    height: 44px;
+  }
+  .swatch-info {
+    background: var(--bg-raised);
+    padding: 6px 8px;
+  }
+  .swatch-name {
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .swatch-hex {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-disabled);
+    margin-top: 2px;
+  }
+  .swatch-group {
+    margin-bottom: 12px;
+  }
+  .swatch-group-label {
+    font-size: 9px;
+    color: var(--text-disabled);
+    margin-bottom: 6px;
+    letter-spacing: 0.5px;
+  }
+  .swatch-row {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .swatch-pill {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 5px 10px;
+    min-width: 140px;
+  }
+  .swatch-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+  .swatch-pill-info {}
+  .swatch-pill-name {
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    letter-spacing: 0.3px;
+  }
+  .swatch-pill-hex {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-disabled);
+  }
+
+  /* ── Typography ───────────────────────────────────────────────────── */
+  .type-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .type-row {
+    display: flex;
+    align-items: center;
+    padding: 10px 14px;
+    background: var(--bg-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    gap: 20px;
+  }
+  .type-row:first-child { border-radius: var(--radius-md) var(--radius-md) 0 0; }
+  .type-row:last-child  { border-radius: 0 0 var(--radius-md) var(--radius-md); }
+  .type-spec {
+    width: 160px;
+    flex-shrink: 0;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-disabled);
+    line-height: 1.6;
+  }
+  .type-sample {
+    flex: 1;
+  }
+
+  /* ── Spacing scale ────────────────────────────────────────────────── */
+  .spacing-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 14px;
+    background: var(--bg-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    margin-bottom: 4px;
+  }
+  .spacing-label {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-disabled);
+    width: 60px;
+    flex-shrink: 0;
+  }
+  .spacing-bar-wrap {
+    flex: 1;
+    display: flex;
+    align-items: center;
+  }
+  .spacing-bar {
+    height: 6px;
+    background: var(--accent-dim);
+    border-radius: 1px;
+    border: 1px solid var(--accent);
+  }
+  .spacing-value {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-secondary);
+    width: 30px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  /* ── Button states ────────────────────────────────────────────────── */
+  .btn-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .ds-btn {
+    height: 28px;
+    padding: 0 12px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font-family: var(--font-ui);
+    font-size: 10px;
+    cursor: pointer;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .ds-btn.state-hover  { background: var(--bg-hover); border-color: var(--border-strong); }
+  .ds-btn.state-active { background: var(--bg-select); border-color: var(--accent); color: var(--accent); }
+  .ds-btn.state-disabled { color: var(--text-disabled); border-color: var(--border-subtle); background: var(--bg-raised); }
+  .ds-btn.state-accent { background: var(--accent); border-color: var(--accent-bright); color: #141416; font-weight: 600; }
+  .ds-input {
+    height: 24px;
+    padding: 0 8px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font-family: var(--font-ui);
+    font-size: 10px;
+    width: 120px;
+    outline: none;
+  }
+  .ds-input.state-focus { border-color: var(--accent); }
+  .state-label {
+    font-size: 9px;
+    color: var(--text-disabled);
+    letter-spacing: 0.5px;
+    text-align: center;
+    margin-top: 4px;
+  }
+  .btn-state-item { display: flex; flex-direction: column; align-items: center; }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     APP MOCKUP
+  ═══════════════════════════════════════════════════════════════════ */
+  .mockup-wrapper {
+    background: var(--bg-deep);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    box-shadow: 0 32px 80px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.03);
+  }
+
+  /* ── Menu bar ─────────────────────────────────────────────────────── */
+  .mock-menubar {
+    background: var(--bg-raised);
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: center;
+    height: 26px;
+    padding: 0 8px;
+    gap: 2px;
+  }
+  .mock-menu-item {
+    padding: 0 10px;
+    height: 22px;
+    line-height: 22px;
+    font-size: 10px;
+    color: var(--text-primary);
+    border-radius: var(--radius-sm);
+    cursor: default;
+  }
+  .mock-menu-item.active {
+    background: var(--bg-hover);
+  }
+  .mock-app-title {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-disabled);
+    letter-spacing: 0.3px;
+  }
+
+  /* ── Main content row ─────────────────────────────────────────────── */
+  .mock-body {
+    display: flex;
+    height: 560px;
+  }
+
+  /* ── Viewer area ──────────────────────────────────────────────────── */
+  .mock-viewer-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    border-right: 1px solid var(--border-subtle);
+  }
+
+  .mock-viewport {
+    flex: 1;
+    background: var(--bg-deep);
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Subtle film-grain texture overlay */
+  .mock-viewport::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image:
+      repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(255,255,255,0.008) 2px,
+        rgba(255,255,255,0.008) 4px
+      );
+    pointer-events: none;
+  }
+
+  /* Corner brackets to suggest frame boundary */
+  .mock-viewport::after {
+    content: '';
+    position: absolute;
+    inset: 20px;
+    border: 1px solid rgba(255,255,255,0.04);
+    pointer-events: none;
+  }
+
+  .viewport-bracket {
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    border-color: rgba(255,255,255,0.12);
+    border-style: solid;
+    border-width: 0;
+  }
+  .viewport-bracket.tl { top: 20px; left: 20px; border-top-width: 1px; border-left-width: 1px; }
+  .viewport-bracket.tr { top: 20px; right: 20px; border-top-width: 1px; border-right-width: 1px; }
+  .viewport-bracket.bl { bottom: 20px; left: 20px; border-bottom-width: 1px; border-left-width: 1px; }
+  .viewport-bracket.br { bottom: 20px; right: 20px; border-bottom-width: 1px; border-right-width: 1px; }
+
+  .viewport-info {
+    text-align: center;
+    pointer-events: none;
+  }
+  .viewport-frame-num {
+    font-family: var(--font-mono);
+    font-size: 48px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.04);
+    letter-spacing: -2px;
+    line-height: 1;
+    display: block;
+    margin-bottom: 8px;
+  }
+  .viewport-meta {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: rgba(255,255,255,0.2);
+    letter-spacing: 1px;
+  }
+
+  /* Overlay HUD badges */
+  .viewport-hud {
+    position: absolute;
+    top: 10px;
+    left: 14px;
+    display: flex;
+    gap: 6px;
+  }
+  .hud-badge {
+    background: rgba(20,20,22,0.75);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 2px 7px;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-secondary);
+    backdrop-filter: blur(4px);
+  }
+  .hud-badge.accent-badge {
+    border-color: var(--accent-dim);
+    color: var(--accent);
+  }
+
+  .viewport-hud-br {
+    position: absolute;
+    bottom: 10px;
+    right: 14px;
+  }
+
+  /* ── Timeline ─────────────────────────────────────────────────────── */
+  .mock-timeline {
+    height: 52px;
+    background: #1A1A1C;
+    border-top: 1px solid var(--border-subtle);
+    position: relative;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+
+  .timeline-canvas {
+    width: 100%;
+    height: 100%;
+  }
+
+  /* ── Transport bar ────────────────────────────────────────────────── */
+  .mock-transport {
+    height: 38px;
+    background: var(--bg-raised);
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .t-spacer { flex: 1; }
+
+  .t-sep {
+    width: 1px;
+    height: 18px;
+    background: var(--border-default);
+    flex-shrink: 0;
+    margin: 0 2px;
+  }
+
+  .t-btn {
+    height: 28px;
+    min-width: 28px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font-family: var(--font-ui);
+    font-size: 10px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 6px;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  .t-btn:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+  .t-btn.play-btn {
+    background: var(--bg-surface);
+    border-color: var(--border-strong);
+    min-width: 34px;
+  }
+  .t-btn.loop-btn {
+    color: var(--accent);
+    border-color: var(--accent-dim);
+  }
+  .t-btn.marker-btn {
+    font-weight: 600;
+    letter-spacing: -0.3px;
+    color: var(--text-secondary);
+  }
+  .t-fps-combo {
+    height: 24px;
+    width: 68px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 0 6px;
+    flex-shrink: 0;
+  }
+  .t-fps-label {
+    font-size: 9px;
+    color: var(--text-secondary);
+  }
+
+  /* SVG icons */
+  .icon-svg {
+    width: 14px;
+    height: 14px;
+    fill: currentColor;
+    flex-shrink: 0;
+  }
+
+  /* ── Right dock ───────────────────────────────────────────────────── */
+  .mock-dock {
+    width: 240px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-raised);
+  }
+
+  .dock-title-bar {
+    height: 26px;
+    background: var(--bg-raised);
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-disabled);
+  }
+
+  .dock-tabs {
+    display: flex;
+    background: var(--bg-base);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .dock-tab {
+    flex: 1;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+  }
+  .dock-tab.active {
+    color: var(--text-primary);
+    border-bottom-color: var(--accent);
+    background: var(--bg-raised);
+  }
+
+  .dock-content {
+    flex: 1;
+    padding: 14px 12px;
+    overflow-y: auto;
+  }
+
+  .form-group {
+    margin-bottom: 12px;
+  }
+  .form-label {
+    display: block;
+    font-size: 9px;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+    letter-spacing: 0.3px;
+  }
+  .form-combo, .form-spin {
+    width: 100%;
+    height: 24px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font-family: var(--font-ui);
+    font-size: 10px;
+    padding: 0 8px;
+    appearance: none;
+  }
+  .form-combo-wrap {
+    position: relative;
+  }
+  .form-combo-arrow {
+    position: absolute;
+    right: 7px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-disabled);
+    font-size: 8px;
+    pointer-events: none;
+  }
+  .form-spin-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .form-spin {
+    width: auto;
+    flex: 1;
+    font-family: var(--font-mono);
+    text-align: right;
+    padding-right: 4px;
+  }
+  .form-spin-suffix {
+    font-size: 9px;
+    color: var(--text-disabled);
+    white-space: nowrap;
+  }
+  .form-divider {
+    height: 1px;
+    background: var(--border-subtle);
+    margin: 14px 0;
+  }
+  .form-reset-btn {
+    width: 100%;
+    height: 28px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    font-family: var(--font-ui);
+    font-size: 10px;
+    cursor: pointer;
+  }
+  .form-reset-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    border-color: var(--border-strong);
+  }
+
+  .dock-channels-content {
+    padding: 12px;
+    display: none;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .ch-row {
+    display: flex;
+    align-items: center;
+    padding: 5px 8px;
+    border-radius: var(--radius-sm);
+    gap: 8px;
+    cursor: pointer;
+  }
+  .ch-row.active {
+    background: var(--bg-select);
+  }
+  .ch-row:hover:not(.active) {
+    background: var(--bg-hover);
+  }
+  .ch-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .ch-name {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-primary);
+    flex: 1;
+  }
+  .ch-type {
+    font-size: 9px;
+    color: var(--text-disabled);
+  }
+
+  /* ── Status bar ───────────────────────────────────────────────────── */
+  .mock-statusbar {
+    background: var(--bg-raised);
+    border-top: 1px solid var(--border-subtle);
+    height: 20px;
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    gap: 16px;
+  }
+  .status-msg {
+    font-size: 9px;
+    color: var(--text-secondary);
+    flex: 1;
+  }
+  .status-perf {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-disabled);
+    display: flex;
+    gap: 12px;
+  }
+  .status-perf span {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .perf-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--cache-bar);
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <!-- ── Charter header ─────────────────────────────────────────────── -->
+  <div class="charter-header">
+    <h1>img_player<span class="accent-dot">.</span>theme</h1>
+    <span class="tagline">Studio Dark · Design System v1</span>
+  </div>
+
+  <!-- ═══════════════════════════ DESIGN SYSTEM ═══════════════════════ -->
+
+  <!-- Colors -->
+  <div class="section">
+    <div class="section-label">Colors</div>
+
+    <!-- Background scale -->
+    <div class="swatch-group">
+      <div class="swatch-group-label">Backgrounds — 4 depth levels</div>
+      <div class="swatch-row">
+        <div class="swatch-pill">
+          <div class="swatch-dot" style="background:#141416"></div>
+          <div class="swatch-pill-info">
+            <div class="swatch-pill-name">BG_DEEP</div>
+            <div class="swatch-pill-hex">#141416</div>
+          </div>
+        </div>
+        <div class="swatch-pill">
+          <div class="swatch-dot" style="background:#1C1C1F"></div>
+          <div class="swatch-pill-info">
+            <div class="swatch-pill-name">BG_BASE</div>
+            <div class="swatch-pill-hex">#1C1C1F</div>
+          </div>
+        </div>
+        <div class="swatch-pill">
+          <div class="swatch-dot" style="background:#242428"></div>
+          <div class="swatch-pill-info">
+            <div class="swatch-pill-name">BG_RAISED</div>
+            <div class="swatch-pill-hex">#242428</div>
+          </div>
+        </div>
+        <div class="swatch-pill">
+          <div class="swatch-dot" style="background:#2C2C30"></div>
+          <div class="swatch-pill-info">
+            <div class="swatch-pill-name">BG_SURFACE</div>
+            <div class="swatch-pill-hex">#2C2C30</div>
+          </div>
+        </div>
+        <div class="swatch-pill">
+          <div class="swatch-dot" style="background:#35353A"></div>
+          <div class="swatch-pill-info">
+            <div class="swatch-pill-name">BG_HOVER</div>
+            <div class="swatch-pill-hex">#35353A</div>
+          </div>
+        </div>
+        <div class="swatch-pill">
+          <div class="swatch-dot" style="background:#3A3A40"></div>
+          <div class="swatch-pill-info">
+            <div class="swatch-pill-name">BG_SELECT</div>
+            <div class="swatch-pill-hex">#3A3A40</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Borders & Text -->
+    <div class="swatch-group" style="margin-top:10px">
+      <div class="swatch-group-label">Borders · Text · Accent</div>
+      <div class="swatch-row">
+        <div class="swatch-pill">
+          <div class="swatch-dot" style="background:#28282C;border-color:rgba(255,255,255,0.1)"></div>
+          <div class="swatch-pill-info">
+            <div class="swatch-pill-name">BORDER_SUBTLE</div>
+            <div class="swatch-pill-hex">#28282C</div>
+          </div>
+        </div>
+        <div class="swatch-pill">
+          <div class="swatch-dot" style="background:#38383C"></div>
+          <div class="swatch-pill-info">
+            <div class="swatch-pill-name">BORDER_DEFAULT</div>
+            <div class="swatch-pill-hex">#38383C</div>
+          </div>
+        </div>
+        <div class="swatch-pill">
+          <div class="swatch-dot" style="background:#E4E4E6"></div>
+          <div class="swatch-pill-info">
+            <div class="swatch-pill-name">TEXT_PRIMARY</div>
+            <div class="swatch-pill-hex">#E4E4E6</div>
+          </div>
+        </div>
+        <div class="swatch-pill">
+          <div class="swatch-dot" style="background:#8A8A8E"></div>
+          <div class="swatch-pill-info">
+            <div class="swatch-pill-name">TEXT_SECONDARY</div>
+            <div class="swatch-pill-hex">#8A8A8E</div>
+          </div>
+        </div>
+        <div class="swatch-pill">
+          <div class="swatch-dot" style="background:#E8901C"></div>
+          <div class="swatch-pill-info">
+            <div class="swatch-pill-name">ACCENT</div>
+            <div class="swatch-pill-hex">#E8901C</div>
+          </div>
+        </div>
+        <div class="swatch-pill">
+          <div class="swatch-dot" style="background:#F5A830"></div>
+          <div class="swatch-pill-info">
+            <div class="swatch-pill-name">ACCENT_BRIGHT</div>
+            <div class="swatch-pill-hex">#F5A830</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Media colours -->
+    <div class="swatch-group" style="margin-top:10px">
+      <div class="swatch-group-label">Media-specific</div>
+      <div class="swatch-row">
+        <div class="swatch-pill">
+          <div class="swatch-dot" style="background:#F5AA28"></div>
+          <div class="swatch-pill-info">
+            <div class="swatch-pill-name">PLAYHEAD</div>
+            <div class="swatch-pill-hex">#F5AA28</div>
+          </div>
+        </div>
+        <div class="swatch-pill">
+          <div class="swatch-dot" style="background:#DC3C3C"></div>
+          <div class="swatch-pill-info">
+            <div class="swatch-pill-name">MARKER_IO</div>
+            <div class="swatch-pill-hex">#DC3C3C</div>
+          </div>
+        </div>
+        <div class="swatch-pill">
+          <div class="swatch-dot" style="background:#56B46A"></div>
+          <div class="swatch-pill-info">
+            <div class="swatch-pill-name">RANGE_BAR</div>
+            <div class="swatch-pill-hex">#56B46A</div>
+          </div>
+        </div>
+        <div class="swatch-pill">
+          <div class="swatch-dot" style="background:#38B464"></div>
+          <div class="swatch-pill-info">
+            <div class="swatch-pill-name">CACHE_BAR</div>
+            <div class="swatch-pill-hex">#38B464</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Typography -->
+  <div class="section">
+    <div class="section-label">Typography</div>
+    <div class="type-grid">
+      <div class="type-row">
+        <div class="type-spec">Segoe UI · 10px · 400<br>Default UI</div>
+        <div class="type-sample" style="font-family:var(--font-ui);font-size:10px;color:var(--text-primary)">Source colorspace — Display — View — Exposure — Gamma — Reset</div>
+      </div>
+      <div class="type-row">
+        <div class="type-spec">Segoe UI · 10px · 600<br>Panel title</div>
+        <div class="type-sample" style="font-family:var(--font-ui);font-size:10px;font-weight:600;color:var(--text-primary)">Color management &nbsp;&nbsp;·&nbsp;&nbsp; Channels</div>
+      </div>
+      <div class="type-row">
+        <div class="type-spec">Segoe UI · 9px · 400<br>Secondary / hints</div>
+        <div class="type-sample" style="font-family:var(--font-ui);font-size:9px;color:var(--text-secondary)">Source colorspace:&nbsp;&nbsp; Drop a sequence (folder or file) to start &nbsp;&nbsp; Mark IN at current frame (I)</div>
+      </div>
+      <div class="type-row">
+        <div class="type-spec">JetBrains Mono · 9px<br>Timecode / frame#</div>
+        <div class="type-sample" style="font-family:var(--font-mono);font-size:9px;color:var(--text-primary)">00:00:01:18 &nbsp;&nbsp; frame 0042 &nbsp;&nbsp; 24.000 fps &nbsp;&nbsp; 1920 × 1080 &nbsp;&nbsp; EXR / ACES</div>
+      </div>
+      <div class="type-row">
+        <div class="type-spec">Segoe UI · 9px · 600 uppercase<br>Section labels</div>
+        <div class="type-sample" style="font-family:var(--font-ui);font-size:9px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-disabled)">Panels &nbsp;&nbsp;&nbsp; Color &nbsp;&nbsp;&nbsp; Channels &nbsp;&nbsp;&nbsp; View</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Spacing -->
+  <div class="section">
+    <div class="section-label">Spacing · 4 px grid</div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;">
+      <div class="spacing-row"><span class="spacing-label">XS = 2</span><div class="spacing-bar-wrap"><div class="spacing-bar" style="width:6px"></div></div><span class="spacing-value">2px</span></div>
+      <div class="spacing-row"><span class="spacing-label">SM = 4</span><div class="spacing-bar-wrap"><div class="spacing-bar" style="width:12px"></div></div><span class="spacing-value">4px</span></div>
+      <div class="spacing-row"><span class="spacing-label">MD = 8</span><div class="spacing-bar-wrap"><div class="spacing-bar" style="width:24px"></div></div><span class="spacing-value">8px</span></div>
+      <div class="spacing-row"><span class="spacing-label">LG = 12</span><div class="spacing-bar-wrap"><div class="spacing-bar" style="width:36px"></div></div><span class="spacing-value">12px</span></div>
+      <div class="spacing-row"><span class="spacing-label">XL = 16</span><div class="spacing-bar-wrap"><div class="spacing-bar" style="width:48px"></div></div><span class="spacing-value">16px</span></div>
+      <div class="spacing-row"><span class="spacing-label">2XL = 24</span><div class="spacing-bar-wrap"><div class="spacing-bar" style="width:72px"></div></div><span class="spacing-value">24px</span></div>
+    </div>
+  </div>
+
+  <!-- Component states -->
+  <div class="section">
+    <div class="section-label">Components · States</div>
+    <div class="btn-row" style="margin-bottom:16px;">
+      <div class="btn-state-item">
+        <button class="ds-btn">Default</button>
+        <div class="state-label">default</div>
+      </div>
+      <div class="btn-state-item">
+        <button class="ds-btn state-hover">Hover</button>
+        <div class="state-label">:hover</div>
+      </div>
+      <div class="btn-state-item">
+        <button class="ds-btn state-active">Active ↻</button>
+        <div class="state-label">:pressed / active</div>
+      </div>
+      <div class="btn-state-item">
+        <button class="ds-btn state-disabled" disabled>Disabled</button>
+        <div class="state-label">:disabled</div>
+      </div>
+      <div class="btn-state-item">
+        <button class="ds-btn state-accent">Accent</button>
+        <div class="state-label">accent</div>
+      </div>
+      <div style="width:24px"></div>
+      <div class="btn-state-item">
+        <input class="ds-input" value="scene_linear">
+        <div class="state-label">input default</div>
+      </div>
+      <div class="btn-state-item">
+        <input class="ds-input state-focus" value="ACES - ACEScg">
+        <div class="state-label">input :focus</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════ APP MOCKUP ══════════════════════════ -->
+  <div class="section">
+    <div class="section-label">App mockup — full layout</div>
+
+    <div class="mockup-wrapper">
+
+      <!-- Menu bar -->
+      <div class="mock-menubar">
+        <div class="mock-menu-item">&File</div>
+        <div class="mock-menu-item active">&View</div>
+        <div class="mock-menu-item">&Help</div>
+        <div class="mock-app-title">img_player — seq_beauty.####.exr</div>
+      </div>
+
+      <!-- Body: viewer col + dock -->
+      <div class="mock-body">
+
+        <!-- Viewer column -->
+        <div class="mock-viewer-col">
+
+          <!-- Viewport -->
+          <div class="mock-viewport">
+            <div class="viewport-bracket tl"></div>
+            <div class="viewport-bracket tr"></div>
+            <div class="viewport-bracket bl"></div>
+            <div class="viewport-bracket br"></div>
+
+            <!-- HUD top-left -->
+            <div class="viewport-hud">
+              <div class="hud-badge accent-badge">ACES&thinsp;·&thinsp;ACEScg</div>
+              <div class="hud-badge">sRGB D65</div>
+              <div class="hud-badge">+0.00 stops</div>
+            </div>
+
+            <!-- HUD bottom-right -->
+            <div class="viewport-hud-br">
+              <div class="hud-badge" style="font-family:var(--font-mono);font-size:9px;">1920 × 1080 · HALF</div>
+            </div>
+
+            <!-- Center info -->
+            <div class="viewport-info">
+              <span class="viewport-frame-num">0042</span>
+              <span class="viewport-meta">1920 × 1080 &nbsp;|&nbsp; frame 0042 &nbsp;|&nbsp; 00:00:01:18</span>
+            </div>
+          </div>
+
+          <!-- Timeline -->
+          <div class="mock-timeline">
+            <canvas class="timeline-canvas" id="timelineCanvas"></canvas>
+          </div>
+
+          <!-- Transport bar -->
+          <div class="mock-transport">
+            <div class="t-spacer"></div>
+
+            <!-- In/Out markers -->
+            <button class="t-btn marker-btn" title="Mark IN (I)">I</button>
+            <button class="t-btn marker-btn" title="Mark OUT (O)">O</button>
+            <button class="t-btn" title="Clear IN/OUT (Shift+R)" style="font-size:11px;">⌫</button>
+
+            <div class="t-sep"></div>
+
+            <!-- Loop mode -->
+            <button class="t-btn loop-btn" title="Loop mode">↻</button>
+
+            <div class="t-sep"></div>
+
+            <!-- Playback -->
+            <!-- First frame -->
+            <button class="t-btn" title="First frame (Home)">
+              <svg class="icon-svg" viewBox="0 0 16 16"><rect x="2" y="2" width="2" height="12" rx="1"/><polygon points="14,2 6,8 14,14"/></svg>
+            </button>
+            <!-- Prev frame -->
+            <button class="t-btn" title="Previous frame (Left)">
+              <svg class="icon-svg" viewBox="0 0 16 16"><polygon points="12,2 4,8 12,14"/><polygon points="6,2 4,8 6,14" opacity="0.5"/></svg>
+            </button>
+            <!-- Play -->
+            <button class="t-btn play-btn" title="Play / Pause (Space)">
+              <svg class="icon-svg" viewBox="0 0 16 16"><polygon points="4,2 14,8 4,14" fill="var(--accent)"/></svg>
+            </button>
+            <!-- Stop -->
+            <button class="t-btn" title="Stop">
+              <svg class="icon-svg" viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" rx="1"/></svg>
+            </button>
+            <!-- Next frame -->
+            <button class="t-btn" title="Next frame (Right)">
+              <svg class="icon-svg" viewBox="0 0 16 16"><polygon points="4,2 12,8 4,14"/><polygon points="10,2 12,8 10,14" opacity="0.5"/></svg>
+            </button>
+            <!-- Last frame -->
+            <button class="t-btn" title="Last frame (End)">
+              <svg class="icon-svg" viewBox="0 0 16 16"><rect x="12" y="2" width="2" height="12" rx="1"/><polygon points="2,2 10,8 2,14"/></svg>
+            </button>
+
+            <div class="t-sep"></div>
+
+            <span class="t-fps-label">FPS</span>
+            <select class="t-fps-combo">
+              <option>23.976</option>
+              <option selected>24</option>
+              <option>25</option>
+              <option>29.97</option>
+              <option>30</option>
+            </select>
+
+            <div class="t-spacer"></div>
+          </div>
+
+        </div><!-- /viewer-col -->
+
+        <!-- Right dock -->
+        <div class="mock-dock">
+          <div class="dock-title-bar">Panels</div>
+
+          <div class="dock-tabs">
+            <div class="dock-tab active" id="tab-color" onclick="switchTab('color')">Color</div>
+            <div class="dock-tab" id="tab-channels" onclick="switchTab('channels')">Channels</div>
+          </div>
+
+          <!-- Color panel -->
+          <div class="dock-content" id="panel-color">
+            <div class="form-group">
+              <label class="form-label">Source colorspace</label>
+              <div class="form-combo-wrap">
+                <select class="form-combo">
+                  <option>ACES - ACEScg</option>
+                  <option>scene_linear</option>
+                  <option>sRGB</option>
+                </select>
+                <span class="form-combo-arrow">▾</span>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Display</label>
+              <div class="form-combo-wrap">
+                <select class="form-combo">
+                  <option>sRGB</option>
+                  <option>Rec.709</option>
+                  <option>P3-D65</option>
+                </select>
+                <span class="form-combo-arrow">▾</span>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">View</label>
+              <div class="form-combo-wrap">
+                <select class="form-combo">
+                  <option>ACES 1.0 SDR-video</option>
+                  <option>Un-tone-mapped</option>
+                  <option>Log</option>
+                </select>
+                <span class="form-combo-arrow">▾</span>
+              </div>
+            </div>
+
+            <div class="form-divider"></div>
+
+            <div class="form-group">
+              <label class="form-label">Exposure</label>
+              <div class="form-spin-row">
+                <input class="form-spin" type="number" value="0.00" step="0.25" min="-6" max="6">
+                <span class="form-spin-suffix">stops</span>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Gamma</label>
+              <div class="form-spin-row">
+                <input class="form-spin" type="number" value="1.00" step="0.05" min="0.1" max="4">
+              </div>
+            </div>
+
+            <div class="form-divider"></div>
+
+            <button class="form-reset-btn">Reset exposure / gamma</button>
+          </div>
+
+          <!-- Channels panel (hidden by default) -->
+          <div class="dock-channels-content" id="panel-channels">
+            <div class="ch-row active">
+              <div class="ch-dot" style="background:#E4E4E6"></div>
+              <span class="ch-name">RGB</span>
+              <span class="ch-type">composite</span>
+            </div>
+            <div class="ch-row">
+              <div class="ch-dot" style="background:#C04040"></div>
+              <span class="ch-name">R</span>
+              <span class="ch-type">float16</span>
+            </div>
+            <div class="ch-row">
+              <div class="ch-dot" style="background:#40A840"></div>
+              <span class="ch-name">G</span>
+              <span class="ch-type">float16</span>
+            </div>
+            <div class="ch-row">
+              <div class="ch-dot" style="background:#4080C0"></div>
+              <span class="ch-name">B</span>
+              <span class="ch-type">float16</span>
+            </div>
+            <div class="ch-row">
+              <div class="ch-dot" style="background:#8A8A8E"></div>
+              <span class="ch-name">A</span>
+              <span class="ch-type">float16</span>
+            </div>
+            <div style="height:8px"></div>
+            <div class="ch-row">
+              <div class="ch-dot" style="background:#7A4210"></div>
+              <span class="ch-name">depth.Z</span>
+              <span class="ch-type">float32</span>
+            </div>
+            <div class="ch-row">
+              <div class="ch-dot" style="background:#56565C"></div>
+              <span class="ch-name">N.X</span>
+              <span class="ch-type">float16</span>
+            </div>
+            <div class="ch-row">
+              <div class="ch-dot" style="background:#56565C"></div>
+              <span class="ch-name">N.Y</span>
+              <span class="ch-type">float16</span>
+            </div>
+            <div class="ch-row">
+              <div class="ch-dot" style="background:#56565C"></div>
+              <span class="ch-name">N.Z</span>
+              <span class="ch-type">float16</span>
+            </div>
+          </div>
+
+        </div><!-- /dock -->
+
+      </div><!-- /mock-body -->
+
+      <!-- Status bar -->
+      <div class="mock-statusbar">
+        <span class="status-msg">Ready — 347 frames loaded · seq_beauty.####.exr · 001–347</span>
+        <div class="status-perf">
+          <span><span class="perf-dot"></span>cache 42 / 347</span>
+          <span>24.0 fps</span>
+          <span>RAM 1.2 GB</span>
+        </div>
+      </div>
+
+    </div><!-- /mockup-wrapper -->
+  </div>
+
+</div><!-- /page -->
+
+<script>
+  // ── Tab switching ───────────────────────────────────────────────────
+  function switchTab(name) {
+    ['color', 'channels'].forEach(t => {
+      document.getElementById('tab-' + t).classList.toggle('active', t === name);
+    });
+    const colorPanel = document.getElementById('panel-color');
+    const chPanel = document.getElementById('panel-channels');
+    if (name === 'color') {
+      colorPanel.style.display = '';
+      chPanel.style.display = 'none';
+    } else {
+      colorPanel.style.display = 'none';
+      chPanel.style.display = 'flex';
+    }
+  }
+
+  // ── Timeline canvas ─────────────────────────────────────────────────
+  (function drawTimeline() {
+    const canvas = document.getElementById('timelineCanvas');
+    if (!canvas) return;
+
+    const dpr = window.devicePixelRatio || 1;
+
+    function resize() {
+      const rect = canvas.parentElement.getBoundingClientRect();
+      canvas.width  = rect.width  * dpr;
+      canvas.height = rect.height * dpr;
+      canvas.style.width  = rect.width  + 'px';
+      canvas.style.height = rect.height + 'px';
+      draw();
+    }
+
+    function draw() {
+      const ctx = canvas.getContext('2d');
+      const W = canvas.width, H = canvas.height;
+      ctx.scale(dpr, dpr);
+      const w = W / dpr, h = H / dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      // Background
+      ctx.fillStyle = '#1A1A1C';
+      ctx.fillRect(0, 0, w, h);
+
+      const MARGIN = 8;
+      const FIRST = 1, LAST = 347, CURRENT = 42;
+      const IN_FRAME = 10, OUT_FRAME = 280;
+      const totalFrames = LAST - FIRST + 1;
+      const usableW = w - MARGIN * 2;
+
+      function frameToX(f) {
+        return MARGIN + (f - FIRST + 0.5) * usableW / totalFrames;
+      }
+
+      const LABEL_H  = 13;
+      const TICK_TOP = 13;
+      const RANGE_Y  = 28;
+      const RANGE_H  = 3;
+      const CACHE_Y  = 40;
+      const CACHE_H  = 6;
+
+      // ── Ticks & labels ────────────────────────────────────────────
+      ctx.font = `9px "JetBrains Mono", "Consolas", monospace`;
+      const ppf = usableW / totalFrames;
+      let minorStep = 25, majorStep = 100;
+      if (ppf >= 8)  { minorStep = 1;   majorStep = 5;    }
+      else if (ppf >= 2)  { minorStep = 5;   majorStep = 25;   }
+      else if (ppf >= 0.5){ minorStep = 25;  majorStep = 100;  }
+
+      let lastLabelX = -9999;
+      for (let f = FIRST; f <= LAST; f++) {
+        const isMajor = (f - FIRST) % majorStep === 0 || f === LAST;
+        const isMinor = (f - FIRST) % minorStep === 0;
+        if (!isMinor && !isMajor) continue;
+        const x = Math.round(frameToX(f));
+        if (isMajor) {
+          ctx.strokeStyle = '#6A6A70';
+          ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(x, TICK_TOP); ctx.lineTo(x, TICK_TOP + 10); ctx.stroke();
+          const label = String(f);
+          const lw = ctx.measureText(label).width;
+          const lx = x - lw / 2;
+          if (lx - lastLabelX > lw + 8) {
+            ctx.fillStyle = '#8A8A8E';
+            ctx.fillText(label, lx, LABEL_H - 2);
+            lastLabelX = lx;
+          }
+        } else {
+          ctx.strokeStyle = '#3C3C40';
+          ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(x, TICK_TOP); ctx.lineTo(x, TICK_TOP + 5); ctx.stroke();
+        }
+      }
+
+      // ── Range bar ─────────────────────────────────────────────────
+      const inX  = frameToX(IN_FRAME);
+      const outX = frameToX(OUT_FRAME);
+      ctx.fillStyle = '#56B46A';
+      ctx.fillRect(inX, RANGE_Y, outX - inX, RANGE_H);
+
+      // ── In/Out markers ────────────────────────────────────────────
+      const yTop = TICK_TOP;
+      const yBot = RANGE_Y + RANGE_H + 4;
+      ctx.strokeStyle = '#DC3C3C';
+      ctx.fillStyle   = '#DC3C3C';
+      ctx.lineWidth = 1.5;
+
+      // IN marker
+      {
+        const x = frameToX(IN_FRAME);
+        ctx.beginPath(); ctx.moveTo(x, yTop); ctx.lineTo(x, yBot); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x, yTop); ctx.lineTo(x + 6, yTop + 3); ctx.lineTo(x, yTop + 6);
+        ctx.closePath(); ctx.fill();
+      }
+      // OUT marker
+      {
+        const x = frameToX(OUT_FRAME);
+        ctx.beginPath(); ctx.moveTo(x, yTop); ctx.lineTo(x, yBot); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x, yTop); ctx.lineTo(x - 6, yTop + 3); ctx.lineTo(x, yTop + 6);
+        ctx.closePath(); ctx.fill();
+      }
+
+      // ── Playhead ──────────────────────────────────────────────────
+      const px = frameToX(CURRENT);
+      ctx.strokeStyle = '#F5AA28';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(px, TICK_TOP); ctx.lineTo(px, RANGE_Y + RANGE_H); ctx.stroke();
+      // Triangle
+      ctx.fillStyle = '#F5AA28';
+      ctx.strokeStyle = '#141416';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(px - 5, LABEL_H - 1);
+      ctx.lineTo(px + 5, LABEL_H - 1);
+      ctx.lineTo(px, TICK_TOP + 6);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.fill();
+
+      // ── Cache bar ─────────────────────────────────────────────────
+      ctx.fillStyle = '#28282C';
+      ctx.fillRect(MARGIN, CACHE_Y, usableW, CACHE_H);
+
+      // Simulate cached frames: 1–80 and 90–130 as two runs
+      ctx.fillStyle = '#38B464';
+      function cacheRun(s, e) {
+        const x1 = frameToX(s) - usableW / totalFrames * 0.5;
+        const x2 = frameToX(e) + usableW / totalFrames * 0.5;
+        ctx.fillRect(x1, CACHE_Y, Math.max(1, x2 - x1), CACHE_H);
+      }
+      cacheRun(1, 80);
+      cacheRun(90, 130);
+    }
+
+    resize();
+    window.addEventListener('resize', resize);
+  })();
+</script>
+
+</body>
+</html>

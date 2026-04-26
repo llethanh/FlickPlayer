@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from img_player.player.state import LoopMode
+from img_player.ui.theme import G, S
 
 if TYPE_CHECKING:
     from img_player.player.state import PlaybackState
@@ -24,8 +25,8 @@ if TYPE_CHECKING:
 
 _LOOP_CYCLE = [LoopMode.LOOP, LoopMode.ONCE, LoopMode.PING_PONG]
 _LOOP_LABELS = {
-    LoopMode.LOOP: ("↻", "Loop (play → first frame at the end)"),
-    LoopMode.ONCE: ("→", "Play once (stop at the end)"),
+    LoopMode.LOOP:      ("↻", "Loop (play → first frame at the end)"),
+    LoopMode.ONCE:      ("→", "Play once (stop at the end)"),
     LoopMode.PING_PONG: ("⇌", "Ping-pong (reverse at the end)"),
 }
 
@@ -33,30 +34,30 @@ _LOOP_LABELS = {
 class TransportBar(QWidget):  # type: ignore[misc]
     """Emits high-level intents — the controller applies the logic."""
 
-    play_toggled = Signal()
-    stop_clicked = Signal()
-    step_clicked = Signal(int)  # +1 or -1
-    jump_to_ends = Signal(int)  # -1 = first frame, +1 = last
-    fps_changed = Signal(float)
-    mark_in_clicked = Signal()
+    play_toggled     = Signal()
+    stop_clicked     = Signal()
+    step_clicked     = Signal(int)   # +1 or -1
+    jump_to_ends     = Signal(int)   # -1 = first frame, +1 = last
+    fps_changed      = Signal(float)
+    mark_in_clicked  = Signal()
     mark_out_clicked = Signal()
     clear_in_out_clicked = Signal()
-    loop_mode_requested = Signal(object)  # LoopMode
+    loop_mode_requested  = Signal(object)  # LoopMode
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        style = self.style()
+        self.setFixedHeight(G.TRANSPORT_H)
 
+        style = self.style()
         self._loop_mode = LoopMode.LOOP
 
         # --- In/Out markers -------------------------------------------------
-        self._mark_in_btn = _text_button(" I ", "Mark IN at current frame (I)")
-        self._mark_in_btn.clicked.connect(self.mark_in_clicked.emit)
-
+        self._mark_in_btn  = _text_button(" I ", "Mark IN at current frame (I)")
         self._mark_out_btn = _text_button(" O ", "Mark OUT at current frame (O)")
-        self._mark_out_btn.clicked.connect(self.mark_out_clicked.emit)
+        self._clear_io_btn = _text_button("⌫",  "Clear IN/OUT range (Shift+R)")
 
-        self._clear_io_btn = _text_button("⌫", "Clear IN/OUT range (Shift+R)")
+        self._mark_in_btn.clicked.connect(self.mark_in_clicked.emit)
+        self._mark_out_btn.clicked.connect(self.mark_out_clicked.emit)
         self._clear_io_btn.clicked.connect(self.clear_in_out_clicked.emit)
 
         # --- Loop mode ------------------------------------------------------
@@ -80,7 +81,8 @@ class TransportBar(QWidget):  # type: ignore[misc]
             style.standardIcon(QStyle.StandardPixmap.SP_MediaStop), "Stop"
         )
         self._next_btn = _icon_button(
-            style.standardIcon(QStyle.StandardPixmap.SP_MediaSeekForward), "Next frame (Right)"
+            style.standardIcon(QStyle.StandardPixmap.SP_MediaSeekForward),
+            "Next frame (Right)",
         )
         self._last_btn = _icon_button(
             style.standardIcon(QStyle.StandardPixmap.SP_MediaSkipForward),
@@ -101,15 +103,16 @@ class TransportBar(QWidget):  # type: ignore[misc]
         for rate in ("23.976", "24", "25", "29.97", "30", "48", "50", "59.94", "60"):
             self._fps_combo.addItem(rate)
         self._fps_combo.setCurrentText("24")
-        self._fps_combo.setFixedWidth(90)
+        self._fps_combo.setFixedWidth(72)
+        self._fps_combo.setFixedHeight(G.INPUT_H)
         self._fps_combo.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self._fps_combo.setToolTip("Playback rate (fps)")
         self._fps_combo.currentTextChanged.connect(self._on_fps_text)
 
         # --- Layout ---------------------------------------------------------
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 4, 6, 4)
-        layout.setSpacing(4)
+        layout.setContentsMargins(S.MD, S.SM, S.MD, S.SM)
+        layout.setSpacing(S.SM)
         layout.addStretch(1)
 
         layout.addWidget(self._mark_in_btn)
@@ -130,7 +133,9 @@ class TransportBar(QWidget):  # type: ignore[misc]
             layout.addWidget(btn)
 
         layout.addWidget(_separator())
-        layout.addWidget(QLabel("FPS:"))
+        fps_label = QLabel("FPS")
+        fps_label.setFixedWidth(24)
+        layout.addWidget(fps_label)
         layout.addWidget(self._fps_combo)
         layout.addStretch(1)
 
@@ -139,7 +144,6 @@ class TransportBar(QWidget):  # type: ignore[misc]
     # ------------------------------------------------------------------ Public
 
     def update_from_state(self, state: PlaybackState) -> None:
-        """Sync the play/pause icon, loop mode icon, and FPS text from state."""
         style = self.style()
         self._play_btn.setIcon(
             style.standardIcon(
@@ -200,8 +204,8 @@ class TransportBar(QWidget):  # type: ignore[misc]
 def _icon_button(icon: QIcon, tooltip: str) -> QPushButton:
     btn = QPushButton()
     btn.setIcon(icon)
-    btn.setIconSize(QSize(22, 22))
-    btn.setFixedSize(34, 30)
+    btn.setIconSize(QSize(G.ICON_SIZE, G.ICON_SIZE))
+    btn.setFixedSize(G.BTN_TRANSPORT_W, G.BTN_TRANSPORT_H)
     btn.setToolTip(tooltip)
     btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
     return btn
@@ -209,7 +213,7 @@ def _icon_button(icon: QIcon, tooltip: str) -> QPushButton:
 
 def _text_button(label: str, tooltip: str) -> QPushButton:
     btn = QPushButton(label)
-    btn.setFixedSize(34, 30)
+    btn.setFixedSize(G.BTN_TEXT_W, G.BTN_TRANSPORT_H)
     btn.setToolTip(tooltip)
     btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
     return btn
@@ -218,6 +222,8 @@ def _text_button(label: str, tooltip: str) -> QPushButton:
 def _separator() -> QWidget:
     line = QFrame()
     line.setFrameShape(QFrame.Shape.VLine)
-    line.setFrameShadow(QFrame.Shadow.Sunken)
-    line.setFixedWidth(6)
+    line.setFrameShadow(QFrame.Shadow.Plain)
+    line.setFixedWidth(1)
+    line.setFixedHeight(18)
+    line.setStyleSheet("background-color: #38383C;")
     return line

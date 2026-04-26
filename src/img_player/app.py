@@ -71,6 +71,9 @@ class ImgPlayerApp:
         self._qapp.setOrganizationName("img_player")
         self._qapp.setApplicationName("img_player")
 
+        from img_player.ui.theme import build_stylesheet
+        self._qapp.setStyleSheet(build_stylesheet())
+
         # Configure OIIO's global thread pool *before* we spin up the cache —
         # any in-flight decode would otherwise see the default value.
         configure_oiio(oiio_threads)

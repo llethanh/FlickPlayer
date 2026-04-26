@@ -6,7 +6,6 @@ from typing import Literal
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
-    QColor,
     QFont,
     QFontMetrics,
     QMouseEvent,
@@ -16,6 +15,8 @@ from PySide6.QtGui import (
     QPolygonF,
 )
 from PySide6.QtWidgets import QWidget
+
+from img_player.ui.theme import C, F, G
 
 DisplayMode = Literal["frames", "tc"]
 
@@ -40,29 +41,17 @@ class Timeline(QWidget):  # type: ignore[misc]
 
     frame_requested = Signal(int)
 
-    # ---- Palette -----------------------------------------------------
-    COLOR_BG = QColor(24, 24, 24)
-    COLOR_TICK_MINOR = QColor(60, 60, 60)
-    COLOR_TICK_MAJOR = QColor(120, 120, 120)
-    COLOR_LABEL = QColor(180, 180, 180)
-    COLOR_RANGE = QColor(90, 180, 110)
-    COLOR_IN_OUT = QColor(220, 60, 60)
-    COLOR_PLAYHEAD = QColor(245, 170, 40)
-    COLOR_PLAYHEAD_OUTLINE = QColor(20, 20, 20)
-    COLOR_CACHE = QColor(56, 180, 100)
-    COLOR_CACHE_BG = QColor(40, 40, 40)
-
-    # ---- Geometry ----------------------------------------------------
-    MARGIN_X = 8
-    LABEL_H = 14
-    TICK_TOP = 14
-    TICK_MINOR_H = 6
-    TICK_MAJOR_H = 10
-    RANGE_Y = 30
-    RANGE_H = 3
-    CACHE_TOP = 42
-    CACHE_H = 6
-    TOTAL_H = CACHE_TOP + CACHE_H + 2
+    # ---- Geometry (from charter) -------------------------------------
+    MARGIN_X      = 8
+    LABEL_H       = 14
+    TICK_TOP      = 14
+    TICK_MINOR_H  = 5
+    TICK_MAJOR_H  = 9
+    RANGE_Y       = 28
+    RANGE_H       = 3
+    CACHE_TOP     = 41
+    CACHE_H       = 6
+    TOTAL_H       = G.TIMELINE_H  # 52
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -80,9 +69,7 @@ class Timeline(QWidget):  # type: ignore[misc]
         self._cached_frames: frozenset[int] = frozenset()
         self._scrubbing = False
 
-        # Font for tick labels.
-        self._label_font = QFont()
-        self._label_font.setPointSize(8)
+        self._label_font: QFont = F.mono(F.SIZE_XS)
 
     # ------------------------------------------------------------------ Public API
 
@@ -127,7 +114,7 @@ class Timeline(QWidget):  # type: ignore[misc]
         del event
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.fillRect(self.rect(), self.COLOR_BG)
+        painter.fillRect(self.rect(), C.BG_DEEP)
 
         if self._last <= self._first:
             return
@@ -155,7 +142,6 @@ class Timeline(QWidget):  # type: ignore[misc]
         return max(self._first, min(self._last, raw))
 
     def _tick_spacings(self) -> tuple[int, int]:
-        """Pick (minor_step, major_step) based on the zoom level."""
         ppf = self._usable_width() / self._total_frames()
         if ppf >= 8:
             return 1, 5
@@ -178,10 +164,9 @@ class Timeline(QWidget):  # type: ignore[misc]
         metrics = QFontMetrics(self._label_font)
         label_y = self.LABEL_H - 2
 
-        minor_pen = QPen(self.COLOR_TICK_MINOR, 1)
-        major_pen = QPen(self.COLOR_TICK_MAJOR, 1)
+        minor_pen = QPen(C.TICK_MINOR, 1)
+        major_pen = QPen(C.TICK_MAJOR, 1)
 
-        # Iterate only over the visible range.
         last_label_x = -9999
         for frame in range(self._first, self._last + 1):
             is_major = (frame - self._first) % major == 0 or frame == self._last
@@ -195,8 +180,8 @@ class Timeline(QWidget):  # type: ignore[misc]
                 label = self._format_label(frame)
                 label_w = metrics.horizontalAdvance(label)
                 lx = x - label_w // 2
-                if lx - last_label_x > label_w + 8:  # don't overlap
-                    painter.setPen(self.COLOR_LABEL)
+                if lx - last_label_x > label_w + 8:
+                    painter.setPen(C.TICK_LABEL)
                     painter.drawText(lx, label_y, label)
                     last_label_x = lx
             else:
@@ -204,23 +189,22 @@ class Timeline(QWidget):  # type: ignore[misc]
                 painter.drawLine(x, tick_baseline, x, tick_baseline + self.TICK_MINOR_H)
 
     def _draw_range_bar(self, painter: QPainter) -> None:
-        in_x = self._frame_to_x(self._in_frame if self._in_frame is not None else self._first)
+        in_x  = self._frame_to_x(self._in_frame  if self._in_frame  is not None else self._first)
         out_x = self._frame_to_x(self._out_frame if self._out_frame is not None else self._last)
         if out_x <= in_x:
             return
         rect = QRectF(in_x, self.RANGE_Y, out_x - in_x, self.RANGE_H)
-        painter.fillRect(rect, self.COLOR_RANGE)
+        painter.fillRect(rect, C.RANGE_BAR)
 
     def _draw_in_out_markers(self, painter: QPainter) -> None:
-        painter.setPen(QPen(self.COLOR_IN_OUT, 2))
-        painter.setBrush(self.COLOR_IN_OUT)
+        painter.setPen(QPen(C.MARKER_IO, 1.5))
+        painter.setBrush(C.MARKER_IO)
         y_top = self.TICK_TOP
         y_bot = self.RANGE_Y + self.RANGE_H + 4
 
         if self._in_frame is not None:
             x = self._frame_to_x(self._in_frame)
             painter.drawLine(QPointF(x, y_top), QPointF(x, y_bot))
-            # Small flag facing right
             flag = QPolygonF(
                 [
                     QPointF(x, y_top),
@@ -243,10 +227,8 @@ class Timeline(QWidget):  # type: ignore[misc]
 
     def _draw_playhead(self, painter: QPainter) -> None:
         x = self._frame_to_x(self._current)
-        # Thin vertical line through the tick area.
-        painter.setPen(QPen(self.COLOR_PLAYHEAD, 1))
+        painter.setPen(QPen(C.PLAYHEAD, 1))
         painter.drawLine(QPointF(x, self.TICK_TOP), QPointF(x, self.RANGE_Y + self.RANGE_H))
-        # Orange triangle perched on top of the ticks, pointing down.
         triangle = QPolygonF(
             [
                 QPointF(x - 5, self.LABEL_H - 1),
@@ -254,22 +236,21 @@ class Timeline(QWidget):  # type: ignore[misc]
                 QPointF(x, self.TICK_TOP + 6),
             ]
         )
-        painter.setPen(QPen(self.COLOR_PLAYHEAD_OUTLINE, 1))
-        painter.setBrush(self.COLOR_PLAYHEAD)
+        painter.setPen(QPen(C.PLAYHEAD_OUTLINE, 1))
+        painter.setBrush(C.PLAYHEAD)
         painter.drawPolygon(triangle)
 
     def _draw_cache_bar(self, painter: QPainter) -> None:
         bar_rect = QRectF(self.MARGIN_X, self.CACHE_TOP, self._usable_width(), self.CACHE_H)
-        painter.fillRect(bar_rect, self.COLOR_CACHE_BG)
+        painter.fillRect(bar_rect, C.CACHE_BAR_BG)
         if not self._cached_frames:
             return
-        painter.setBrush(self.COLOR_CACHE)
+        painter.setBrush(C.CACHE_BAR)
         painter.setPen(Qt.PenStyle.NoPen)
 
         in_range = sorted(f for f in self._cached_frames if self._first <= f <= self._last)
         if not in_range:
             return
-        # Collapse consecutive frame numbers into rectangles — O(runs) draw calls.
         run_start = in_range[0]
         prev = run_start
         for f in in_range[1:]:
@@ -283,7 +264,7 @@ class Timeline(QWidget):  # type: ignore[misc]
 
     def _draw_cache_run(self, painter: QPainter, start: int, end: int) -> None:
         x1 = self._frame_to_x(start) - self._half_frame_width()
-        x2 = self._frame_to_x(end) + self._half_frame_width()
+        x2 = self._frame_to_x(end)   + self._half_frame_width()
         painter.drawRect(QRectF(x1, self.CACHE_TOP, max(1.0, x2 - x1), self.CACHE_H))
 
     def _half_frame_width(self) -> float:
