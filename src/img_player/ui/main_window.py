@@ -51,7 +51,6 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
 
     open_requested = Signal(Path)
     play_toggled = Signal()
-    stop_clicked = Signal()
     step_clicked = Signal(int)  # +1 / -1
     jump_to_ends = Signal(int)  # -1 first, +1 last
     frame_requested = Signal(int)
@@ -316,8 +315,17 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         )
 
     def _wire_internal(self) -> None:
+        # play_toggled is reserved for direction-agnostic toggles
+        # (Space / K shortcuts). The direction-aware play buttons of
+        # the transport bar route through direction_play_requested
+        # so the controller can decide between start / flip / pause.
         self._transport.play_toggled.connect(self.play_toggled.emit)
-        self._transport.stop_clicked.connect(self.stop_clicked.emit)
+        self._transport.forward_play_clicked.connect(
+            lambda: self.direction_play_requested.emit(1)
+        )
+        self._transport.reverse_play_clicked.connect(
+            lambda: self.direction_play_requested.emit(-1)
+        )
         self._transport.step_clicked.connect(self.step_clicked.emit)
         self._transport.jump_to_ends.connect(self.jump_to_ends.emit)
         self._transport.fps_changed.connect(self.fps_changed.emit)
@@ -325,12 +333,6 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         self._transport.mark_out_clicked.connect(self.mark_out_requested.emit)
         self._transport.clear_in_out_clicked.connect(self.clear_in_out_requested.emit)
         self._transport.loop_mode_requested.connect(self.loop_mode_requested.emit)
-        # Reverse-play button reuses the same signal as the J shortcut —
-        # one pathway in app.py decides whether to start, flip or
-        # pause based on the current state.
-        self._transport.reverse_play_clicked.connect(
-            lambda: self.direction_play_requested.emit(-1)
-        )
         # Frame display: typing a frame number / TC and pressing Enter
         # asks the controller to seek there.
         self._transport.frame_seek_requested.connect(self.frame_requested.emit)

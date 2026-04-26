@@ -184,6 +184,28 @@ class PlayerController(QObject):  # type: ignore[misc]  # mypy: QObject is Any
         self._update(direction=d)
         self._cache.set_direction(d)
 
+    def play_direction(self, direction: int) -> None:
+        """Direction-aware play / pause.
+
+        The semantics most VFX viewers (Nuke, Hiero, Resolve) implement
+        for a clicked direction button:
+
+        * Already playing in that direction → pause.
+        * Playing in the *other* direction → flip without stopping.
+        * Paused → set the direction and start playing.
+
+        ``Space`` / ``K`` shortcuts go through :meth:`pause` and
+        :meth:`play` directly — they're the older direction-agnostic
+        toggle.
+        """
+        d = 1 if direction >= 0 else -1
+        if self._state.is_playing and self._state.direction == d:
+            self.pause()
+            return
+        self.set_direction(d)
+        if not self._state.is_playing:
+            self.play()
+
     def set_in_out(self, in_frame: int | None, out_frame: int | None) -> None:
         self._update(in_frame=in_frame, out_frame=out_frame)
         if self._sequence is not None:

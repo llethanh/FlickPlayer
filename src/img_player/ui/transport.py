@@ -35,8 +35,14 @@ _LOOP_LABELS = {
 class TransportBar(QWidget):  # type: ignore[misc]
     """Emits high-level intents — the controller applies the logic."""
 
+    # play_toggled is reserved for the Space / K shortcut on MainWindow:
+    # plain "toggle play/pause without touching direction". The two
+    # *direction* buttons of the transport bar use forward_play_clicked
+    # / reverse_play_clicked instead because clicking them is a
+    # statement of intent ("I want to go this way"), not a toggle.
     play_toggled     = Signal()
-    stop_clicked     = Signal()
+    forward_play_clicked = Signal()
+    reverse_play_clicked = Signal()
     step_clicked     = Signal(int)   # +1 or -1
     jump_to_ends     = Signal(int)   # -1 = first frame, +1 = last
     fps_changed      = Signal(float)
@@ -44,11 +50,6 @@ class TransportBar(QWidget):  # type: ignore[misc]
     mark_out_clicked = Signal()
     clear_in_out_clicked = Signal()
     loop_mode_requested  = Signal(object)  # LoopMode
-    # Reverse-play button (in addition to the existing "J" shortcut).
-    # The transport doesn't know about playback state — it just signals
-    # "the user wants to play in this direction" and the controller
-    # decides whether to start, flip, or pause accordingly.
-    reverse_play_clicked  = Signal()
     # User typed a frame / timecode in the FrameDisplay and pressed
     # Enter. Carries the absolute frame index.
     frame_seek_requested  = Signal(int)
@@ -77,6 +78,10 @@ class TransportBar(QWidget):  # type: ignore[misc]
         # match ui_mockup.html. Both play buttons are in the warm
         # accent (orange); the others are TEXT_PRIMARY (white-ish) for
         # visual hierarchy.
+        # Layout order: navigation outward, then reverse_play left of
+        # the frame display, forward_play right of it. The frame
+        # display itself sits at the visual centre between the two
+        # play buttons — matches the Nuke-style transport.
         self._first_btn = _icon_button(make_icon("first"), "Go to first frame (Home)")
         self._prev_btn  = _icon_button(make_icon("prev"),  "Previous frame (Left)")
         self._reverse_play_btn = _icon_button(
@@ -84,9 +89,9 @@ class TransportBar(QWidget):  # type: ignore[misc]
             "Play in reverse (J)",
         )
         self._play_btn  = _icon_button(
-            make_icon("play", color=H.ACCENT), "Play / Pause forward (Space / L)"
+            make_icon("play", color=H.ACCENT),
+            "Play forward (L)",
         )
-        self._stop_btn  = _icon_button(make_icon("stop"),  "Stop")
         self._next_btn  = _icon_button(make_icon("next"),  "Next frame (Right)")
         self._last_btn  = _icon_button(make_icon("last"),  "Go to last frame (End)")
 
@@ -100,8 +105,11 @@ class TransportBar(QWidget):  # type: ignore[misc]
         self._first_btn.clicked.connect(lambda: self.jump_to_ends.emit(-1))
         self._prev_btn.clicked.connect(lambda: self.step_clicked.emit(-1))
         self._reverse_play_btn.clicked.connect(self.reverse_play_clicked.emit)
-        self._play_btn.clicked.connect(self.play_toggled.emit)
-        self._stop_btn.clicked.connect(self.stop_clicked.emit)
+        # Forward-play *button* is intent-bearing (= play in this
+        # direction) — not a plain toggle. The plain toggle stays
+        # bound to the Space / K shortcuts in MainWindow via the
+        # play_toggled signal.
+        self._play_btn.clicked.connect(self.forward_play_clicked.emit)
         self._next_btn.clicked.connect(lambda: self.step_clicked.emit(1))
         self._last_btn.clicked.connect(lambda: self.jump_to_ends.emit(1))
 
@@ -131,18 +139,17 @@ class TransportBar(QWidget):  # type: ignore[misc]
         layout.addWidget(self._loop_btn)
         layout.addWidget(_separator())
 
-        # Layout order — navigation on the left, playback in the
-        # middle (anchored around the FrameDisplay so the current
-        # frame is the visual centre of the bar), navigation on the
-        # right. Reverse-play sits to the right of the FrameDisplay
-        # exactly as the user asked, mirroring the forward-play btn
-        # that sits one further out.
+        # Layout order — navigation outward, the two direction-aware
+        # play buttons hugging the FrameDisplay at the visual centre.
+        # No stop button here; Stop the action is still available via
+        # the controller API but not as a transport widget — pause +
+        # seek-to-IN-frame is the natural way to "stop" and the user
+        # asked to free up the bar.
         layout.addWidget(self._first_btn)
         layout.addWidget(self._prev_btn)
-        layout.addWidget(self._frame_display)
         layout.addWidget(self._reverse_play_btn)
+        layout.addWidget(self._frame_display)
         layout.addWidget(self._play_btn)
-        layout.addWidget(self._stop_btn)
         layout.addWidget(self._next_btn)
         layout.addWidget(self._last_btn)
 

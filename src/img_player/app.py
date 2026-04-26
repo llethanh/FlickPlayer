@@ -172,7 +172,6 @@ class ImgPlayerApp:
 
         # MainWindow -> Controller
         self._window.play_toggled.connect(self._on_play_toggled)
-        self._window.stop_clicked.connect(self._controller.stop)
         self._window.step_clicked.connect(self._controller.step)
         self._window.jump_to_ends.connect(self._on_jump_to_ends)
         self._window.frame_requested.connect(self._on_scrub_requested)
@@ -328,9 +327,10 @@ class ImgPlayerApp:
         self._prefs.fps = fps
 
     def _on_direction_play(self, direction: int) -> None:
-        self._controller.set_direction(direction)
-        if not self._controller.state.is_playing:
-            self._controller.play()
+        # Logic lives on the controller — start / flip / pause based
+        # on the requested direction vs current state. See
+        # :meth:`PlayerController.play_direction` for the rules.
+        self._controller.play_direction(direction)
 
     def _on_mark_in(self) -> None:
         cur = self._controller.state.current_frame
