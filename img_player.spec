@@ -89,7 +89,10 @@ a = Analysis(  # noqa: F821 — Analysis is injected by PyInstaller
     hiddenimports=hidden,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    # Runtime hook executed *before* __main__.py — forces our bundled
+    # _internal/ to win the DLL lookup race against system-wide VFX
+    # tooling (mrViewer, Nuke, RV, etc. that put their bin/ on PATH).
+    runtime_hooks=[str(PROJECT_ROOT / "pyi_rth_dll_priority.py")],
     # Trim Qt translations + tests we never load — saves ~80 MB.
     excludes=[
         "tkinter",
