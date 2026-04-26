@@ -32,6 +32,12 @@ dev = [
     "ruff>=0.5",
     "mypy>=1.10",
 ]
+build = [
+    # PyInstaller is only needed when packaging the standalone Windows
+    # bundle. Kept out of `dev` so a regular `pip install -e .[dev]` does
+    # not pull it in. See BUILD.md for the build procedure.
+    "pyinstaller>=6.0",
+]
 
 [project.scripts]
 img_player = "img_player.__main__:main"
