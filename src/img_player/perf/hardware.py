@@ -9,7 +9,7 @@ This module is **pure logic** — no Qt, no OIIO, no OpenGL. Inputs
 are values, outputs are values, and unit tests can exercise every
 branch without spinning up a window or a GL context.
 
-See sections 1 and 2 of
+See sections 1, 2 and 3 of
 `docs/specs/2026-04-26-hw-adaptive-perf-design.md` for the rationale
 behind every heuristic, including why the bounds (12 workers max,
 6 OIIO threads max, 64 GB cache max) are where they are. In short:
@@ -20,18 +20,19 @@ The expected lifetime is:
 
     >>> hw = detect_hardware(gpu_renderer=None)         # at boot
     >>> tune = compute_tune(hw)                         # heuristics
-    >>> # ... CLI overrides applied (see slice 2) ...
-    >>> # ... runtime constraints applied (see slice 3) ...
-    >>> # later, once the GL context lives:
+    >>> tune = apply_cli_overrides(tune, cache_gb=...)  # CLI wins
+    >>> # ... runtime constraints applied (slice 3) ...
+    >>> # later, once the GL context lives (slice 4):
     >>> hw2 = detect_hardware(gpu_renderer=real_gl_renderer)
     >>> tune2 = compute_tune(hw2)                       # late-bind
+    >>> tune2 = apply_cli_overrides(tune2, ...)         # CLI still wins
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 logger = logging.getLogger(__name__)
@@ -242,4 +243,119 @@ def detect_hardware(gpu_renderer: str | None = None) -> HardwareProfile:
         total_ram_gb=total_ram_gb,
         gpu_renderer=gpu_renderer,
         gpu_kind=gpu_kind,
+    )
+
+
+# ----------------------------------------------------------------------------
+# CLI overrides — explicit values always win over heuristics
+# ----------------------------------------------------------------------------
+
+
+def apply_cli_overrides(
+    tune: PerformanceTune,
+    *,
+    cache_gb: float | None = None,
+    num_workers: int | None = None,
+    oiio_threads: int | None = None,
+    no_pbo: bool = False,
+    force_pbo: bool = False,
+) -> PerformanceTune:
+    """Return a new ``PerformanceTune`` with explicit CLI flags applied.
+
+    The precedence rule from spec §3 is::
+
+        explicit CLI flag  >  auto-tune  >  hardcoded fallback
+
+    Each ``cache_gb`` / ``num_workers`` / ``oiio_threads`` argument
+    is ``None`` when the user did *not* pass the corresponding flag
+    on the command line — in that case the auto-tuned value is kept
+    untouched. When non-``None`` it overrides the field absolutely.
+
+    ``no_pbo`` and ``force_pbo`` are independent booleans, but they
+    are mutually exclusive at the argparse level (the CLI parser
+    enforces this via ``add_mutually_exclusive_group``). This
+    function still defends against both being ``True`` to avoid a
+    silent bug if a future caller bypasses argparse.
+    """
+    if no_pbo and force_pbo:
+        # argparse should already have caught this — defensive guard
+        # so a future programmatic caller can't end up with ambiguous
+        # state.
+        raise ValueError("--no-pbo and --force-pbo are mutually exclusive")
+
+    use_pbo = tune.use_pbo
+    if no_pbo:
+        use_pbo = False
+    elif force_pbo:
+        use_pbo = True
+
+    return replace(
+        tune,
+        cache_gb=cache_gb if cache_gb is not None else tune.cache_gb,
+        num_workers=num_workers if num_workers is not None else tune.num_workers,
+        oiio_threads=oiio_threads if oiio_threads is not None else tune.oiio_threads,
+        use_pbo=use_pbo,
+    )
+
+
+# ----------------------------------------------------------------------------
+# Logging helper — surfaces what the tune resolved to so users (and the
+# author six months from now) can reason about a misbehaving session.
+# ----------------------------------------------------------------------------
+
+
+def log_tune_resolution(
+    hw: HardwareProfile,
+    auto: PerformanceTune,
+    final: PerformanceTune,
+    log: logging.Logger | None = None,
+) -> None:
+    """Emit the ``[hw-tune]`` lines documented in spec §3.
+
+    Three scenarios:
+
+    * **No overrides applied** — `auto == final` — we log the
+      detection result and the auto values.
+    * **Some overrides applied** — we additionally log a list of
+      the changed fields and the final, resolved values.
+
+    Kept here (and not in ``app.py``) so it can be reused by the
+    benchmark runner and any future entry point with the same
+    formatting.
+    """
+    log = log or logger
+    renderer = hw.gpu_renderer if hw.gpu_renderer else "None (will be detected at first paint)"
+    log.info(
+        "[hw-tune] cpu_threads=%d, ram_total=%.1f GB, gpu_renderer=%s",
+        hw.cpu_threads,
+        hw.total_ram_gb,
+        renderer,
+    )
+    log.info("[hw-tune] gpu_kind=%s", hw.gpu_kind)
+    log.info(
+        "[hw-tune] auto: num_workers=%d, cache_gb=%.1f, oiio_threads=%d, use_pbo=%s",
+        auto.num_workers,
+        auto.cache_gb,
+        auto.oiio_threads,
+        auto.use_pbo,
+    )
+
+    overrides: list[str] = []
+    if final.num_workers != auto.num_workers:
+        overrides.append(f"num_workers={final.num_workers}")
+    if final.cache_gb != auto.cache_gb:
+        overrides.append(f"cache_gb={final.cache_gb:.1f}")
+    if final.oiio_threads != auto.oiio_threads:
+        overrides.append(f"oiio_threads={final.oiio_threads}")
+    if final.use_pbo != auto.use_pbo:
+        overrides.append(f"use_pbo={final.use_pbo}")
+    if overrides:
+        log.info("[hw-tune] CLI overrides: %s", ", ".join(overrides))
+
+    log.info(
+        "[hw-tune] applied: num_workers=%d, cache_gb=%.1f, oiio_threads=%d, use_pbo=%s",
+        final.num_workers,
+        final.cache_gb,
+        final.oiio_threads,
+        final.use_pbo,
     )

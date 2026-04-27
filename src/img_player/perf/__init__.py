@@ -23,16 +23,20 @@ from img_player.perf.hardware import (
     GpuKind,
     HardwareProfile,
     PerformanceTune,
+    apply_cli_overrides,
     classify_gpu,
     compute_tune,
     detect_hardware,
+    log_tune_resolution,
 )
 
 __all__ = [
     "GpuKind",
     "HardwareProfile",
     "PerformanceTune",
+    "apply_cli_overrides",
     "classify_gpu",
     "compute_tune",
     "detect_hardware",
+    "log_tune_resolution",
 ]

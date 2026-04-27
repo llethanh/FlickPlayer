@@ -23,7 +23,19 @@ from img_player.ui.main_window import MainWindow
 
 log = logging.getLogger(__name__)
 
-# Reasonable defaults for an HD VFX perso workstation — tune later via settings.
+# Hard-coded fallback tier of the precedence chain.
+#
+#     CLI flag (explicit)  >  auto-tune  >  these DEFAULT_* constants
+#
+# Since slice 2 of the hardware-adaptive perf work, ``__main__.py``
+# always runs ``perf.compute_tune()`` and these constants are no
+# longer the boot path's source of truth — they're only used if a
+# caller instantiates ``ImgPlayerApp`` / ``run_gui`` / ``run_benchmark``
+# *programmatically* without passing values. They also match the
+# values ``compute_tune()`` returns under ``gpu_kind="unknown"``,
+# which is the conservative fallback the auto-tune emits at boot
+# (before the GL context exists). Keeping them in sync is a
+# non-regression invariant.
 DEFAULT_CACHE_BUDGET_BYTES = 8 * 1024**3  # 8 GB
 DEFAULT_NUM_WORKERS = 6
 # Why 1 instead of os.cpu_count():
