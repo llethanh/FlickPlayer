@@ -26,7 +26,7 @@ from __future__ import annotations
 import math
 from enum import Enum
 
-from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, Qt
 from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
 
@@ -210,6 +210,14 @@ class AnnotationOverlay(QWidget):
         # actively drawing. Points are in image-space.
         self._current_stroke_points: list[tuple[float, float]] | None = None
 
+        # When a non-left mouse button starts a drag (e.g. middle for
+        # pan), we forward the entire press → move* → release sequence
+        # to the GL viewport so the user can still pan / right-click /
+        # etc. while a drawing tool is active. This field tracks
+        # which button is being pass-thru'd; ``None`` means the next
+        # press is up for grabs.
+        self._passthrough_button: Qt.MouseButton | None = None
+
         # Mirror the viewport's geometry. We follow resizes via an
         # event filter installed on the parent.
         self.setGeometry(gl_viewport.rect())
@@ -297,7 +305,18 @@ class AnnotationOverlay(QWidget):
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() != Qt.MouseButton.LeftButton:
-            super().mousePressEvent(event)
+            # Non-left click while a tool is active: hand the entire
+            # press → move* → release sequence to the GL viewport so
+            # the user can still pan with the middle button (or use
+            # any future right-click handler) without having to
+            # toggle the pen off first. Qt's automatic propagation
+            # on event.ignore() is unreliable when the overlay is a
+            # child of a QOpenGLWidget — the GL widget creates an
+            # internal native subwindow and event routing differs
+            # from regular widget hierarchies. Explicit forwarding
+            # via sendEvent is rock-solid.
+            self._passthrough_button = event.button()
+            QCoreApplication.sendEvent(self._gl_viewport, event)
             return
 
         cursor_image = self._cursor_in_image_space(event)
@@ -319,6 +338,11 @@ class AnnotationOverlay(QWidget):
             event.accept()
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        # Mid-drag for the non-left passthrough — keep forwarding so
+        # the viewport's pan logic gets each move sample.
+        if self._passthrough_button is not None:
+            QCoreApplication.sendEvent(self._gl_viewport, event)
+            return
         if self._current_stroke_points is None:
             return  # not actively drawing
         cursor_image = self._cursor_in_image_space(event)
@@ -333,6 +357,15 @@ class AnnotationOverlay(QWidget):
         event.accept()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        # Closing the non-left passthrough — forward the release and
+        # clear the flag so the next press is up for grabs again.
+        if (
+            self._passthrough_button is not None
+            and event.button() == self._passthrough_button
+        ):
+            QCoreApplication.sendEvent(self._gl_viewport, event)
+            self._passthrough_button = None
+            return
         if (
             event.button() != Qt.MouseButton.LeftButton
             or self._current_stroke_points is None

@@ -95,6 +95,14 @@ class AnnotationStore(QObject):
         self._frames: dict[int, _FrameState] = {}
         # Slice 4 hooks this — for now just the field, no toggle wiring.
         self._show_during_playback: bool = False
+        # Tracks whether the in-memory state has changed since the
+        # last load_from_dict / mark_clean. The app reads this at
+        # close-time to decide whether to prompt the user about
+        # saving. Note: undo/redo also flip this, even if the net
+        # effect brings the state back to "as loaded" — we err on
+        # the side of asking. The user can pick "Don't save" if
+        # they really meant to discard.
+        self._dirty: bool = False
 
     # ------------------------------------------------------------------ Read
 
@@ -115,6 +123,18 @@ class AnnotationStore(QObject):
     def show_during_playback(self, value: bool) -> None:
         self._show_during_playback = bool(value)
 
+    def is_dirty(self) -> bool:
+        """``True`` if any mutation happened since the last
+        :meth:`load_from_dict` or :meth:`mark_clean` — used by the
+        app's close-time prompt to skip the dialog when nothing has
+        changed."""
+        return self._dirty
+
+    def mark_clean(self) -> None:
+        """Reset the dirty flag — call after successfully writing
+        the in-memory state to disk."""
+        self._dirty = False
+
     # ------------------------------------------------------------------ Mutate
 
     def add_stroke(self, frame: int, stroke: Stroke) -> None:
@@ -126,6 +146,7 @@ class AnnotationStore(QObject):
         state.undo_stack.append(Action(ActionKind.ADD, frame, idx, stroke))
         # User action — the redo stack is no longer reachable.
         state.redo_stack.clear()
+        self._dirty = True
         self.frame_annotated.emit(frame)
         if was_empty:
             self.annotated_frames_changed.emit()
@@ -141,9 +162,27 @@ class AnnotationStore(QObject):
         stroke = state.strokes.pop(idx)
         state.undo_stack.append(Action(ActionKind.REMOVE, frame, idx, stroke))
         state.redo_stack.clear()
+        self._dirty = True
         self.frame_annotated.emit(frame)
         if not state.strokes:
             self.annotated_frames_changed.emit()
+
+    def clear_frame(self, frame: int) -> int:
+        """Remove every stroke on ``frame``. Returns the count removed.
+
+        Each removal is recorded as its own undo entry, so the user
+        can walk back stroke-by-stroke with Ctrl+Z. We remove from
+        the back so each Action's ``idx`` matches the position the
+        stroke occupied at removal time — that's what :meth:`undo`
+        re-inserts into.
+        """
+        state = self._frames.get(frame)
+        if state is None or not state.strokes:
+            return 0
+        count = len(state.strokes)
+        while state.strokes:
+            self.remove_stroke(frame, len(state.strokes) - 1)
+        return count
 
     # ------------------------------------------------------------------ Undo/redo
 
@@ -185,6 +224,8 @@ class AnnotationStore(QObject):
         else:  # REMOVE
             del state.strokes[action.idx]
         is_empty = not state.strokes
+        # Undo / redo are state-changing too — flag the store dirty.
+        self._dirty = True
         self.frame_annotated.emit(action.frame)
         if was_empty != is_empty:
             self.annotated_frames_changed.emit()
@@ -232,7 +273,10 @@ class AnnotationStore(QObject):
                     continue
             if kept:
                 self._frames[frame] = _FrameState(strokes=kept)
-        # Loading state is not undoable.
+        # Loading state is not undoable. We just synced with disk →
+        # by definition the in-memory state matches the file we
+        # loaded from, so the dirty flag resets.
+        self._dirty = False
         self.annotated_frames_changed.emit()
 
     # ------------------------------------------------------------------ Test helpers

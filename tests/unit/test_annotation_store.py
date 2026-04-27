@@ -327,3 +327,75 @@ class TestStoreSerialization:
             {"42": [{"color": "#FF0000", "size": 5.0, "points": [[0, 0]]}]}
         )
         assert len(ev) == 1
+
+
+# ============================================================================
+# Dirty tracking — drives the close-time save prompt
+# ============================================================================
+
+
+class TestDirtyTracking:
+    """The store carries a dirty flag flipped on every mutation and
+    cleared after load / explicit mark_clean. The app uses it to
+    skip the save dialog when nothing needs saving."""
+
+    def test_initially_clean(self) -> None:
+        store = AnnotationStore()
+        assert store.is_dirty() is False
+
+    def test_add_marks_dirty(self) -> None:
+        store = AnnotationStore()
+        store.add_stroke(42, _stroke())
+        assert store.is_dirty() is True
+
+    def test_remove_marks_dirty(self) -> None:
+        store = AnnotationStore()
+        store.add_stroke(42, _stroke())
+        store.mark_clean()
+        store.remove_stroke(42, 0)
+        assert store.is_dirty() is True
+
+    def test_undo_marks_dirty(self) -> None:
+        """An undo is a state change vs disk — flag the store dirty
+        even though logically the in-memory state may again match
+        what's on disk. The user can choose Don't Save in the
+        prompt; we err on the side of asking."""
+        store = AnnotationStore()
+        store.add_stroke(42, _stroke())
+        store.mark_clean()
+        store.undo(42)
+        assert store.is_dirty() is True
+
+    def test_redo_marks_dirty(self) -> None:
+        store = AnnotationStore()
+        store.add_stroke(42, _stroke())
+        store.undo(42)
+        store.mark_clean()
+        store.redo(42)
+        assert store.is_dirty() is True
+
+    def test_load_from_dict_resets_clean(self) -> None:
+        """Just-loaded state is by definition in sync with the
+        source — no save needed."""
+        store = AnnotationStore()
+        store.add_stroke(42, _stroke())
+        assert store.is_dirty() is True
+        store.load_from_dict(
+            {"10": [{"color": "#FF0000", "size": 5.0, "points": [[0, 0]]}]}
+        )
+        assert store.is_dirty() is False
+
+    def test_mark_clean_explicit_reset(self) -> None:
+        store = AnnotationStore()
+        store.add_stroke(42, _stroke())
+        store.mark_clean()
+        assert store.is_dirty() is False
+
+    def test_no_op_undo_does_not_change_dirty(self) -> None:
+        """Calling undo on a frame with an empty stack does nothing
+        — including no dirty flip. Spamming Ctrl+Z on an unchanged
+        frame would otherwise mark the store dirty for no reason."""
+        store = AnnotationStore()
+        # Start clean, no strokes anywhere.
+        assert store.undo(42) is False
+        assert store.is_dirty() is False

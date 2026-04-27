@@ -128,10 +128,19 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
             | QDockWidget.DockWidgetFeature.DockWidgetFloatable
             | QDockWidget.DockWidgetFeature.DockWidgetClosable
         )
+        # Anchored on the LEFT side of the window — keeps the right
+        # side free for the Color / Channels / future Comment panels,
+        # and matches the user's preferred review-tool layout (drawing
+        # tools on the left like Photoshop / Procreate).
         self.addDockWidget(
-            Qt.DockWidgetArea.RightDockWidgetArea, self._annotation_dock
+            Qt.DockWidgetArea.LeftDockWidgetArea, self._annotation_dock
         )
         self._annotation_dock.hide()  # only shown when toolbar is in dock mode
+
+        # Callback hook fired from closeEvent before the window
+        # actually closes. Set by ``app.py`` to prompt the user
+        # about saving annotations.
+        self._before_close_callback: Callable[[], bool] | None = None
 
         self._build_menu()
         self._install_shortcuts()
@@ -529,5 +538,31 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         self.open_requested.emit(Path(local))
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        # The app can register a callback that runs before the window
+        # actually closes — used for the annotation save prompt.
+        # Returning ``False`` from the callback cancels the close
+        # (e.g. user clicked "Annuler" in the save dialog).
+        if self._before_close_callback is not None:
+            try:
+                allow_close = bool(self._before_close_callback())
+            except Exception:  # pragma: no cover — defensive
+                log.exception("MainWindow before-close callback raised")
+                allow_close = True
+            if not allow_close:
+                event.ignore()
+                return
         log.info("MainWindow closing")
         super().closeEvent(event)
+
+    def set_before_close_callback(
+        self, callback: Callable[[], bool] | None
+    ) -> None:
+        """Register a function called from :meth:`closeEvent` before
+        the window actually closes. The callback returns ``True`` to
+        allow the close, ``False`` to cancel it (the close event is
+        ``ignore()``-d and the window stays open).
+
+        Used by ``app.py`` to prompt the user about saving annotations
+        if the in-memory state is dirty.
+        """
+        self._before_close_callback = callback

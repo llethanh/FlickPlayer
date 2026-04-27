@@ -111,6 +111,75 @@ _TEMPLATES: dict[str, str] = {
         '<rect x="3" y="11" width="10" height="2" rx="1" fill="{color}"/>'
         "</svg>"
     ),
+    # ===== Annotation toolbar — line-art set =============================
+    # All line-art icons share the same conventions:
+    # * stroke (not fill) at 1.4 px — readable at 16 px and beyond,
+    #   matches the visual weight of the modern review tools the
+    #   user pointed to as a reference.
+    # * Round caps + round joins so corners breathe (SVG default
+    #   "miter" gets ugly on small icons).
+    # * fill="none" everywhere except where a small filled accent
+    #   reinforces the silhouette (the pin's body).
+    "pen": (
+        '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none" '
+        'stroke="{color}" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">'
+        # body diagonal
+        '<path d="M3.5 12.5 L11.5 4.5"/>'
+        # tip cap (a small triangle at the top-right end of the body)
+        '<path d="M10.5 3.5 L13.5 6.5 L11.5 8.5 L8.5 5.5 Z"/>'
+        # short ground line under the tip — suggests the pen has just
+        # left a stroke
+        '<path d="M2 14 L4 14"/>'
+        "</svg>"
+    ),
+    "eraser": (
+        '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none" '
+        'stroke="{color}" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">'
+        # main body — a parallelogram (rectangle rotated -20° around its centre)
+        '<path d="M4.2 11.8 L9.5 4.0 L13.0 6.5 L7.7 14.3 Z"/>'
+        # division line between the rubber tip (upper-left) and the
+        # holder (lower-right) — half the way across the parallelogram
+        '<path d="M6.85 8.0 L10.35 10.5"/>'
+        "</svg>"
+    ),
+    "undo": (
+        '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none" '
+        'stroke="{color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'
+        # ¾ arc: starts at top-left, sweeps clockwise to the right
+        '<path d="M 3.5 6 A 4.5 4.5 0 1 1 2.5 9.5"/>'
+        # arrowhead — open chevron pointing down-left at the arc start
+        '<polyline points="2,3.5 3.5,6 6,5"/>'
+        "</svg>"
+    ),
+    "redo": (
+        '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none" '
+        'stroke="{color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'
+        '<path d="M 12.5 6 A 4.5 4.5 0 1 0 13.5 9.5"/>'
+        '<polyline points="14,3.5 12.5,6 10,5"/>'
+        "</svg>"
+    ),
+    "pin": (
+        '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none" '
+        'stroke="{color}" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">'
+        # Thumbtack viewed from the side — head + flared shoulders +
+        # vertical needle. Stroke-only outline so the silhouette
+        # matches the rest of the line-art set.
+        '<path d="M 8 2 L 11 5 L 11 9 L 13 11 L 9 11 L 8 14 L 7 11 L 3 11 L 5 9 L 5 5 Z"/>'
+        "</svg>"
+    ),
+    "trash": (
+        '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none" '
+        'stroke="{color}" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">'
+        # Lid (top horizontal bar with a small handle ridge) and the
+        # bin body (rectangle with two vertical bars suggesting
+        # corrugation). The Clear button uses this — visually
+        # decisive about "remove everything on this frame".
+        '<path d="M3 4 L13 4"/>'
+        '<path d="M6 4 L6 2.5 L10 2.5 L10 4"/>'
+        '<path d="M5 4 L5.5 13.5 L10.5 13.5 L11 4"/>'
+        '<path d="M7 7 L7 11 M9 7 L9 11"/>'
+        "</svg>"
+    ),
 }
 
 
