@@ -139,16 +139,19 @@ class TransportBar(QWidget):  # type: ignore[misc]
         # Sit between the playback nav (last_btn) and FPS — a separate
         # logical group, exposed via three signals (toggle / prev /
         # next). The toggle button is checkable and reflects whether
-        # the toolbar is currently visible.
-        self._annotation_prev_btn = _text_button(
-            "⏮", "Frame annotée précédente ([)"
+        # the toolbar is currently visible. Icons (annotation_prev /
+        # annotation_next / pen) come from the same SVG factory as
+        # the rest of the transport, so the visual hierarchy stays
+        # consistent — same stroke weight, same base color.
+        self._annotation_prev_btn = _icon_button(
+            make_icon("annotation_prev"), "Frame annotée précédente ([)"
         )
-        self._annotation_toggle_btn = _text_button(
-            "✏", "Afficher / masquer la toolbar d'annotation (D)"
+        self._annotation_toggle_btn = _icon_button(
+            make_icon("pen"), "Afficher / masquer la toolbar d'annotation (D)"
         )
         self._annotation_toggle_btn.setCheckable(True)
-        self._annotation_next_btn = _text_button(
-            "⏭", "Frame annotée suivante (])"
+        self._annotation_next_btn = _icon_button(
+            make_icon("annotation_next"), "Frame annotée suivante (])"
         )
         self._annotation_prev_btn.clicked.connect(self.annotation_prev_clicked.emit)
         self._annotation_toggle_btn.clicked.connect(

@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtCore import QPoint, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPalette
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -45,6 +45,8 @@ from PySide6.QtWidgets import (
 
 from img_player.annotate.overlay import ToolKind
 from img_player.render.gl_viewport import GLViewport
+from img_player.ui.icons import make_icon
+from img_player.ui.theme import H
 
 
 class ToolbarMode(Enum):
@@ -263,7 +265,8 @@ class AnnotationToolbar(QWidget):
 
         # --- Pin button (top of the toolbar)
         self._pin_btn = QToolButton(self)
-        self._pin_btn.setText("📌")
+        self._pin_btn.setIcon(make_icon("pin"))
+        self._pin_btn.setIconSize(QSize(16, 16))
         self._pin_btn.setToolTip("Bascule float ⇄ dock")
         self._pin_btn.setFixedSize(28, 24)
         self._pin_btn.clicked.connect(self._on_pin_clicked)
@@ -275,14 +278,16 @@ class AnnotationToolbar(QWidget):
         tool_row.setSpacing(4)
 
         self._pen_btn = QToolButton(self)
-        self._pen_btn.setText("✎")
+        self._pen_btn.setIcon(make_icon("pen"))
+        self._pen_btn.setIconSize(QSize(18, 18))
         self._pen_btn.setToolTip("Pen (P) — clic-glisser pour dessiner")
         self._pen_btn.setCheckable(True)
         self._pen_btn.setFixedSize(36, 28)
         self._pen_btn.clicked.connect(self._on_pen_clicked)
 
         self._eraser_btn = QToolButton(self)
-        self._eraser_btn.setText("⌫")
+        self._eraser_btn.setIcon(make_icon("eraser"))
+        self._eraser_btn.setIconSize(QSize(18, 18))
         self._eraser_btn.setToolTip("Eraser (E) — clic sur un trait pour le supprimer")
         self._eraser_btn.setCheckable(True)
         self._eraser_btn.setFixedSize(36, 28)
@@ -337,12 +342,14 @@ class AnnotationToolbar(QWidget):
         undo_row = QVBoxLayout()
         undo_row.setSpacing(4)
         self._undo_btn = QToolButton(self)
-        self._undo_btn.setText("↶")
+        self._undo_btn.setIcon(make_icon("undo"))
+        self._undo_btn.setIconSize(QSize(18, 18))
         self._undo_btn.setToolTip("Undo (Ctrl+Z)")
         self._undo_btn.setFixedSize(36, 24)
         self._undo_btn.clicked.connect(self.undo_requested.emit)
         self._redo_btn = QToolButton(self)
-        self._redo_btn.setText("↷")
+        self._redo_btn.setIcon(make_icon("redo"))
+        self._redo_btn.setIconSize(QSize(18, 18))
         self._redo_btn.setToolTip("Redo (Ctrl+Y)")
         self._redo_btn.setFixedSize(36, 24)
         self._redo_btn.clicked.connect(self.redo_requested.emit)

@@ -111,6 +111,71 @@ _TEMPLATES: dict[str, str] = {
         '<rect x="3" y="11" width="10" height="2" rx="1" fill="{color}"/>'
         "</svg>"
     ),
+    # ===== Annotation icons (slice 4 polish) =============================
+    # Pen — diagonal body pointing top-right with a separate nib cap so
+    # the silhouette reads as "drawing tool" not "knife". Body uses the
+    # main fill, the nib uses the same fill so it merges optically into
+    # one shape.
+    "pen": (
+        '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">'
+        '<polygon points="2,14 9,7 11,9 4,16" fill="{color}"/>'
+        '<polygon points="9,7 12,4 14,6 11,9" fill="{color}"/>'
+        '<polygon points="2,14 4,16 1,15" fill="{color}"/>'
+        "</svg>"
+    ),
+    # Eraser — angled block, two-tone via opacity to suggest the
+    # rubber/holder split classic on review-tool eraser icons.
+    "eraser": (
+        '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">'
+        '<polygon points="3,11 9,5 13,9 7,15" fill="{color}"/>'
+        '<polygon points="9,5 11,3 14,6 13,9" fill="{color}" opacity="0.55"/>'
+        "</svg>"
+    ),
+    # Undo — 3/4-circle arc + arrowhead at the start. We trace the arc
+    # with a path stroke for visual continuity (other icons are filled,
+    # but a stroke arc reads "circular motion" much better than any
+    # polygon approximation).
+    "undo": (
+        '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">'
+        '<path d="M 4 4 A 5 5 0 1 1 3 8.5" '
+        'stroke="{color}" stroke-width="1.6" fill="none" stroke-linecap="round"/>'
+        '<polygon points="2,5 7,3 5,8" fill="{color}"/>'
+        "</svg>"
+    ),
+    # Redo — mirror of undo across the vertical axis.
+    "redo": (
+        '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">'
+        '<path d="M 12 4 A 5 5 0 1 0 13 8.5" '
+        'stroke="{color}" stroke-width="1.6" fill="none" stroke-linecap="round"/>'
+        '<polygon points="14,5 9,3 11,8" fill="{color}"/>'
+        "</svg>"
+    ),
+    # Pin / thumbtack viewed from the side — head at the top with
+    # "wings" flaring out, narrowing to a point at the bottom. Used by
+    # the toolbar's float ⇄ dock toggle.
+    "pin": (
+        '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">'
+        '<path d="M 8 2 L 11 5 L 11 9 L 13 11 L 9 11 L 8 14 L 7 11 L 3 11 L 5 9 L 5 5 Z" '
+        'fill="{color}"/>'
+        "</svg>"
+    ),
+    # Skip-to-previous-annotated-frame. A leftward triangle with a
+    # round dot at the destination side (left), so it reads as
+    # "jump to a marker on the left" rather than "step back one
+    # frame" (which is the existing ``prev`` icon).
+    "annotation_prev": (
+        '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">'
+        '<polygon points="13,3 6,8 13,13" fill="{color}"/>'
+        '<circle cx="3" cy="8" r="1.6" fill="{color}"/>'
+        "</svg>"
+    ),
+    # Skip-to-next-annotated-frame, mirror of ``annotation_prev``.
+    "annotation_next": (
+        '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">'
+        '<polygon points="3,3 10,8 3,13" fill="{color}"/>'
+        '<circle cx="13" cy="8" r="1.6" fill="{color}"/>'
+        "</svg>"
+    ),
 }
 
 
