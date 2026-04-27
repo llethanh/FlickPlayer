@@ -106,12 +106,20 @@ def test_tune_laptop_igpu_no_pbo_oiio_one() -> None:
     assert t.use_pbo is False
 
 
-def test_tune_laptop_dgpu_pbo_on_oiio_scaled() -> None:
+def test_tune_laptop_dgpu_keeps_oiio_at_one_due_to_consumer_ram() -> None:
+    """On a 16 GB laptop with discrete GPU we still keep oiio=1.
+
+    The GPU classification is ``discrete_nvidia`` so PBO is on, but
+    the ``total_ram_gb < 32`` branch fires: a consumer-laptop
+    DDR can't sustain multiple OIIO threads + a paint thread without
+    saturating. Pinned by slice 4 bench C empirical regression of
+    -32 % fps with oiio=4 on this exact profile.
+    """
     t = compute_tune(_LAPTOP_DGPU)
     assert t.num_workers == 8
     assert 6.0 <= t.cache_gb <= 6.2
-    assert t.oiio_threads == 4          # 16 // 4
-    assert t.use_pbo is True
+    assert t.oiio_threads == 1          # consumer RAM → keep tight
+    assert t.use_pbo is True            # but PBO is still worth it
 
 
 def test_tune_workstation_caps_workers_and_oiio() -> None:
@@ -128,7 +136,12 @@ def test_tune_workstation_caps_workers_and_oiio() -> None:
 
 
 def test_tune_clamps_at_workers_min() -> None:
-    """Even on a 2-thread machine we keep at least 2 workers."""
+    """Even on a 2-thread machine we keep at least 2 workers.
+
+    With only 4 GB total RAM this is squarely in the consumer-laptop
+    branch, so ``oiio_threads`` stays at 1 (DDR-shared safety) — the
+    dGPU floor of 2 only kicks in on workstations (≥ 32 GB).
+    """
     hw = HardwareProfile(
         cpu_threads=2,
         total_ram_gb=4.0,
@@ -137,7 +150,7 @@ def test_tune_clamps_at_workers_min() -> None:
     )
     t = compute_tune(hw)
     assert t.num_workers == 2
-    assert t.oiio_threads == 2          # dGPU floor
+    assert t.oiio_threads == 1          # consumer RAM → keep tight
 
 
 def test_tune_clamps_at_cache_floor() -> None:
@@ -164,6 +177,43 @@ def test_tune_clamps_at_cache_ceiling() -> None:
     assert t.cache_gb == 64.0
     assert t.num_workers == 12          # capped at the workers ceiling
     assert t.oiio_threads == 6          # capped at the OIIO ceiling
+
+
+def test_tune_high_ram_laptop_with_dgpu_scales_oiio_threads() -> None:
+    """A laptop with ≥ 32 GB RAM and discrete GPU is treated like a
+    workstation for OIIO sizing — quad-channel DDR can sustain more
+    threads. Pins the threshold side that the slice-4 bug isn't
+    over-conservative.
+    """
+    hw = HardwareProfile(
+        cpu_threads=16,
+        total_ram_gb=32.0,
+        gpu_renderer="NVIDIA GeForce RTX 4080 Laptop GPU",
+        gpu_kind="discrete_nvidia",
+    )
+    t = compute_tune(hw)
+    assert t.oiio_threads == 4          # 16 // 4, full scale path
+    assert t.use_pbo is True
+
+
+def test_tune_consumer_ram_threshold_boundary() -> None:
+    """Fence-post: exactly *under* the threshold stays at 1 OIIO
+    thread, exactly *at* the threshold scales up. Documents the
+    boundary so a future tweak can't slip a regression past."""
+    just_below = HardwareProfile(
+        cpu_threads=16,
+        total_ram_gb=31.9,
+        gpu_renderer="discrete",
+        gpu_kind="discrete_nvidia",
+    )
+    just_at = HardwareProfile(
+        cpu_threads=16,
+        total_ram_gb=32.0,
+        gpu_renderer="discrete",
+        gpu_kind="discrete_nvidia",
+    )
+    assert compute_tune(just_below).oiio_threads == 1
+    assert compute_tune(just_at).oiio_threads == 4
 
 
 def test_tune_unknown_gpu_is_safe() -> None:

@@ -96,9 +96,21 @@ class PerformanceTune:
 _WORKERS_MIN = 2            # never go below; the cache needs concurrency
 _WORKERS_MAX = 12           # past 12, lock contention on the cache dominates
 
-_OIIO_MIN_DGPU = 2          # on dGPU we always have headroom for at least 2
+_OIIO_MIN_DGPU = 2          # on dGPU+workstation we always have headroom for at least 2
 _OIIO_MAX = 6               # 16 saturated DRAM in BASELINE; 6 is the safe ceiling
 _OIIO_INTEGRATED = 1        # iGPU shares DRAM with the worker pool — keep it tight
+
+# Below this total RAM threshold we treat the machine as a "consumer
+# laptop" — typically 16 / 32 GB, single-channel or dual-channel DDR
+# shared between CPU and (potentially also) iGPU. Empirically, even
+# with a discrete GPU active, scaling OIIO threads on this profile
+# saturates the DRAM bus and regresses playback fps because the
+# main-thread `glTexSubImage2D` does a DRAM→DRAM memcpy before the
+# DMA: see slice 4 bench C, which measured -32 % fps with oiio=4
+# vs oiio=1 on a Ryzen 7 260 mobile + RTX 5070 Laptop. Workstations
+# (≥ 32 GB) typically run quad-channel DDR and tolerate the larger
+# OIIO thread pool — that path keeps the original heuristic.
+_WORKSTATION_RAM_THRESHOLD_GB = 32.0
 
 _CACHE_FRACTION = 0.4       # 40 % of total RAM, leaves headroom for Nuke/DaVinci
 _CACHE_MIN_GB = 2.0
@@ -170,11 +182,26 @@ def compute_tune(hw: HardwareProfile) -> PerformanceTune:
         min(hw.total_ram_gb * _CACHE_FRACTION, _CACHE_MAX_GB),
     )
 
-    # OIIO threads: 1 on integrated (shared DRAM contention) or
-    # unknown (safe default). Scale up on discrete GPUs where the
-    # decode work is purely CPU and we have memory bandwidth to
-    # spare.
+    # OIIO threads. The right value depends on TWO factors, in priority order:
+    #
+    # 1. ``gpu_kind`` — integrated + unknown stay at 1 thread (the
+    #    iGPU shares DRAM with the workers, scaling OIIO saturates
+    #    the bus, BASELINE.md established this).
+    # 2. ``total_ram_gb`` — a discrete GPU on a *consumer laptop*
+    #    (< 32 GB RAM, typically dual-channel DDR shared with CPU)
+    #    behaves like an iGPU for memory-bandwidth purposes. The
+    #    ``glTexSubImage2D`` on the main thread does a DRAM→DRAM
+    #    memcpy before the PCIe DMA, which still contends with the
+    #    OIIO worker threads. Slice 4 bench C measured -32 % fps
+    #    with oiio=4 vs oiio=1 on a Ryzen 7 260 + RTX 5070 Laptop
+    #    + 16 GB. Treating these machines as iGPU-equivalent for
+    #    the OIIO heuristic keeps them in their sweet spot.
+    #
+    # Workstations (≥ 32 GB) typically have quad-channel DDR and
+    # the discrete GPU has its own VRAM, so scaling pays off.
     if hw.gpu_kind.startswith("integrated") or hw.gpu_kind == "unknown":
+        oiio_threads = _OIIO_INTEGRATED
+    elif hw.total_ram_gb < _WORKSTATION_RAM_THRESHOLD_GB:
         oiio_threads = _OIIO_INTEGRATED
     else:
         oiio_threads = max(_OIIO_MIN_DGPU, min(hw.cpu_threads // 4, _OIIO_MAX))
