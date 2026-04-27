@@ -9,6 +9,28 @@ import numpy as np
 import OpenImageIO as oiio
 import pytest
 
+from img_player.perf import calibration as _calibration
+
+
+@pytest.fixture(autouse=True)
+def _isolated_calibration_profile(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> Path:
+    """Point ``profile_path()`` at a per-test tmp dir.
+
+    Without this guard, any test that exercises the auto-tune pipeline
+    (``_resolve_tune``, ``app.run``, …) would silently read or write
+    the developer's real ``%LOCALAPPDATA%\\img_player\\profile.json`` —
+    leaking machine-specific tuning into test assertions and stomping
+    on the user's persisted profile. Function-scoped + autouse so the
+    isolation is total: a test that *does* want a profile creates one
+    in this tmp path on purpose.
+    """
+    fake = tmp_path / "calibration" / "profile.json"
+    monkeypatch.setattr(_calibration, "profile_path", lambda: fake)
+    return fake
+
 
 def _write_image(
     path: Path,
