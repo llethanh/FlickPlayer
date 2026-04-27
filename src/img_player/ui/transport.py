@@ -26,10 +26,13 @@ if TYPE_CHECKING:
 
 
 _LOOP_CYCLE = [LoopMode.LOOP, LoopMode.ONCE, LoopMode.PING_PONG]
+# Native emoji glyphs for the three loop modes — same style as the
+# annotation toolbar's ✏️ 🧽 📌 (colorful OS-rendered emojis rather
+# than monochrome text symbols).
 _LOOP_LABELS = {
-    LoopMode.LOOP:      ("↻", "Loop (play → first frame at the end)"),
-    LoopMode.ONCE:      ("→", "Play once (stop at the end)"),
-    LoopMode.PING_PONG: ("⇌", "Ping-pong (reverse at the end)"),
+    LoopMode.LOOP:      ("🔁", "Loop (play → first frame at the end)"),
+    LoopMode.ONCE:      ("▶️", "Play once (stop at the end)"),
+    LoopMode.PING_PONG: ("🏓", "Ping-pong (reverse at the end)"),
 }
 
 
@@ -83,16 +86,22 @@ class TransportBar(QWidget):  # type: ignore[misc]
         self._loop_mode = LoopMode.LOOP
 
         # --- In/Out markers -------------------------------------------------
-        self._mark_in_btn  = _text_button(" I ", "Mark IN at current frame (I)")
-        self._mark_out_btn = _text_button(" O ", "Mark OUT at current frame (O)")
-        self._clear_io_btn = _text_button("⌫",  "Clear IN/OUT range (Shift+R)")
+        # Same emoji-as-label style as the annotation toolbar
+        # (✏️ 🧽 📌). Native OS rendering = colourful glyphs that
+        # signal start / end / clean-up at a glance.
+        self._mark_in_btn  = _text_button("🚩", "Mark IN at current frame (I)")
+        self._mark_out_btn = _text_button("🏁", "Mark OUT at current frame (O)")
+        self._clear_io_btn = _text_button("🧹", "Clear IN/OUT range (Shift+R)")
 
         self._mark_in_btn.clicked.connect(self.mark_in_clicked.emit)
         self._mark_out_btn.clicked.connect(self.mark_out_clicked.emit)
         self._clear_io_btn.clicked.connect(self.clear_in_out_clicked.emit)
 
         # --- Loop mode ------------------------------------------------------
-        self._loop_btn = _text_button("↻", "Loop mode (click to cycle)")
+        # Initial label reflects the default LOOP mode; the click
+        # handler swaps it through ``_LOOP_LABELS`` as the user
+        # cycles modes.
+        self._loop_btn = _text_button("🔁", "Loop mode (click to cycle)")
         self._loop_btn.clicked.connect(self._cycle_loop_mode)
 
         # --- Playback controls ---------------------------------------------

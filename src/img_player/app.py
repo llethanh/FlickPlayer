@@ -740,7 +740,7 @@ class ImgPlayerApp:
         )
 
     def _on_annotated_frames_changed(self) -> None:
-        """Pushes the new noted-frames set to the timeline (markers
+        """Pushes the new noted-frames sets to the timeline (markers
         repaint) and re-evaluates whether the transport's prev/next
         buttons are reachable from the current playhead.
 
@@ -748,8 +748,19 @@ class ImgPlayerApp:
         ``annotated_frames_changed`` and the comment store's
         ``commented_frames_changed`` — either kind of note flipping
         in or out of a frame triggers the same recompute path.
+
+        The timeline draws the two kinds of notes with distinct
+        markers (orange triangle for annotations, blue dot for
+        comments) so the user can tell them apart at a glance.
+        Prev/next nav still works on the union — they're both
+        "noted frames the user might want to jump to".
         """
-        self._window.timeline.set_annotated_frames(self._noted_frames())
+        self._window.timeline.set_annotated_frames(
+            self._annotation_store.annotated_frames()
+        )
+        self._window.timeline.set_commented_frames(
+            self._comment_store.commented_frames()
+        )
         self._refresh_annotation_nav_buttons()
 
     def _refresh_annotation_nav_buttons(self) -> None:
