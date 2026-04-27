@@ -128,8 +128,12 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
             | QDockWidget.DockWidgetFeature.DockWidgetFloatable
             | QDockWidget.DockWidgetFeature.DockWidgetClosable
         )
+        # Anchored on the LEFT side of the window — keeps the right
+        # side free for the Color / Channels / future Comment panels,
+        # and matches the user's preferred review-tool layout (drawing
+        # tools on the left like Photoshop / Procreate).
         self.addDockWidget(
-            Qt.DockWidgetArea.RightDockWidgetArea, self._annotation_dock
+            Qt.DockWidgetArea.LeftDockWidgetArea, self._annotation_dock
         )
         self._annotation_dock.hide()  # only shown when toolbar is in dock mode
 
