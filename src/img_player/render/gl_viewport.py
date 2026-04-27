@@ -538,7 +538,8 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
         super().mouseReleaseEvent(event)
 
     def wheelEvent(self, event: QWheelEvent) -> None:
-        """Mouse-wheel zoom. Scroll up zooms in, down zooms out.
+        """Mouse-wheel zoom, anchored at the cursor. Scroll up zooms
+        in, down zooms out.
 
         Qt's ``angleDelta()`` reports 120 units per "notch" of a
         traditional wheel. We use that as our quantum: each notch
@@ -552,6 +553,12 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
         Fit must continue *from that ratio*, not jump back to 100 %.
         We therefore base the multiplication on the current effective
         zoom, which is the fit factor when ``_zoom_factor is None``.
+
+        Cursor anchor: when the factor changes, we adjust ``_pan_x`` /
+        ``_pan_y`` so the image-space pixel under the cursor stays
+        under the cursor — the only zoom feel that doesn't make the
+        user immediately re-pan to find what they were looking at.
+        Math lives in :func:`_anchored_pan_for_zoom`.
         """
         delta_steps = event.angleDelta().y() / 120.0
         if delta_steps == 0:
@@ -564,7 +571,29 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
         )
         new_zoom = base * (self.WHEEL_ZOOM_STEP ** delta_steps)
         new_zoom = max(self.MIN_ZOOM, min(self.MAX_ZOOM, new_zoom))
-        self.set_zoom(new_zoom)
+
+        # Compute the pan that keeps the cursor's image-space pixel in
+        # place. Note: in fit mode (_zoom_factor is None), the current
+        # pan is forced to (0, 0) by set_zoom(None) — so old_pan here
+        # is the right starting point regardless of mode.
+        cursor = event.position()
+        new_pan_x, new_pan_y = _anchored_pan_for_zoom(
+            cursor_widget_xy=(cursor.x(), cursor.y()),
+            widget_size=(self.width(), self.height()),
+            old_factor=base,
+            new_factor=new_zoom,
+            old_pan=(self._pan_x, self._pan_y),
+        )
+
+        # Atomic update: zoom + pan in one shot, single repaint. We
+        # don't go through set_zoom() because it doesn't know about
+        # pan; calling it would issue a redundant update() and then
+        # we'd update() again after the pan assignment.
+        self._zoom_factor = new_zoom
+        self._pan_x = new_pan_x
+        self._pan_y = new_pan_y
+        self.update()
+
         # Tell the rest of the UI (= the transport's zoom combo) so
         # it can reflect the new value without us setting it from
         # here.
@@ -918,6 +947,48 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------- Module-level helpers
+
+
+def _anchored_pan_for_zoom(
+    *,
+    cursor_widget_xy: tuple[float, float],
+    widget_size: tuple[int, int],
+    old_factor: float,
+    new_factor: float,
+    old_pan: tuple[float, float],
+) -> tuple[float, float]:
+    """Pan offset that keeps the image-space pixel under the cursor in
+    place when the zoom factor changes.
+
+    The viewport's transform is::
+
+        widget_xy = (win_size / 2) + pan + (image_xy - img_size/2) * factor
+
+    For the cursor at ``c`` the image-space pixel under it is::
+
+        i = ((c - win_size/2) - old_pan) / old_factor
+
+    Solving for the new pan such that the same ``i`` lands at the same
+    cursor position after we swap ``old_factor`` for ``new_factor``::
+
+        new_pan = (c - win_size/2) - (c - win_size/2 - old_pan) * (new_factor / old_factor)
+
+    Pure function: kept module-level so the math has unit-test coverage
+    without spinning up a GL context. ``old_factor == 0`` is treated
+    as a no-op (defensive — the viewport never produces zero, but
+    callers passing arbitrary fits shouldn't divide-by-zero us).
+    """
+    if old_factor == 0.0:
+        return old_pan
+    cx, cy = cursor_widget_xy
+    win_w, win_h = widget_size
+    px1, py1 = old_pan
+    u = cx - win_w / 2.0
+    v = cy - win_h / 2.0
+    ratio = new_factor / old_factor
+    px2 = u - (u - px1) * ratio
+    py2 = v - (v - py1) * ratio
+    return (px2, py2)
 
 
 def _compile_program(vertex_src: str, fragment_src: str) -> int:
