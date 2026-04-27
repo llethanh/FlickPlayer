@@ -227,6 +227,7 @@ def main(argv: list[str] | None = None) -> int:
             cache_budget_bytes=budget,
             num_workers=workers,
             oiio_threads=oiio_threads,
+            cli_args=args,
         )
 
     # Default: launch the GUI (empty if no path, opening the given
@@ -239,6 +240,7 @@ def main(argv: list[str] | None = None) -> int:
         cache_budget_bytes=budget,
         num_workers=workers,
         oiio_threads=oiio_threads,
+        cli_args=args,
     )
 
 

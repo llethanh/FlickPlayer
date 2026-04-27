@@ -31,15 +31,35 @@ class TickSample:
 
 @dataclass(frozen=True, slots=True)
 class PaintSample:
-    """One ``paintGL()`` execution from the GL viewport."""
+    """One ``paintGL()`` execution from the GL viewport.
+
+    ``upload_us`` is always populated — it's the wall-clock the main
+    thread spent inside the upload codepath (sync ``glTexSubImage2D``
+    or PBO ``map + memcpy + dispatch``). This is what costs us fps,
+    since the main thread is blocked for the whole duration.
+
+    ``upload_gpu_us`` is the wall-clock of the actual DMA transfer
+    on the GPU side, measured via a ``glFenceSync`` placed right
+    after the upload and read at the *next* paint. ``None`` when:
+      * the path is sync (DMA blocks inside ``upload_us`` so the
+        two are equal — we don't double-record);
+      * the PBO ring hasn't yet wrapped around, so no fence has
+        been placed for this slot yet;
+      * the fence was still pending at the next paint (the GPU
+        couldn't keep up with the dispatch rate, surfaced as
+        ``upload_gpu_pending=True``).
+    """
 
     t_ms: float          # monotonic ms since recorder enable()
     displayed_frame: int # what the controller asked the viewport to show
-    upload_us: float     # glTexImage2D / glTexSubImage2D wall-clock
+    upload_us: float     # main-thread wall-clock spent in the upload codepath
     paint_us: float      # whole paintGL body (clear + uniforms + draw + upload)
     width: int
     height: int
     channels: int
+    # PBO-only diagnostic fields. None on the synchronous path.
+    upload_gpu_us: float | None = None
+    upload_gpu_pending: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,7 +140,11 @@ def record_paint(
     width: int,
     height: int,
     channels: int,
+    upload_gpu_us: float | None = None,
+    upload_gpu_pending: bool = False,
 ) -> None:
+    """Append a ``PaintSample``. Older callers without the new
+    PBO fields land in the synchronous-path defaults (None / False)."""
     if not _ENABLED:
         return
     s = PaintSample(
@@ -131,6 +155,8 @@ def record_paint(
         width=width,
         height=height,
         channels=channels,
+        upload_gpu_us=upload_gpu_us,
+        upload_gpu_pending=upload_gpu_pending,
     )
     with _LOCK:
         _PAINTS.append(s)

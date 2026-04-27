@@ -121,11 +121,22 @@ def build_report(
         1000.0 / statistics.fmean(inter_paint_ms) if inter_paint_ms else float("nan")
     )
 
+    # Diagnostic GPU-side timing — only populated by the PBO async path.
+    # On the sync path every sample carries `upload_gpu_us=None` and we
+    # report a count of 0. The "pending" bucket tells us how often a
+    # fence wasn't signalled by the next paint (= the GPU can't keep
+    # up with the dispatch rate, a real warning sign on dGPU).
+    upload_gpu_us = [p.upload_gpu_us for p in paints if p.upload_gpu_us is not None]
+    upload_gpu_pending_count = sum(1 for p in paints if p.upload_gpu_pending)
+
     decode_ms = [d.decode_ms for d in decodes]
     decoded_bytes = sum(d.nbytes for d in decodes)
 
     return {
-        "schema_version": 1,
+        # bumped from 1 to 2 by slice 4: PaintSample now carries
+        # upload_gpu_us + upload_gpu_pending. Reports of v1 schema
+        # remain readable but won't have these fields under "paint".
+        "schema_version": 2,
         "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
         "platform": {
             "system": platform.system(),
@@ -156,6 +167,8 @@ def build_report(
             "upload_us": _stats(upload_us),
             "paint_us": _stats(paint_us),
             "inter_paint_ms": _stats(inter_paint_ms),
+            "upload_gpu_us": _stats(upload_gpu_us),
+            "upload_gpu_pending_count": upload_gpu_pending_count,
         },
         "decode": {
             "samples": len(decodes),
@@ -190,7 +203,10 @@ def format_summary(report: dict[str, Any]) -> str:
         "-" * 78,
         "Paint (paintGL body):",
         f"  effective fps  : {paint['effective_fps']:7.3f}",
-        _stats_line("upload", "µs", paint["upload_us"]),
+        _stats_line("upload (cpu)", "µs", paint["upload_us"]),
+        _stats_line("upload (gpu DMA)", "µs", paint.get("upload_gpu_us", _stats([]))),
+        f"  gpu fences pending : {paint.get('upload_gpu_pending_count', 0)} "
+        f"(non-zero = GPU can't keep up with dispatch)",
         _stats_line("paint total", "µs", paint["paint_us"]),
         _stats_line("inter-paint gap", "ms", paint["inter_paint_ms"]),
         "-" * 78,

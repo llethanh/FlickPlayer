@@ -192,8 +192,16 @@ def run_benchmark(
     cache_budget_bytes: int = DEFAULT_CACHE_BUDGET_BYTES,
     num_workers: int = DEFAULT_NUM_WORKERS,
     oiio_threads: int | None = DEFAULT_OIIO_THREADS,
+    cli_args: object | None = None,
 ) -> int:
-    """Bootstraps the app, plays N passes, and writes a JSON report."""
+    """Bootstraps the app, plays N passes, and writes a JSON report.
+
+    ``cli_args`` is forwarded to :class:`ImgPlayerApp` so the late-bind
+    perf tune (slice 4) re-applies user overrides correctly when the
+    GL context reveals the real GPU. Typed as ``object`` here to avoid
+    a runtime ``argparse`` import in the bench module's top-level
+    type stub — the actual type is ``argparse.Namespace | None``.
+    """
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
@@ -205,6 +213,7 @@ def run_benchmark(
         cache_budget_bytes=cache_budget_bytes,
         num_workers=num_workers,
         oiio_threads=oiio_threads,
+        cli_args=cli_args,  # type: ignore[arg-type]
     )
     session = BenchmarkSession(
         app,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import logging
 import sys
 import threading
@@ -14,6 +15,16 @@ from img_player.cache.frame_cache import FrameCache
 from img_player.color.gpu_processor import build_shader_bundle
 from img_player.color.ocio_manager import OCIOManager
 from img_player.io.reader import configure_oiio
+from img_player.perf import (
+    RuntimeState,
+    apply_cli_overrides,
+    apply_runtime_constraints,
+    compute_tune,
+    detect_hardware,
+    log_applied_tune,
+    log_runtime_state,
+    log_tune_resolution,
+)
 from img_player.player.controller import PlayerController
 from img_player.player.state import PlaybackState
 from img_player.preferences import Preferences
@@ -78,7 +89,19 @@ class ImgPlayerApp:
         cache_budget_bytes: int = DEFAULT_CACHE_BUDGET_BYTES,
         num_workers: int = DEFAULT_NUM_WORKERS,
         oiio_threads: int | None = DEFAULT_OIIO_THREADS,
+        cli_args: argparse.Namespace | None = None,
     ) -> None:
+        # ``cli_args`` is the Namespace from ``__main__.py``'s parser.
+        # Slice 4 needs it so the late-bind tune (after the GL context
+        # exists and we know the real GPU) can re-apply CLI overrides
+        # at the same precedence as the boot-time pipeline. ``None``
+        # means "no overrides ever" — programmatic callers that never
+        # touch the CLI fall through to plain auto-tune at late-bind.
+        self._cli_args = cli_args
+        # Track the OIIO thread count we last asked for so the late-
+        # bind can detect a change and re-call ``configure_oiio``.
+        self._oiio_threads_active: int | None = oiio_threads
+
         self._qapp = QApplication.instance() or QApplication(argv)
         self._qapp.setOrganizationName("img_player")
         self._qapp.setApplicationName("img_player")
@@ -178,9 +201,94 @@ class ImgPlayerApp:
         self._controller.shutdown()
         self._cache.shutdown()
 
+    # ------------------------------------------------------------------ Late-bind perf tune
+
+    def _on_gpu_renderer_detected(self, renderer: str) -> None:
+        """Re-run the auto-tune now that the real GPU is known.
+
+        Boot-time tune (in ``__main__._resolve_tune``) was forced to
+        ``gpu_kind="unknown"`` because the GL context didn't exist yet,
+        so it picked the conservative defaults (``oiio_threads=1``,
+        ``use_pbo=False``). Now that ``initializeGL`` has fired we know
+        the real ``GL_RENDERER`` and can switch to the dGPU-tuned
+        values where applicable.
+
+        What we ARE allowed to change at this point:
+
+        * ``oiio_threads`` — calling ``configure_oiio`` again is safe;
+          the next decode picks up the new value.
+        * ``use_pbo`` — the viewport's PBO ring is allocated lazily on
+          its first upload, so flipping the switch is just a setter.
+
+        What we are NOT allowed to change here (per spec §4 caveat):
+
+        * ``cache_gb`` — the FrameCache is already running and holds
+          decoded frames. Reseating it would drop them and re-trigger
+          a warmup. We document this but live with it; the boot-time
+          ``unknown`` tune always picked a *smaller* cache than what a
+          dGPU classification would (only the ceiling differs), so
+          we're not "missing out" much.
+        * ``num_workers`` — same reason: the worker pool is alive.
+        """
+        hw = detect_hardware(gpu_renderer=renderer)
+        auto = compute_tune(hw)
+        if self._cli_args is not None:
+            after_cli = apply_cli_overrides(
+                auto,
+                cache_gb=self._cli_args.cache_gb,
+                num_workers=self._cli_args.workers,
+                oiio_threads=self._cli_args.oiio_threads,
+                no_pbo=self._cli_args.no_pbo,
+                force_pbo=self._cli_args.force_pbo,
+            )
+        else:
+            after_cli = auto
+        log.info("[hw-tune] late-bind (post-GL): re-running auto-tune with %s", renderer)
+        log_tune_resolution(hw, auto, after_cli)
+
+        state = RuntimeState.snapshot()
+        final = apply_runtime_constraints(after_cli, state)
+        log_runtime_state(state, after_cli, final)
+        log_applied_tune(final)
+
+        # Apply the runtime-mutable bits.
+        if final.oiio_threads != self._oiio_threads_active:
+            log.info(
+                "[hw-tune] late-bind: oiio_threads %s → %d",
+                self._oiio_threads_active,
+                final.oiio_threads,
+            )
+            configure_oiio(final.oiio_threads)
+            self._oiio_threads_active = final.oiio_threads
+        self._window.viewer.gl.set_pbo_enabled(final.use_pbo)
+
+        if final.cache_gb * 1024**3 > self._cache._budget * 1.05:
+            # Diagnostic note only — the cache is already alive, see
+            # docstring. We log a single line so a power user can spot
+            # that the dGPU tune would have wanted a bigger cache and
+            # restart the app to pick it up.
+            log.info(
+                "[hw-tune] late-bind: dGPU profile would have requested %.1f GB cache "
+                "(currently %.1f GB). Restart the app to apply.",
+                final.cache_gb,
+                self._cache._budget / 1024**3,
+            )
+
     # ------------------------------------------------------------------ Wiring
 
     def _wire(self) -> None:
+        # GL viewport -> late-bind tune. The viewport emits this signal
+        # exactly once per session, on its first ``initializeGL``,
+        # carrying the real ``glGetString(GL_RENDERER)``. We then re-run
+        # the auto-tune with the actual GPU classification and push the
+        # results that can be applied at runtime (use_pbo on the viewport,
+        # OIIO thread pool size). The cache budget and worker count are
+        # NOT re-applied — the cache is already alive and reseating it
+        # would lose its content; spec §4 documents this caveat.
+        self._window.viewer.gl.gpu_renderer_detected.connect(
+            self._on_gpu_renderer_detected
+        )
+
         # Controller -> UI
         self._controller.frame_changed.connect(self._on_frame_changed)
         self._controller.state_changed.connect(self._on_state_changed)
@@ -731,8 +839,16 @@ def run_gui(
     cache_budget_bytes: int = DEFAULT_CACHE_BUDGET_BYTES,
     num_workers: int = DEFAULT_NUM_WORKERS,
     oiio_threads: int | None = DEFAULT_OIIO_THREADS,
+    cli_args: argparse.Namespace | None = None,
 ) -> int:
-    """Public entry point used by ``python -m img_player``."""
+    """Public entry point used by ``python -m img_player``.
+
+    ``cli_args`` propagates the parsed argparse Namespace down to
+    ``ImgPlayerApp`` so the late-bind perf tune (slice 4) can re-apply
+    user overrides at the same precedence as the boot pipeline. Older
+    callers that don't pass it fall through to plain auto-tune, which
+    is also fine.
+    """
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
@@ -741,5 +857,6 @@ def run_gui(
         cache_budget_bytes=cache_budget_bytes,
         num_workers=num_workers,
         oiio_threads=oiio_threads,
+        cli_args=cli_args,
     )
     return app.run(initial_path=initial_path)

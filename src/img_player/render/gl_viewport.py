@@ -3,6 +3,22 @@
 The viewport is fully independent of the player / cache / controller layers.
 Consumers push frames via :meth:`set_frame` and tune the color pipeline via
 :meth:`set_color_params`.
+
+Two upload paths coexist behind a runtime flag:
+
+* **Synchronous** (default at boot, mandatory on iGPU): a direct
+  ``glTexSubImage2D`` blocks the main thread until the DMA finishes.
+  Cheap, predictable, what we ship as the safe baseline.
+* **PBO async** (gated on ``use_pbo`` from the perf tune): a 3-buffer
+  ring orphans → maps → ``memcpy`` → unmaps → ``glTexSubImage2D(NULL)``,
+  letting the driver dispatch the DMA out-of-band. The main thread
+  pays only the memcpy + dispatch cost (~5-7 ms for a 4K float16
+  frame), not the full DMA. Only worth it on a discrete GPU with
+  PCIe DMA — see ``perf/PBO_NOTES.md`` for the iGPU regression.
+
+The PBO path is enabled at runtime by ``app.py`` after the first
+``initializeGL()`` reveals the real ``GL_RENDERER`` (the late-bind
+flow described in spec §4 / slice 4).
 """
 
 from __future__ import annotations
@@ -22,6 +38,222 @@ from img_player.bench import recorder
 from img_player.color.gpu_processor import ShaderBundle, Texture1D, Texture3D
 
 log = logging.getLogger(__name__)
+
+
+# ============================================================================
+# PBO ring helper — see spec §4
+# ============================================================================
+
+
+_PBO_RING_SIZE = 3  # spec §4: 3 buffers, gives a 1-paint headroom over ping-pong
+
+
+class _PboRing:
+    """Three-PBO ring for asynchronous texture upload on discrete GPUs.
+
+    Lazily allocated on the first call to :meth:`upload`. Re-allocates
+    its three buffers when the requested upload size changes (e.g. a
+    new sequence at a different resolution). Holds one ``glFenceSync``
+    per buffer so we can attribute a *GPU-side wall-clock* to each
+    upload — read at the *next* paint that touches the same slot.
+
+    All GL calls happen on the GL thread (the Qt main thread for a
+    ``QOpenGLWidget``). Callers must already have made the relevant
+    texture current before invoking :meth:`upload`.
+
+    Failure recovery: any GL exception inside :meth:`upload` is
+    captured by the caller, which flips the viewport back to the
+    synchronous path for the rest of the session. The ring itself
+    doesn't try to retry — see spec §4 fallback rules.
+    """
+
+    def __init__(self) -> None:
+        # Lazy: GL ids are zeroed until ensure_allocated() runs once.
+        self._pbo_ids: list[int] = []
+        # Parallel list of fences. ``None`` means "no upload yet on
+        # this slot" (start of session) or "fence was already consumed
+        # at the previous wrap-around".
+        self._fences: list[object | None] = [None] * _PBO_RING_SIZE
+        # ``perf_counter`` value at the moment we placed each fence.
+        # Used to compute ``upload_gpu_us`` when the fence becomes
+        # signalled three paints later.
+        self._fence_dispatch_t: list[float] = [0.0] * _PBO_RING_SIZE
+        self._capacity_bytes: int = 0
+        # Wraps modulo _PBO_RING_SIZE on each upload.
+        self._idx: int = 0
+
+    # -- allocation ---------------------------------------------------------
+
+    def ensure_allocated(self, nbytes: int) -> None:
+        """Allocate (or reallocate) the three PBOs to hold ``nbytes`` each.
+
+        On a 4K UHD float16 RGBA frame, ``nbytes`` is ~63 MB so the
+        whole ring is ~189 MB on an 8 GB card — negligible. On a 6K
+        sequence at the same format we'd want ~140 MB × 3 = 420 MB,
+        still fine. We don't bother to track high-water marks: if a
+        frame asks for less than current capacity, we keep the larger
+        allocation rather than re-buffering on each shrink.
+        """
+        if not self._pbo_ids:
+            # First call: generate the GL buffer ids.
+            ids = GL.glGenBuffers(_PBO_RING_SIZE)
+            # PyOpenGL returns either an int (n=1) or a numpy array.
+            self._pbo_ids = list(ids) if hasattr(ids, "__iter__") else [int(ids)]
+        if nbytes <= self._capacity_bytes:
+            return
+        for pbo in self._pbo_ids:
+            GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, pbo)
+            GL.glBufferData(GL.GL_PIXEL_UNPACK_BUFFER, nbytes, None, GL.GL_STREAM_DRAW)
+        GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, 0)
+        self._capacity_bytes = nbytes
+
+    # -- upload -------------------------------------------------------------
+
+    def upload(
+        self,
+        pixels: np.ndarray,
+        *,
+        gl_format: int,
+        gl_type: int,
+        width: int,
+        height: int,
+    ) -> tuple[float, float | None, bool]:
+        """Run one async upload through the next ring slot.
+
+        Returns ``(upload_cpu_us, upload_gpu_us, gpu_pending)``:
+
+        * ``upload_cpu_us`` — wall-clock the main thread spent here
+          (orphan + map + memcpy + unmap + dispatch). What costs us fps.
+        * ``upload_gpu_us`` — wall-clock of the *previous* fence on
+          this slot (= 3 paints ago) if it's now signalled, else
+          ``None``. The first three uploads of a session always
+          return ``None`` here because no fence has been placed yet
+          on the slot we're about to overwrite.
+        * ``gpu_pending`` — ``True`` when a fence existed but was
+          not yet signalled by this paint (= the GPU can't keep up
+          with the dispatch rate, a real warning sign on dGPU).
+          The fence is kept around — we'll try again next time the
+          ring wraps to this slot. With three buffers and < 60 fps
+          this should never trigger on healthy hardware.
+
+        The ``GL_MAP_UNSYNCHRONIZED_BIT`` is paired with ``glBufferData(NULL)``
+        (orphaning) and ``GL_MAP_INVALIDATE_BUFFER_BIT``: together they
+        tell the driver "I'm overwriting this whole buffer; don't sync
+        on the previous DMA — give me a fresh region or copy-on-write
+        the old one out". This is the only way to avoid the implicit
+        stall the previous PBO experiment triggered (cf PBO_NOTES.md).
+        """
+        cpu_t0 = time.perf_counter()
+
+        slot = self._idx
+        # First, see if the previous fence on this slot is signalled —
+        # if so, we can attribute a GPU-side timing to *that previous
+        # upload*, not to ours.
+        upload_gpu_us: float | None = None
+        gpu_pending = False
+        prev_fence = self._fences[slot]
+        if prev_fence is not None:
+            wait_result = GL.glClientWaitSync(prev_fence, 0, 0)
+            if wait_result in (GL.GL_ALREADY_SIGNALED, GL.GL_CONDITION_SATISFIED):
+                upload_gpu_us = (time.perf_counter() - self._fence_dispatch_t[slot]) * 1e6
+                GL.glDeleteSync(prev_fence)
+                self._fences[slot] = None
+            elif wait_result == GL.GL_TIMEOUT_EXPIRED:
+                # Fence still pending. We'll keep it and try again at
+                # the next wrap. The upload below uses
+                # GL_MAP_INVALIDATE_BUFFER_BIT, so the driver is free
+                # to allocate a fresh backing store and let the in-
+                # flight DMA finish on the old one — no stall.
+                gpu_pending = True
+            # GL_WAIT_FAILED is in theory possible but a healthy
+            # context shouldn't hit it; treat it as "drop the fence".
+            else:
+                GL.glDeleteSync(prev_fence)
+                self._fences[slot] = None
+
+        nbytes = pixels.nbytes
+        self.ensure_allocated(nbytes)
+
+        pbo = self._pbo_ids[slot]
+        GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, pbo)
+        # Orphan: tells the driver we don't care about the old contents,
+        # which lets it return a fresh backing store immediately even
+        # if a previous DMA is in flight.
+        GL.glBufferData(GL.GL_PIXEL_UNPACK_BUFFER, nbytes, None, GL.GL_STREAM_DRAW)
+
+        # Map → memcpy → unmap. The three flags together are the
+        # "fast path": invalidate the buffer (driver is free to give
+        # us a fresh region), unsynchronized (don't wait on the
+        # previous DMA — orphan + ring guarantee correctness), write-
+        # only (skip the read-back path).
+        ptr = GL.glMapBufferRange(
+            GL.GL_PIXEL_UNPACK_BUFFER,
+            0,
+            nbytes,
+            GL.GL_MAP_WRITE_BIT
+            | GL.GL_MAP_INVALIDATE_BUFFER_BIT
+            | GL.GL_MAP_UNSYNCHRONIZED_BIT,
+        )
+        if not ptr:
+            # Map failed — bubble up to the caller, which will fall
+            # back to the sync path for the rest of the session.
+            GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, 0)
+            raise RuntimeError("glMapBufferRange returned NULL on PBO upload")
+
+        # ctypes.memmove with the numpy data pointer is the cheapest
+        # CPU-side memcpy we can do. ``np.ascontiguousarray`` upstream
+        # guarantees the layout is dense.
+        ctypes.memmove(int(ptr), pixels.ctypes.data, nbytes)
+        GL.glUnmapBuffer(GL.GL_PIXEL_UNPACK_BUFFER)
+
+        # Source = bound PBO, hence ``None`` for the data pointer.
+        # The driver dispatches a DMA copy from the PBO to the texture
+        # and returns immediately on a healthy dGPU.
+        GL.glTexSubImage2D(
+            GL.GL_TEXTURE_2D,
+            0,
+            0,
+            0,
+            width,
+            height,
+            gl_format,
+            gl_type,
+            None,
+        )
+
+        # Place a fence right after the dispatch so we can time the
+        # DMA at the next wrap.
+        new_fence = GL.glFenceSync(GL.GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
+        self._fences[slot] = new_fence
+        self._fence_dispatch_t[slot] = time.perf_counter()
+
+        # Restore the unbound state so a subsequent legacy (non-PBO)
+        # call site doesn't accidentally read from our buffer.
+        GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, 0)
+
+        self._idx = (self._idx + 1) % _PBO_RING_SIZE
+        upload_cpu_us = (time.perf_counter() - cpu_t0) * 1e6
+        return upload_cpu_us, upload_gpu_us, gpu_pending
+
+    # -- teardown -----------------------------------------------------------
+
+    def cleanup(self) -> None:
+        """Release fences + PBOs. Idempotent."""
+        for fence in self._fences:
+            if fence is not None:
+                try:
+                    GL.glDeleteSync(fence)
+                except Exception:  # pragma: no cover — best effort
+                    pass
+        self._fences = [None] * _PBO_RING_SIZE
+        if self._pbo_ids:
+            try:
+                GL.glDeleteBuffers(len(self._pbo_ids), self._pbo_ids)
+            except Exception:  # pragma: no cover
+                pass
+            self._pbo_ids = []
+        self._capacity_bytes = 0
+        self._idx = 0
 
 
 @dataclass
@@ -73,6 +305,11 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
     # zoom combo follow. Carries the new zoom factor (1.0 = 100%) or
     # ``None`` when fit-to-window mode is engaged.
     zoom_changed = Signal(object)
+    # Emitted exactly once per session, on the first ``initializeGL``,
+    # carrying the raw ``glGetString(GL_RENDERER)`` string. ``app.py``
+    # uses it to re-run the perf tune now that the real GPU
+    # classification is known (slice 4 late-bind, spec §4).
+    gpu_renderer_detected = Signal(str)
 
     # ------------------------------------------------------------------ Lifecycle
 
@@ -104,6 +341,17 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
         # Tracks the most recent texture allocation so same-sized frames
         # can use the much cheaper glTexSubImage2D upload.
         self._tex_alloc: tuple[int, int, int] = (0, 0, 0)  # (w, h, channels)
+
+        # Async PBO upload state (slice 4). ``None`` = synchronous
+        # path active. Populated by ``set_pbo_enabled(True)``, which
+        # ``app.py`` calls after the late-bind perf tune detects a
+        # discrete GPU. Diagnostic: ``upload_gpu_us`` from the latest
+        # PBO upload is captured here so ``paintGL`` can attach it
+        # to the bench sample without keeping yet another field on
+        # the recorder API.
+        self._pbo_ring: _PboRing | None = None
+        self._last_upload_gpu_us: float | None = None
+        self._last_upload_gpu_pending: bool = False
 
         # Drag-to-scrub state. The viewport doesn't own the playback
         # state — the controller does — so we just remember "where the
@@ -185,6 +433,30 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
         emitted target is ``base + dx / DRAG_PIXELS_PER_FRAME``.
         """
         self._current_frame = frame
+
+    def set_pbo_enabled(self, enabled: bool) -> None:
+        """Toggle the async PBO upload path on or off.
+
+        Called by ``app.py`` after the first ``initializeGL`` reveals
+        the real ``GL_RENDERER`` and the perf tune decides whether
+        we're on a discrete GPU (``use_pbo=True``) or anywhere else
+        (``use_pbo=False``). Idempotent — calling twice with the same
+        value is a no-op.
+
+        When toggling off, we release the ring's GL resources
+        immediately so we don't keep ~190 MB of VRAM tied up. The
+        synchronous path then resumes on the next ``paintGL``.
+        """
+        if enabled and self._pbo_ring is None:
+            self._pbo_ring = _PboRing()
+            log.info("[gl] async PBO upload path enabled (3-buffer ring)")
+        elif not enabled and self._pbo_ring is not None:
+            try:
+                self._pbo_ring.cleanup()
+            except Exception:  # pragma: no cover — best-effort GL teardown
+                log.warning("[gl] PBO ring cleanup raised; continuing on sync path")
+            self._pbo_ring = None
+            log.info("[gl] async PBO upload path disabled, falling back to sync")
 
     def set_zoom(self, factor: float | None) -> None:
         """Set the zoom factor, or pass ``None`` for fit-to-window.
@@ -302,15 +574,21 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
     # ------------------------------------------------------------------ QOpenGLWidget overrides
 
     def initializeGL(self) -> None:
+        renderer = GL.glGetString(GL.GL_RENDERER).decode("utf-8", errors="replace")
         log.info(
             "GL context: %s | %s | GLSL %s",
             GL.glGetString(GL.GL_VERSION).decode("utf-8", errors="replace"),
-            GL.glGetString(GL.GL_RENDERER).decode("utf-8", errors="replace"),
+            renderer,
             GL.glGetString(GL.GL_SHADING_LANGUAGE_VERSION).decode("utf-8", errors="replace"),
         )
         GL.glClearColor(*self.DEFAULT_BG)
         self._make_fullscreen_quad()
         self._make_image_texture()
+        # Late-bind hook: now that the GL context exists, app.py can
+        # re-run the perf tune with the real GPU classification (slice 4).
+        # Connecting handlers were attached at app boot; the signal is
+        # safe to emit even if no one's listening.
+        self.gpu_renderer_detected.emit(renderer)
 
     def resizeGL(self, w: int, h: int) -> None:
         GL.glViewport(0, 0, max(1, w), max(1, h))
@@ -349,6 +627,8 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
                     upload_us=upload_us,
                     paint_us=(time.monotonic() - paint_t0) * 1e6,
                     width=width, height=height, channels=self._image_channels,
+                    upload_gpu_us=self._last_upload_gpu_us,
+                    upload_gpu_pending=self._last_upload_gpu_pending,
                 )
             return
 
@@ -395,6 +675,8 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
                 upload_us=upload_us,
                 paint_us=(time.monotonic() - paint_t0) * 1e6,
                 width=width, height=height, channels=self._image_channels,
+                upload_gpu_us=self._last_upload_gpu_us,
+                upload_gpu_pending=self._last_upload_gpu_pending,
             )
 
     # ------------------------------------------------------------------ Quad / texture helpers
@@ -431,12 +713,18 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
         GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_T, GL.GL_CLAMP_TO_EDGE)
 
     def _upload_image(self, pixels: np.ndarray) -> None:
-        # NOTE on PBO async upload (tested 2026-04-26, see perf/PBO_NOTES.md):
-        # On a unified-memory iGPU (AMD Radeon 780M / Ryzen APU) the PBO
-        # ping-pong path measured *worse* than the direct glTexSubImage2D
-        # below — there's no PCIe DMA to pipeline, so the extra
-        # memcpy + glMapBufferRange overhead just stacks on top. Sticking
-        # with the direct path until we benchmark on a discrete GPU.
+        """Push a frame to the GPU. Routes to sync or async PBO path.
+
+        The sync branch below is **bit-for-bit identical** to the
+        previous implementation — that's what protects the iGPU
+        non-regression bench (slice 4 plan, bench C). The PBO
+        branch is taken only when ``set_pbo_enabled(True)`` has been
+        called earlier (post late-bind, on a discrete GPU).
+
+        See also ``perf/PBO_NOTES.md`` for the experiment that
+        revealed the iGPU regression and motivates keeping the sync
+        path as the default.
+        """
         height, width, channels = pixels.shape
         self._image_size = (width, height)
         self._image_channels = channels
@@ -449,9 +737,15 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
         GL.glPixelStorei(GL.GL_UNPACK_ALIGNMENT, 1)
         GL.glBindTexture(GL.GL_TEXTURE_2D, self._image_tex)
 
-        if (width, height, channels) != self._tex_alloc:
+        first_alloc = (width, height, channels) != self._tex_alloc
+
+        if first_alloc:
             # Texture storage must be (re)allocated for a new size / format.
-            # glTexImage2D is slow because it allocates on the GPU.
+            # ``glTexImage2D`` is slow because it allocates on the GPU. We
+            # always go through the synchronous path here regardless of
+            # PBO state — the storage allocation step has no async
+            # equivalent. Subsequent paints at the same size will pick
+            # the PBO path if enabled.
             GL.glTexImage2D(
                 GL.GL_TEXTURE_2D,
                 0,
@@ -464,20 +758,59 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
                 pixels,
             )
             self._tex_alloc = (width, height, channels)
-        else:
-            # Same-sized frame: reuse the texture storage and only push the
-            # pixels.
-            GL.glTexSubImage2D(
-                GL.GL_TEXTURE_2D,
-                0,
-                0,
-                0,
-                width,
-                height,
-                gl_format,
-                gl_type,
-                pixels,
-            )
+            # Drop any stale GPU-side timing left over from the previous
+            # texture size. Fences from the old layout aren't
+            # interpretable anymore.
+            self._last_upload_gpu_us = None
+            self._last_upload_gpu_pending = False
+            return
+
+        # Same-sized frame: reuse the texture storage. Either go through
+        # the PBO ring (if enabled) or fall through to the legacy sync
+        # path. Any failure on the PBO path falls back to sync for the
+        # rest of the session — never crashes the viewport.
+        if self._pbo_ring is not None:
+            try:
+                _, gpu_us, gpu_pending = self._pbo_ring.upload(
+                    pixels,
+                    gl_format=gl_format,
+                    gl_type=gl_type,
+                    width=width,
+                    height=height,
+                )
+                self._last_upload_gpu_us = gpu_us
+                self._last_upload_gpu_pending = gpu_pending
+                return
+            except Exception as err:
+                log.warning(
+                    "[gl] PBO upload failed (%s); falling back to sync path for the rest of the session",
+                    err,
+                )
+                # Tear down the ring and never touch it again this
+                # session. The user can restart the app to retry.
+                try:
+                    self._pbo_ring.cleanup()
+                except Exception:  # pragma: no cover
+                    pass
+                self._pbo_ring = None
+                self._last_upload_gpu_us = None
+                self._last_upload_gpu_pending = False
+                # Fall through to the sync path below.
+
+        # Synchronous path — bit-for-bit identical to the pre-slice-4 code.
+        GL.glTexSubImage2D(
+            GL.GL_TEXTURE_2D,
+            0,
+            0,
+            0,
+            width,
+            height,
+            gl_format,
+            gl_type,
+            pixels,
+        )
+        self._last_upload_gpu_us = None
+        self._last_upload_gpu_pending = False
 
     # ------------------------------------------------------------------ Shader / LUT setup
 
