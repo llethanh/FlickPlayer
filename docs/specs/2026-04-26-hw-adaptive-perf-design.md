@@ -80,6 +80,17 @@ the user wants to pin manually.
 5. **Backwards-compatible CLI** — every `--workers` / `--cache-gb` /
    `--oiio-threads` invocation in existing user scripts keeps the
    exact same meaning.
+6. **Self-aware on the user's machine, with no technical knowledge
+   required.** The target audience is graphic artists, not power
+   users. They will not know how to read a benchmark, will not
+   recognise that the app is silently struggling, and will not
+   know whether a stutter is "the file" or "the cache swapped to
+   disk". The app must (a) detect runtime memory pressure and
+   correct itself before the user notices, (b) make playback fps
+   visible at all times so a discrepancy with the target is
+   immediately apparent, (c) calibrate to each new machine on first
+   launch so no manual tuning is ever needed, and (d) explain in
+   plain language when something can't be auto-fixed.
 
 ## Non-goals
 
@@ -138,13 +149,23 @@ that will get their own design later:
 | Module | Responsibility |
 |---|---|
 | `img_player/perf/hardware.py` (new) | `HardwareProfile`, `classify_gpu`, `PerformanceTune`, the heuristics |
+| `img_player/perf/runtime_state.py` (new) | `RuntimeState` snapshot (`available_ram_gb`, `swap_used_gb`), `apply_runtime_constraints(tune, state)` that adjusts the static tune given live memory pressure |
+| `img_player/perf/runtime_monitor.py` (new) | `RuntimeMonitor`: 1 Hz QTimer that polls cache hit rate, paint p99, swap usage during playback. Emits Qt signals when corrective action is taken (cache shrink, prefetch back-off) or when a user-facing warning is needed (orange/red badge) |
+| `img_player/perf/calibration.py` (new) | First-launch self-bench: generates 10 synthetic 4K float16 frames in RAM, decodes/uploads them once, persists timings to `~/.cache/img_player/profile.json`. Re-runs only when the HW signature (CPU model + RAM size + GPU renderer) changes |
 | `img_player/render/gl_viewport.py` (modified) | Detects `gpu_renderer` at first `initializeGL()`, exposes it via signal/property; PBO ring path gated on `use_pbo` |
-| `img_player/app.py` (modified) | At boot: build `HardwareProfile`, compute `PerformanceTune` (with CLI overrides), pass values to `FrameCache` and `gl_viewport` |
-| `img_player/__main__.py` (modified) | Add `--no-pbo` / `--force-pbo` flags (mutually exclusive) |
+| `img_player/player/controller.py` (modified) | Exposes `effective_fps` and `cache_hit_rate` as properties readable by the UI badge and the runtime monitor |
+| `img_player/ui/main_window.py` (modified) | Hosts the live FPS badge in the status bar (already in the UI re-skin spec — this spec just consumes the controller signals); shows toast notifications when `RuntimeMonitor` emits warnings |
+| `img_player/app.py` (modified) | At boot: build `HardwareProfile`, run `calibration.ensure_profile()`, compute `PerformanceTune` (with CLI overrides), apply `apply_runtime_constraints()` from current memory state, instantiate `RuntimeMonitor`, pass values to `FrameCache` and `gl_viewport` |
+| `img_player/__main__.py` (modified) | Add `--no-pbo` / `--force-pbo` flags (mutually exclusive) and `--skip-calibration` (debug) |
 
-The `perf/` module is pure logic with **zero Qt / OIIO / GL imports** —
-it only takes inputs and returns the computed `PerformanceTune`. This
-keeps it trivially unit-testable.
+Within `perf/`, the modules `hardware.py` and `runtime_state.py` are
+**pure logic with zero Qt / OIIO / GL imports** — they take inputs and
+return computed values, which keeps them trivially unit-testable.
+`runtime_monitor.py` depends on Qt (it owns a `QTimer` and emits
+signals), and `calibration.py` depends on Qt + GL (it runs a real
+mini-bench through the actual decode/upload path) — these two are
+tested with mocks for unit-level coverage and through integration
+benches for end-to-end coverage.
 
 ## Data flow
 
@@ -157,14 +178,22 @@ keeps it trivially unit-testable.
                                             → emit gpu_renderer_detected
 4. app.py receives renderer:
    - build HardwareProfile
-   - compute PerformanceTune (with overrides applied)
+   - calibration.ensure_profile(hw_profile):
+       - if profile.json present and signature matches → load
+       - else → show splash, run 3-second self-bench, persist profile
+   - compute PerformanceTune (heuristics + calibration corrections)
+   - apply CLI overrides (highest precedence)
+   - apply_runtime_constraints(tune, RuntimeState.snapshot()) →
+     reduce cache_gb if available RAM is tight (Section 6)
    - log the resolved values
 5. FrameCache(budget=cache_gb, workers=num_workers) created
 6. oiio.attribute("threads", oiio_threads)
 7. gl_viewport switches path:
    - if use_pbo and gpu_kind.startswith("discrete"): allocate PBO ring
    - else: keep synchronous path (today's behaviour)
-8. load_sequence(...) proceeds normally
+8. RuntimeMonitor instantiated, hooked to controller.play_started /
+   play_stopped signals (Section 7)
+9. load_sequence(...) proceeds normally
 ```
 
 This means **the very first paintGL is always on the sync path** — we
@@ -397,6 +426,9 @@ readable.
 | `tests/unit/test_hw_profile.py` | `classify_gpu` table (12-15 GL_RENDERER strings → kind), `compute_tune` clamps on extreme profiles, integrated → no PBO + 1 OIIO, discrete → PBO + scaled OIIO |
 | `tests/unit/test_cli_overrides.py` | No flags = auto-tune used, explicit flag wins, `--no-pbo` disables PBO, `--force-pbo` enables on integrated, `--no-pbo` + `--force-pbo` is `argparse` error |
 | `tests/unit/test_pbo_ring.py` | Index advances modulo 3, resolution change re-allocates, exception on map sets `use_pbo=False` for the session (mocked GL) |
+| `tests/unit/test_runtime_state.py` | `apply_runtime_constraints` shrinks cache when `available_ram` low, no-op when ample, never below the 2 GB floor, leaves other fields untouched |
+| `tests/unit/test_runtime_monitor.py` | Sliding window aggregation correct on synthetic samples, threshold-crossing fires the right Qt signal exactly once per crossing, recovery does not auto-grow cache, monitor stops emitting on pause |
+| `tests/unit/test_calibration.py` | `hw_signature` matches identical machine, mismatches when CPU/RAM/GPU change, missing file triggers a fresh run, malformed JSON is treated as missing (warned + re-run), `--skip-calibration` bypasses, `--recalibrate` forces re-run, calibration failure falls back to heuristics without crashing the app |
 
 ### Integration smoke (skipped in headless CI)
 
@@ -416,9 +448,18 @@ Three benchmarks, same parameters as `baseline_rtx5070.json`
 | **A** | `perf/postopti_rtx5070_autotune.json` | Auto-tune ON, **PBO OFF** | `decode_mean` < 800 ms (vs 1138), `effective fps tick` ≥ 23.5 |
 | **B** | `perf/postopti_rtx5070_autotune_pbo.json` | Auto-tune **+ PBO ON** | `upload_cpu_mean` ≤ 8 ms (vs 24), `paint p99` ≤ 20 ms (vs 63), `effective fps paint` ≥ 23.5, no `upload_gpu_us` samples flagged as still-pending |
 | **C** | `perf/postopti_igpu_autotune.json` | iGPU 780M (re-routed), `use_pbo` auto-detected as False | No regression vs iGPU baseline measured 2026-04-26 (±5 %) |
+| **D** | `perf/postopti_memory_pressure.json` | RTX 5070 Laptop with a 6 GB RAM-eater process running in parallel (a tiny script that allocates 6 GB and sleeps) | `apply_runtime_constraints` reduces `cache_gb` at boot, no swap activity during playback (`psutil.swap_memory().used` delta ≈ 0), `RuntimeMonitor` does not fire `memory_pressure` warning |
 
 Bench C is the **non-regression gate**. Refactoring needed to
 introduce the PBO path must not penalise the synchronous path.
+
+Bench D is the **graphic-artist safety gate**. It simulates the
+realistic case "user has Nuke open" and validates that:
+1. The boot-time health check (Section 6) actually shrinks the cache
+   to fit the available RAM.
+2. No swap occurs as a result.
+3. The runtime monitor (Section 7) does not need to emit a warning
+   because the boot-time correction was already enough.
 
 ### Deferred bench (when user is at the workstation)
 
@@ -450,6 +491,200 @@ cache / 6 OIIO threads).
   signalled by next paint) bubble up as a warning?** A persistent
   pending state means the GPU genuinely can't keep up. For now we
   just count them and expose the count in the bench output.
+
+### 6. Boot-time health check
+
+The static `PerformanceTune` from Section 2 looks at *total* RAM. That
+is the wrong number if Nuke / DaVinci / Blender is already eating
+60 GB before img_player starts. The fix is a small `RuntimeState`
+snapshot taken just after `compute_tune` and before the cache is
+instantiated:
+
+```python
+@dataclass(frozen=True)
+class RuntimeState:
+    available_ram_gb: float    # psutil.virtual_memory().available
+    swap_used_gb: float        # psutil.swap_memory().used
+
+def apply_runtime_constraints(tune: PerformanceTune,
+                              state: RuntimeState) -> PerformanceTune:
+    # Don't let cache eat into what's currently free; leave 40 % of
+    # available RAM as headroom for whatever else the user is running.
+    safe_cache = state.available_ram_gb * 0.6
+    if safe_cache < tune.cache_gb:
+        return replace(tune, cache_gb=max(2.0, safe_cache))
+    return tune
+```
+
+If the cache is reduced, we log a single user-visible line:
+
+```
+[hw-tune] reduced cache from 51.2→18.0 GB (only 30 GB available, leaving headroom for other apps)
+```
+
+This is the line that **prevents the swap-induced lag scenario** the
+user pointed out: even on a 128 GB workstation with Nuke open, we
+won't reserve memory we don't have.
+
+If `swap_used_gb > 1.0` at boot, we log a warning (`swap is already
+in use, system is under memory pressure`) but proceed — the user
+likely already knows their machine is overloaded; refusing to launch
+would be worse.
+
+### 7. Runtime monitor with auto-correction
+
+A `RuntimeMonitor` runs on a 1 Hz `QTimer` while playback is active
+(stops on pause to avoid jitter on idle). On each tick it samples
+three signals over a sliding 5-second window:
+
+| Signal | Source | Threshold | Reaction |
+|---|---|---|---|
+| `cache_hit_rate` | `controller.effective_fps` / `cache.stats()` | < 80 % for 5 s | shrink prefetch window 25 %; if still <80 % after 5 more s, emit `playback_struggle` warning |
+| `swap_used_delta` | `psutil.swap_memory().used - swap_at_boot` | grew by > 500 MB during playback | shrink cache 25 %, force `cache.evict_far_frames()`, emit `memory_pressure` warning |
+| `paint_p99` | `bench/recorder.py` rolling 100-paint window (always-on, low overhead) | > 80 ms | emit `frame_pacing_drop` warning (badge orange) |
+
+Each "warning" is a Qt signal that the UI catches:
+
+* `playback_struggle` → status-bar badge turns **orange** + a brief
+  toast: *"Lecture irrégulière sur cette séquence — la machine ne
+  suit pas le rythme"*. The toast appears once per sequence load,
+  not on every threshold crossing.
+* `memory_pressure` → status-bar badge turns **orange** + persistent
+  message: *"Mémoire insuffisante — cache réduit automatiquement.
+  Fermez d'autres applications pour de meilleures performances."*
+* `frame_pacing_drop` → status-bar badge **orange** with no toast
+  (transient by nature, don't spam).
+
+Actions taken by the monitor are also logged with a stable prefix
+(`[runtime] cache shrink: 18.0→13.5 GB (swap pressure detected)`) so
+that a developer or technical user can audit what the app decided.
+
+The monitor never *grows* the cache back automatically — once
+constrained, it stays constrained for the session. Re-launching the
+app re-reads the current `RuntimeState` and may pick a higher value.
+This avoids oscillation under bursty memory pressure.
+
+### 8. Live FPS indicator (consumed by the UI re-skin spec)
+
+The status-bar FPS badge is already a goal of
+`docs/specs/2026-04-26-ui-reskin-charter-design.md` (goal #2: *"Surface
+the effective playback fps as a live indicator the user can monitor
+without running the benchmark mode"*). This spec does not redesign the
+badge — it ensures the data is *exposed* in a clean way for the UI
+to consume.
+
+Two new properties on `PlayerController`, updated at every controller
+tick from a 1-second sliding window:
+
+* `effective_fps: float` — the rate at which `frame_changed` is
+  actually emitted (not the timer's target).
+* `cache_hit_rate: float` — fraction of ticks in the window where
+  the requested frame was already cached.
+
+Two new Qt signals, emitted at most once per second:
+
+* `effective_fps_changed(float)`
+* `cache_hit_rate_changed(float)`
+
+Colour mapping (the UI uses these, not numeric thresholds embedded
+in the controller):
+
+```
+fps / target_fps ≥ 0.95     → 🟢 green   "Tient le rythme"
+fps / target_fps ∈ [0.85, 0.95) → 🟡 yellow  "Légèrement sous le rythme"
+fps / target_fps < 0.85     → 🔴 red     "Décrochement de lecture"
+```
+
+This means: even if the runtime monitor's automatic actions fail to
+recover full speed, the **graphic artist sees the badge turn yellow
+or red and knows immediately that something is off**, without having
+to interpret a benchmark.
+
+### 9. First-launch calibration
+
+Detection at startup is fast but coarse. It can't tell apart, say, a
+desktop RTX 4070 from a laptop RTX 4070 with thermal throttling, or
+an NVMe drive from a USB-3 external drive feeding the cache. A
+**one-time calibration on first launch** measures the actual
+behaviour of *this* machine.
+
+#### Behaviour
+
+* On startup, `calibration.ensure_profile()` looks for
+  `~/.cache/img_player/profile.json`.
+* If the file exists and its `hw_signature` matches the current
+  `(cpu_model, ram_total_gb, gpu_renderer)`, the profile is loaded
+  and used. No bench runs.
+* If the file is missing or the signature differs (HW changed,
+  cleared cache, fresh install), a **calibration bench runs** before
+  the main UI is shown:
+
+  1. A modal splash appears: *"Configuration des performances pour
+     cette machine — environ 5 secondes…"* with a thin progress bar.
+  2. The calibration generates 10 synthetic 4K float16 RGBA frames
+     in RAM (numpy random, ~63 MB each, no disk I/O).
+  3. It runs them through the actual decode → cache → upload path
+     for ~3 seconds, recording `decode_mean`, `upload_cpu_mean`,
+     `paint_total_mean`.
+  4. Profile is written to `profile.json` along with the chosen tune.
+  5. Splash dismisses, normal startup resumes.
+
+#### What's persisted
+
+```json
+{
+  "schema_version": 1,
+  "hw_signature": {
+    "cpu_model": "Intel Core i9-13900K",
+    "ram_total_gb": 128,
+    "gpu_renderer": "NVIDIA GeForce RTX 5070 Laptop GPU"
+  },
+  "calibration": {
+    "decode_mean_ms": 412,
+    "upload_cpu_mean_us": 4900,
+    "paint_total_mean_us": 5200,
+    "ran_at": "2026-04-27T10:14:22Z"
+  },
+  "applied_tune": {
+    "num_workers": 8,
+    "cache_gb": 6.1,
+    "oiio_threads": 4,
+    "use_pbo": true
+  }
+}
+```
+
+#### Why this beats startup detection alone
+
+The calibration bench is what catches **edge cases** that
+GPU-string heuristics can't:
+
+* A driver bug that makes PBO actually slower than sync on this
+  particular machine — `upload_cpu_mean` will be > 15 ms, we override
+  `use_pbo` to `False` for this profile.
+* An EXR decoded much faster than expected (newer OIIO, faster
+  storage) — we can grow the prefetch window beyond the 64-frame
+  default with confidence.
+* A thermally-throttled laptop dGPU performing closer to an iGPU —
+  we lean toward conservative settings.
+
+#### CLI overrides for calibration
+
+* `--skip-calibration` — bypass the bench, use raw heuristics. Useful
+  for CI / scripted use.
+* `--recalibrate` — force a fresh calibration run even if
+  `profile.json` is current. Useful after a driver update.
+* The existing `--workers` / `--cache-gb` / `--oiio-threads` /
+  `--no-pbo` flags **still win** over the calibration profile.
+  Precedence stays: `CLI > calibration profile > heuristics > fallback`.
+
+#### Failure handling
+
+If the calibration bench itself fails (decoder error, GL crash,
+disk write error on `profile.json`) we log a warning, skip the
+calibration entirely for this session, and fall back to raw
+heuristics. The app **must not refuse to start** because the
+calibration bench has trouble.
 
 ---
 
