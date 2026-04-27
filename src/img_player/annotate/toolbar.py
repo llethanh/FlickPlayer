@@ -28,8 +28,15 @@ from __future__ import annotations
 
 from enum import Enum
 
-from PySide6.QtCore import QPoint, Qt, Signal
-from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPalette
+from PySide6.QtCore import QPoint, QSize, Qt, Signal
+from PySide6.QtGui import (
+    QColor,
+    QMouseEvent,
+    QPainter,
+    QPainterPath,
+    QPalette,
+    QPen,
+)
 from PySide6.QtWidgets import (
     QButtonGroup,
     QDockWidget,
@@ -37,6 +44,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QSlider,
     QToolButton,
     QVBoxLayout,
@@ -45,6 +53,7 @@ from PySide6.QtWidgets import (
 
 from img_player.annotate.overlay import ToolKind
 from img_player.render.gl_viewport import GLViewport
+from img_player.ui.icons import make_icon
 
 
 class ToolbarMode(Enum):
@@ -69,7 +78,7 @@ PALETTE: tuple[str, ...] = (
 DEFAULT_COLOR = PALETTE[0]
 DEFAULT_SIZE = 5.0
 MIN_SIZE = 1.0
-MAX_SIZE = 50.0
+MAX_SIZE = 30.0
 
 
 class _ColorSwatch(QToolButton):
@@ -81,7 +90,7 @@ class _ColorSwatch(QToolButton):
     saturated swatch colors at tiny sizes (16-20 px).
     """
 
-    SIZE_PX = 18
+    SIZE_PX = 20
 
     def __init__(self, color_hex: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -118,6 +127,68 @@ class _ColorSwatch(QToolButton):
         painter.drawEllipse(rect)
 
 
+class _StrokePreview(QWidget):
+    """Tiny widget that paints a wavy sample stroke in the current
+    brush color and size.
+
+    Sits at the top of the toolbar so the user sees immediate
+    feedback when picking a color or moving the size slider — same
+    spirit as Photoshop's brush preview, just a flat 80×36 strip.
+    """
+
+    _MARGIN = 6
+    _AMPLITUDE = 6  # vertical excursion of the wavy line
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._color = DEFAULT_COLOR
+        self._size = DEFAULT_SIZE
+        self.setFixedHeight(28)
+        self.setMinimumWidth(60)
+
+    def set_color(self, color: str) -> None:
+        if color == self._color:
+            return
+        self._color = color
+        self.update()
+
+    def set_size(self, size: float) -> None:
+        if size == self._size:
+            return
+        self._size = size
+        self.update()
+
+    def paintEvent(self, event: object) -> None:  # noqa: ARG002
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # Map the stored size (1-50 in image-pixels) to a preview pen
+        # width that stays readable in the small strip — clamped so
+        # the wave's amplitude is always larger than the stroke.
+        pen_w = max(1.5, min(self._size * 0.6, self._AMPLITUDE * 1.6))
+        pen = QPen(QColor(self._color))
+        pen.setWidthF(pen_w)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+
+        w = self.width()
+        h = self.height()
+        x0 = self._MARGIN
+        x3 = w - self._MARGIN
+        y_mid = h / 2.0
+        y_top = y_mid - self._AMPLITUDE
+        y_bot = y_mid + self._AMPLITUDE
+        # Three-loop wave: gives the user a sense of corner / curve
+        # behaviour at the picked size + color.
+        path = QPainterPath()
+        path.moveTo(x0, y_mid)
+        third = (x3 - x0) / 3.0
+        path.quadTo(x0 + third * 0.5, y_top, x0 + third, y_mid)
+        path.quadTo(x0 + third * 1.5, y_bot, x0 + third * 2.0, y_mid)
+        path.quadTo(x0 + third * 2.5, y_top, x3, y_mid)
+        painter.drawPath(path)
+
+
 class AnnotationToolbar(QWidget):
     """Composite drawing toolbar — pen / eraser / palette / size / undo / redo / pin."""
 
@@ -134,6 +205,10 @@ class AnnotationToolbar(QWidget):
 
     undo_requested = Signal()
     redo_requested = Signal()
+
+    clear_requested = Signal()
+    """Emits when the user clicks the Clear button — the app removes
+    every stroke from the current frame."""
 
     mode_changed = Signal(object)
     """Emits :class:`ToolbarMode` when the pin toggles float ⇄ dock."""
@@ -204,6 +279,11 @@ class AnnotationToolbar(QWidget):
             self.move(*self._floating_pos)
             self.raise_()
             self.show()
+            # Belt-and-braces: adjustSize forces the widget to shrink
+            # to its sizeHint after show(). Without it, Qt sometimes
+            # keeps a leftover larger geometry from the previous
+            # parenting (e.g. the dock's vertical fill).
+            self.adjustSize()
         else:  # DOCK
             self.setParent(None)
             self.setWindowFlags(Qt.WindowType.Widget)
@@ -241,6 +321,10 @@ class AnnotationToolbar(QWidget):
                 swatch.setChecked(swatch.color_hex == color_hex)
             finally:
                 swatch.blockSignals(False)
+        # Sync the wavy preview at the top so the user sees the
+        # picked color immediately, before they even draw.
+        if hasattr(self, "_stroke_preview"):
+            self._stroke_preview.set_color(color_hex)
         self.color_changed.emit(color_hex)
 
     def set_current_size(self, size: float) -> None:
@@ -253,139 +337,202 @@ class AnnotationToolbar(QWidget):
             self._size_slider.setValue(int(round(size)))
         finally:
             self._size_slider.blockSignals(False)
+        # Same reason as in set_current_color — keep the preview in
+        # sync.
+        if hasattr(self, "_stroke_preview"):
+            self._stroke_preview.set_size(size)
         self._size_label.setText(f"{int(round(size))}px")
         self.size_changed.emit(size)
 
     # ------------------------------------------------------------------ UI build
 
     def _build_ui(self) -> None:
-        # Outer column.
+        # Outer column. Tight padding so the toolbar matches the
+        # reference's compact width.
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
 
-        # --- Pin button (top of the toolbar)
+        # --- Pin button (top of the toolbar, alone, centred). Emoji
+        # 📌 — the user prefers the colorful native glyph here over
+        # a custom monochrome SVG.
         self._pin_btn = QToolButton(self)
         self._pin_btn.setText("📌")
         self._pin_btn.setToolTip("Bascule float ⇄ dock")
-        self._pin_btn.setFixedSize(28, 24)
+        self._pin_btn.setFixedSize(26, 22)
         self._pin_btn.clicked.connect(self._on_pin_clicked)
-        layout.addWidget(self._pin_btn)
+        layout.addWidget(self._pin_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self._separator())
 
-        # --- Pen / eraser
-        tool_row = QVBoxLayout()
-        tool_row.setSpacing(4)
+        # --- Stroke preview (sample wavy stroke in current color/size)
+        self._stroke_preview = _StrokePreview(self)
+        self._stroke_preview.set_color(self._current_color)
+        self._stroke_preview.set_size(self._current_size)
+        layout.addWidget(self._stroke_preview)
 
+        # --- Pen + eraser as a horizontal pair (matches the user's
+        # reference layout: tools side-by-side rather than stacked).
+        tool_row = QHBoxLayout()
+        tool_row.setSpacing(6)
+        tool_row.setContentsMargins(0, 0, 0, 0)
+
+        # ✏️ + 🧽 native emojis — same reasoning as for the pin: the
+        # user prefers the colorful glyphs (pencil + sponge) over
+        # custom monochrome SVGs. The variation selector U+FE0F on
+        # the pencil forces emoji presentation; sponge is emoji-by
+        # -default.
         self._pen_btn = QToolButton(self)
-        # ✏️ = U+270F LOWER RIGHT PENCIL + U+FE0F variation selector.
-        # The selector forces emoji presentation; without it the pencil
-        # falls back to the monochrome text glyph on most systems.
         self._pen_btn.setText("✏️")
         self._pen_btn.setToolTip("Pen (P) — clic-glisser pour dessiner")
         self._pen_btn.setCheckable(True)
-        self._pen_btn.setFixedSize(36, 28)
+        self._pen_btn.setFixedSize(30, 28)
         self._pen_btn.clicked.connect(self._on_pen_clicked)
 
         self._eraser_btn = QToolButton(self)
-        # 🧽 = U+1F9FD SPONGE. Native emoji rendering by default — no
-        # selector needed. Visually distinct from the pen and reads
-        # "remove / clean" universally.
         self._eraser_btn.setText("🧽")
-        self._eraser_btn.setToolTip("Eraser (E) — clic sur un trait pour le supprimer")
+        self._eraser_btn.setToolTip(
+            "Eraser (E) — clic sur un trait pour le supprimer"
+        )
         self._eraser_btn.setCheckable(True)
-        self._eraser_btn.setFixedSize(36, 28)
+        self._eraser_btn.setFixedSize(30, 28)
         self._eraser_btn.clicked.connect(self._on_eraser_clicked)
 
         # QButtonGroup handles the radio (mutex) behaviour, but we
         # also want "click an active button to deactivate" — Qt's
         # group doesn't do that. We handle it manually in the slots.
         self._tool_group = QButtonGroup(self)
-        self._tool_group.setExclusive(False)  # we manage exclusivity
+        self._tool_group.setExclusive(False)
         self._tool_group.addButton(self._pen_btn)
         self._tool_group.addButton(self._eraser_btn)
 
+        tool_row.addStretch(1)
         tool_row.addWidget(self._pen_btn)
         tool_row.addWidget(self._eraser_btn)
+        tool_row.addStretch(1)
         layout.addLayout(tool_row)
         layout.addWidget(self._separator())
 
-        # --- Color palette: 7 swatches. In float mode we lay them out
-        # in a 4-3 grid (compact); in dock mode they go in a single
-        # column (more vertical room available).
-        self._palette_layout = QHBoxLayout()
-        self._palette_layout.setSpacing(4)
+        # --- Size: label + slider (sits BELOW the tool pair, per the
+        # user's reference layout).
+        size_caption = QLabel("Size", self)
+        size_caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        size_caption.setStyleSheet(
+            "color: #E4E4E6; font-size: 11px; font-weight: 500;"
+        )
+        layout.addWidget(size_caption)
+
+        self._size_slider = QSlider(Qt.Orientation.Horizontal, self)
+        self._size_slider.setRange(int(MIN_SIZE), int(MAX_SIZE))
+        self._size_slider.setValue(int(self._current_size))
+        self._size_slider.valueChanged.connect(self._on_size_slider)
+        layout.addWidget(self._size_slider)
+
+        self._size_label = QLabel(f"{int(self._current_size)}px", self)
+        self._size_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._size_label.setStyleSheet("color: #8A8A8E; font-size: 10px;")
+        layout.addWidget(self._size_label)
+        layout.addWidget(self._separator())
+
+        # --- Color palette: 7 swatches in a 2-column grid (4 rows, the
+        # last with a single swatch). Round shape was set in PR #42.
         self._swatches: list[_ColorSwatch] = []
         for color in PALETTE:
             sw = _ColorSwatch(color, self)
             sw.setChecked(color == self._current_color)
-            sw.clicked.connect(lambda _checked=False, c=color: self._on_swatch_clicked(c))
+            sw.clicked.connect(
+                lambda _checked=False, c=color: self._on_swatch_clicked(c)
+            )
             self._swatches.append(sw)
         self._palette_grid = self._build_palette_grid()
         layout.addWidget(self._palette_grid)
         layout.addWidget(self._separator())
 
-        # --- Size slider
-        self._size_slider = QSlider(Qt.Orientation.Horizontal, self)
-        self._size_slider.setRange(int(MIN_SIZE), int(MAX_SIZE))
-        self._size_slider.setValue(int(self._current_size))
-        self._size_slider.setFixedWidth(80)
-        self._size_slider.valueChanged.connect(self._on_size_slider)
-        self._size_label = QLabel(f"{int(self._current_size)}px", self)
-        self._size_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._size_label.setStyleSheet("color: #8A8A8E; font-size: 10px;")  # TEXT_SECONDARY
+        # --- Undo / redo (horizontal pair).
+        action_row = QHBoxLayout()
+        action_row.setSpacing(6)
+        action_row.setContentsMargins(0, 0, 0, 0)
 
-        size_box = QVBoxLayout()
-        size_box.setSpacing(2)
-        size_box.addWidget(self._size_slider)
-        size_box.addWidget(self._size_label)
-        layout.addLayout(size_box)
+        self._undo_btn = QToolButton(self)
+        self._undo_btn.setIcon(make_icon("undo"))
+        self._undo_btn.setIconSize(QSize(16, 16))
+        self._undo_btn.setToolTip("Undo (Ctrl+Z)")
+        self._undo_btn.setFixedSize(28, 24)
+        self._undo_btn.clicked.connect(self.undo_requested.emit)
+
+        self._redo_btn = QToolButton(self)
+        self._redo_btn.setIcon(make_icon("redo"))
+        self._redo_btn.setIconSize(QSize(16, 16))
+        self._redo_btn.setToolTip("Redo (Ctrl+Y)")
+        self._redo_btn.setFixedSize(28, 24)
+        self._redo_btn.clicked.connect(self.redo_requested.emit)
+
+        action_row.addStretch(1)
+        action_row.addWidget(self._undo_btn)
+        action_row.addWidget(self._redo_btn)
+        action_row.addStretch(1)
+        layout.addLayout(action_row)
         layout.addWidget(self._separator())
 
-        # --- Undo / redo
-        undo_row = QVBoxLayout()
-        undo_row.setSpacing(4)
-        self._undo_btn = QToolButton(self)
-        self._undo_btn.setText("↶")
-        self._undo_btn.setToolTip("Undo (Ctrl+Z)")
-        self._undo_btn.setFixedSize(36, 24)
-        self._undo_btn.clicked.connect(self.undo_requested.emit)
-        self._redo_btn = QToolButton(self)
-        self._redo_btn.setText("↷")
-        self._redo_btn.setToolTip("Redo (Ctrl+Y)")
-        self._redo_btn.setFixedSize(36, 24)
-        self._redo_btn.clicked.connect(self.redo_requested.emit)
-        undo_row.addWidget(self._undo_btn)
-        undo_row.addWidget(self._redo_btn)
-        layout.addLayout(undo_row)
+        # --- Clear button — distinct visual (subtle red tint) so the
+        # user understands it's a destructive action vs. the neutral
+        # tool buttons above. Removes every stroke on the current
+        # frame; each removal is undoable so an accidental click
+        # walks back stroke-by-stroke with Ctrl+Z.
+        self._clear_btn = QPushButton("Clear", self)
+        self._clear_btn.setToolTip(
+            "Supprime toutes les annotations sur la frame courante"
+        )
+        self._clear_btn.setStyleSheet(
+            "QPushButton {"
+            "  background: rgba(232, 74, 74, 0.16);"  # subtle red tint
+            "  border: 1px solid rgba(232, 74, 74, 0.55);"
+            "  color: #E4E4E6;"
+            "  padding: 4px 10px;"
+            "  border-radius: 4px;"
+            "  font-size: 11px;"
+            "}"
+            "QPushButton:hover {"
+            "  background: rgba(232, 74, 74, 0.32);"
+            "  border-color: rgba(232, 74, 74, 0.85);"
+            "}"
+            "QPushButton:pressed {"
+            "  background: rgba(232, 74, 74, 0.45);"
+            "}"
+        )
+        self._clear_btn.clicked.connect(self.clear_requested.emit)
+        layout.addWidget(self._clear_btn)
 
-        layout.addStretch(1)
-
-        # Auto-sized — let Qt compute. We set a fixed width minimum so
-        # the toolbar doesn't collapse weirdly in dock mode.
-        self.setMinimumWidth(80)
+        # Compact width — sized to fit the pen + eraser pair side by
+        # side with minimal padding, matching the user's reference.
+        # 2 × 30 (buttons) + 6 (spacing) + 12 (margins) = 78.
+        self.setFixedWidth(78)
+        # Height shrinks to the layout's natural size (no addStretch
+        # filler, no expand). Without this, the float-mode toolbar
+        # would fill the entire viewport vertically because Qt gives
+        # a SubWindow-flagged QWidget the parent's available area
+        # by default.
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Maximum)
 
     def _build_palette_grid(self) -> QWidget:
-        """Lay out the 7 swatches as a 4-3 grid for vertical compactness."""
+        """Lay out the 7 swatches as a 2-column grid (4 rows; last
+        row carries a single swatch).
+
+        Vertical orientation matches the rest of the redesigned
+        toolbar — the older 4-3 horizontal grid felt cramped next to
+        the now-paired pen / eraser row.
+        """
         wrapper = QWidget(self)
         grid_layout = QVBoxLayout(wrapper)
         grid_layout.setContentsMargins(0, 0, 0, 0)
         grid_layout.setSpacing(4)
-
-        row1 = QHBoxLayout()
-        row1.setSpacing(4)
-        for sw in self._swatches[:4]:
-            row1.addWidget(sw)
-        row1.addStretch(1)
-
-        row2 = QHBoxLayout()
-        row2.setSpacing(4)
-        for sw in self._swatches[4:]:
-            row2.addWidget(sw)
-        row2.addStretch(1)
-
-        grid_layout.addLayout(row1)
-        grid_layout.addLayout(row2)
+        for row_start in range(0, len(self._swatches), 2):
+            row = QHBoxLayout()
+            row.setSpacing(4)
+            row.addStretch(1)
+            for sw in self._swatches[row_start:row_start + 2]:
+                row.addWidget(sw)
+            row.addStretch(1)
+            grid_layout.addLayout(row)
         return wrapper
 
     def _separator(self) -> QFrame:
@@ -405,6 +552,7 @@ class AnnotationToolbar(QWidget):
             self.setWindowFlags(Qt.WindowType.SubWindow)
             self.move(*self._floating_pos)
             self.raise_()
+            self.adjustSize()  # see set_mode for why
         else:  # DOCK
             self._dock_wrapper.setWidget(self)
         self._apply_mode_styles()
@@ -413,16 +561,21 @@ class AnnotationToolbar(QWidget):
         """Apply the visual style for the current mode (translucent
         background in float, opaque in dock)."""
         if self._mode == ToolbarMode.FLOAT:
-            # Semi-transparent dark panel — the spec calls for ~92 %
-            # alpha so the image just shows through enough to keep
-            # spatial context.
+            # Semi-transparent dark panel — 70 % opaque so the image
+            # behind shows through enough to keep spatial context
+            # without making the toolbar's silhouette dissolve into
+            # the viewport.
             self.setStyleSheet(
                 "AnnotationToolbar {"
-                "  background: rgba(36, 36, 40, 235);"  # 235/255 ≈ 92%
+                "  background: rgba(36, 36, 40, 178);"  # 178/255 ≈ 70%
                 "  border: 1px solid rgba(56, 56, 60, 220);"
                 "  border-radius: 8px;"
                 "}"
             )
+            # WA_StyledBackground is REQUIRED for a custom QWidget
+            # subclass to honor a QSS background rule on the widget
+            # itself (without it, QSS only styles children).
+            self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
             self.setAutoFillBackground(False)
             # Cursor indicates draggable in float mode.
@@ -434,6 +587,10 @@ class AnnotationToolbar(QWidget):
                 "  background: #242428;"  # BG_RAISED
                 "}"
             )
+            # Same reason as in float mode: ensures the QSS background
+            # actually paints on the toolbar itself (not just the
+            # children).
+            self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
             self.setAutoFillBackground(True)
             palette = self.palette()
             palette.setColor(QPalette.ColorRole.Window, QColor("#242428"))

@@ -279,20 +279,13 @@ class ImgPlayerApp:
         _apply_preferences_to_window(self)
 
     def _shutdown(self) -> None:
-        # Save annotations to the sidecar JSON if a sequence is open.
-        # Done first so a later Qt teardown exception doesn't lose
-        # them. ``save_annotations`` is best-effort and never raises
-        # — read-only Drive Stream sessions log a warning and the
-        # annotations are lost gracefully.
-        if (
-            self._annotations_path is not None
-            and self._annotations_basename is not None
-        ):
-            save_annotations(
-                self._annotations_path,
-                self._annotation_store,
-                basename=self._annotations_basename,
-            )
+        # Annotations are saved by the ``_prompt_save_annotations``
+        # callback fired from MainWindow.closeEvent — the user is
+        # asked explicitly whether to overwrite the existing sidecar
+        # (or create a new one). Nothing to do here at shutdown.
+        # Crash / kill paths bypass closeEvent and lose annotations
+        # — same as before this change since _shutdown didn't run
+        # in those cases either.
 
         # Slice 6: persist the calibration profile if late-bind ran.
         # We do this before window/timer teardown so a Qt teardown
@@ -498,6 +491,13 @@ class ImgPlayerApp:
         )
         self._annotation_toolbar.undo_requested.connect(self._undo_annotation)
         self._annotation_toolbar.redo_requested.connect(self._redo_annotation)
+        self._annotation_toolbar.clear_requested.connect(self._clear_annotations)
+
+        # Annotation save prompt — runs from MainWindow.closeEvent
+        # before the window actually closes. Returning False from
+        # this callback cancels the close (the user clicked Cancel
+        # in the save dialog).
+        self._window.set_before_close_callback(self._prompt_save_annotations)
         # Persist mode + float position to prefs so the toolbar
         # comes back where the user left it next session.
         self._annotation_toolbar.mode_changed.connect(self._on_toolbar_mode_changed)
@@ -801,6 +801,97 @@ class ImgPlayerApp:
         frame = self._controller.state.current_frame
         if not self._annotation_store.redo(frame):
             self._window.set_status("Annotation : rien à rétablir sur cette frame")
+
+    def _clear_annotations(self) -> None:
+        """Toolbar's Clear button — wipe every stroke on the current
+        frame. Each removal lands as its own undo entry, so the user
+        can walk back stroke-by-stroke if they clicked Clear by
+        accident.
+        """
+        frame = self._controller.state.current_frame
+        count = self._annotation_store.clear_frame(frame)
+        if count == 0:
+            self._window.set_status("Annotation : aucune annotation à effacer")
+        else:
+            plural = "s" if count > 1 else ""
+            self._window.set_status(
+                f"Annotation : {count} trait{plural} effacé{plural} "
+                f"(Ctrl+Z pour annuler)"
+            )
+
+    def _prompt_save_annotations(self) -> bool:
+        """Close-time prompt: ask whether to save annotations.
+
+        Called from MainWindow.closeEvent right before the window
+        actually closes. Returns:
+
+        * ``True`` — close proceeds (user picked Save or Don't Save).
+        * ``False`` — close is cancelled (user picked Cancel).
+
+        The dialog is skipped entirely when:
+
+        * No sequence is open (``_annotations_path`` is ``None``).
+        * The store is clean (no mutations since the last load /
+          save) — nothing meaningful to save, no nag.
+        """
+        if self._annotations_path is None or self._annotations_basename is None:
+            return True
+        if not self._annotation_store.is_dirty():
+            return True
+
+        existing = self._annotations_path.exists()
+        body = "Des annotations ont été modifiées."
+        if existing:
+            informative = (
+                f"Sauvegarder dans {self._annotations_path} "
+                f"écrasera le fichier existant."
+            )
+        else:
+            informative = (
+                f"Le fichier {self._annotations_path} sera créé."
+            )
+
+        box = QMessageBox(self._window)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Sauvegarder les annotations ?")
+        box.setText(body)
+        box.setInformativeText(informative)
+        save_btn = box.addButton(
+            "Sauvegarder", QMessageBox.ButtonRole.AcceptRole
+        )
+        discard_btn = box.addButton(
+            "Ne pas sauvegarder", QMessageBox.ButtonRole.DestructiveRole
+        )
+        cancel_btn = box.addButton("Annuler", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(save_btn)
+        box.exec()
+        clicked = box.clickedButton()
+
+        if clicked is cancel_btn:
+            return False  # user backed out of the close
+        if clicked is save_btn:
+            ok = save_annotations(
+                self._annotations_path,
+                self._annotation_store,
+                basename=self._annotations_basename,
+            )
+            if ok:
+                self._annotation_store.mark_clean()
+            else:
+                # Best-effort save failed (read-only dossier, etc.).
+                # We let the close proceed anyway — blocking exit on
+                # a permission error trapped users in the v1 fix; the
+                # warning is already logged by save_annotations.
+                log.warning(
+                    "[annotations] save failed at close — annotations "
+                    "will be lost. Underlying error already logged."
+                )
+        # discard_btn or save_btn (whether ok or not): allow close.
+        # ``_ = discard_btn`` to silence "unused variable" lint —
+        # we keep the named binding for readability of the dialog
+        # construction above.
+        _ = discard_btn
+        return True
 
     def _on_channel_mask_changed(self, mask: tuple) -> None:
         """Forward the four RGBA visibility booleans to the GL viewport.
