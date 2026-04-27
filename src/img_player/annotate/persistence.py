@@ -85,7 +85,13 @@ def save_annotations(
                     path,
                 )
 
-        existing_sequences[basename] = store.to_dict()
+        # Merge under the existing per-basename bucket — preserve
+        # any sibling sub-trees (e.g. ``"comments"`` written by the
+        # parallel ``comment.persistence.save_comments``). We
+        # update only the ``"frames"`` key so a comments-then-
+        # annotations save sequence doesn't drop the comments.
+        bucket = existing_sequences.setdefault(basename, {})
+        bucket["frames"] = store.to_dict()["frames"]
 
         payload = {
             "schema_version": SCHEMA_VERSION,

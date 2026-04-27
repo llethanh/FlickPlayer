@@ -28,7 +28,9 @@ def main_window(qtbot) -> MainWindow:  # type: ignore[no-untyped-def]
     ocio.default_display.return_value = "sRGB"
     ocio.default_view.return_value = "ACES 1.0 SDR-video"
     ocio.role.return_value = "scene_linear"
-    window = MainWindow(ocio)
+    # MainWindow now requires a CommentStore for the Comments tab.
+    from img_player.comment.store import CommentStore
+    window = MainWindow(ocio, CommentStore())
     qtbot.addWidget(window)
     return window
 
