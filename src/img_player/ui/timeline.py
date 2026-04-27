@@ -6,6 +6,7 @@ from typing import Literal
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
+    QColor,
     QFont,
     QFontMetrics,
     QMouseEvent,
@@ -68,6 +69,7 @@ class Timeline(QWidget):  # type: ignore[misc]
         self._display_mode: DisplayMode = "frames"
         self._cached_frames: frozenset[int] = frozenset()
         self._annotated_frames: frozenset[int] = frozenset()
+        self._commented_frames: frozenset[int] = frozenset()
         self._scrubbing = False
 
         self._label_font: QFont = F.mono(F.SIZE_XS)
@@ -120,6 +122,19 @@ class Timeline(QWidget):  # type: ignore[misc]
         self._annotated_frames = frames
         self.update()
 
+    def set_commented_frames(self, frames: frozenset[int]) -> None:
+        """Frames with at least one textual comment. Drives the small
+        blue dot markers above the annotation triangles, so the user
+        sees at a glance what kind of note lives on each frame
+        (annotation only / comment only / both).
+
+        Idempotent: same set → no repaint.
+        """
+        if frames == self._commented_frames:
+            return
+        self._commented_frames = frames
+        self.update()
+
     # ------------------------------------------------------------------ Painting
 
     def paintEvent(self, event: QPaintEvent) -> None:
@@ -138,6 +153,7 @@ class Timeline(QWidget):  # type: ignore[misc]
         self._draw_playhead(painter)
         self._draw_cache_bar(painter)
         self._draw_annotation_markers(painter)
+        self._draw_comment_markers(painter)
 
     def _usable_width(self) -> int:
         return max(1, int(self.width() - 2 * self.MARGIN_X))
@@ -292,27 +308,79 @@ class Timeline(QWidget):  # type: ignore[misc]
         return 0.5 * self._usable_width() / self._total_frames()
 
     def _draw_annotation_markers(self, painter: QPainter) -> None:
-        """Small accent triangle pointing down for each annotated frame.
+        """Big green triangle pointing UP toward the timeline track.
 
-        Sits in the slack between the range bar (y=31) and the cache
-        bar (y=41), so the markers don't fight the playhead's
-        triangle at the top or the cache fill below. Width tuned so
-        adjacent markers in a dense stretch don't visually merge.
+        Lives in the slack between the range bar (ends y=31) and
+        the cache bar (starts y=41). Points up so the tip "lands"
+        on the range bar — visually anchoring the marker to the
+        frame it refers to.
         """
         if not self._annotated_frames:
             return
 
-        marker_h = 5.0
-        marker_w = 5.0
-        # Position: 4 px above the cache bar top, pointing down.
-        tip_y = self.CACHE_TOP - 1
-        base_y = tip_y - marker_h
+        marker_h = 9.0
+        marker_w = 8.0
+        # Tip flush against the range bar's bottom edge, base near
+        # the cache bar — fills the 10 px slack.
+        tip_y = self.RANGE_Y + self.RANGE_H  # 31
+        base_y = tip_y + marker_h            # 40
 
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(C.ACCENT_BRIGHT)
+        # Same green as the palette's "ok / approved" swatch —
+        # familiar review-tool colour.
+        painter.setBrush(QColor("#5DC46C"))
 
         in_range = sorted(
             f for f in self._annotated_frames if self._first <= f <= self._last
+        )
+        for frame in in_range:
+            x = self._frame_to_x(frame)
+            tri = QPolygonF([
+                QPointF(x - marker_w / 2.0, base_y),
+                QPointF(x + marker_w / 2.0, base_y),
+                QPointF(x, tip_y),
+            ])
+            painter.drawPolygon(tri)
+
+    def _draw_comment_markers(self, painter: QPainter) -> None:
+        """Blue triangle pointing DOWN toward the timeline track.
+
+        Lives in the 5 px gap between the major-tick row bottom
+        (y=23) and the range bar top (y=28). Mirror of the
+        annotation triangle below — both point at the range bar
+        for clear "this frame" anchoring.
+
+        * green ▲ below alone               = annotation only
+        * blue ▼ above alone                = comment only
+        * blue ▼ above + green ▲ below      = both
+
+        Different shape (triangle pointing different way) AND
+        different colour AND different position — readable at a
+        glance even when a heavy review LUT flattens colours.
+        """
+        if not self._commented_frames:
+            return
+
+        marker_h = 9.0
+        marker_w = 8.0
+        # Tip flush against the range bar top (y=28); base reaches
+        # up into the major-tick row. Same dimensions as the
+        # annotation triangle below — so a frame with both notes
+        # shows two SYMMETRIC mirrored triangles. Slight overlap
+        # with major tick lines at frames that happen to align is
+        # acceptable: ticks are thin vertical bars, the triangle
+        # is a bold filled shape, and the comment marker is the
+        # more important info on a noted frame.
+        tip_y = float(self.RANGE_Y)        # 28
+        base_y = tip_y - marker_h          # 19
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        # Same blue as the palette's "note" swatch — familiar
+        # review-tool colour for "comment".
+        painter.setBrush(QColor("#4A8DE8"))
+
+        in_range = sorted(
+            f for f in self._commented_frames if self._first <= f <= self._last
         )
         for frame in in_range:
             x = self._frame_to_x(frame)

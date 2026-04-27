@@ -36,8 +36,9 @@ from PySide6.QtWidgets import (
 )
 
 from img_player.color.ocio_manager import OCIOManager
-from img_player.ui.channel_panel import ChannelPanel
+from img_player.comment.store import CommentStore
 from img_player.ui.color_panel import ColorPanel
+from img_player.ui.comment_panel import CommentPanel
 from img_player.ui.icons import make_icon
 from img_player.ui.theme import F, G, H, S
 from img_player.ui.timeline import Timeline
@@ -69,7 +70,12 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
     clear_in_out_requested = Signal()  # reset in/out range (Shift+R)
     loop_mode_requested = Signal(object)  # LoopMode
 
-    def __init__(self, ocio_manager: OCIOManager, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        ocio_manager: OCIOManager,
+        comment_store: CommentStore,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("img_player")
         self.resize(1280, 720)
@@ -80,7 +86,11 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         self._transport = TransportBar(self)
         self._timeline = Timeline(self)
         self._color_panel = ColorPanel(ocio_manager, self)
-        self._channel_panel = ChannelPanel(self)
+        # The Channels tab was retired (channel info already lives in
+        # the transport bar's combo + the four R/G/B/A mute toggles).
+        # Replaced by a Comments tab — review-tool comment thread
+        # attached to the current frame, see docs.
+        self._comment_panel = CommentPanel(comment_store, self)
 
         # Central: viewer on top, then timeline + transport stacked at the bottom
         central = QWidget(self)
@@ -92,10 +102,10 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         layout.addWidget(self._transport)
         self.setCentralWidget(central)
 
-        # Right-hand dock holds Color + Channels as tabs
+        # Right-hand dock holds Color + Comments as tabs.
         self._side_tabs = QTabWidget()
         self._side_tabs.addTab(self._color_panel, "Color")
-        self._side_tabs.addTab(self._channel_panel, "Channels")
+        self._side_tabs.addTab(self._comment_panel, "Comments")
         # Stored on self so the burger button can toggle it.
         # objectName is mandatory for QMainWindow.saveState() /
         # restoreState() to round-trip the dock layout in QSettings —
@@ -195,8 +205,11 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         return self._annotation_dock
 
     @property
-    def channel_panel(self) -> ChannelPanel:
-        return self._channel_panel
+    def comment_panel(self) -> CommentPanel:
+        """The Comments tab in the right-hand side dock — exposed
+        so the app can update its current frame as the playhead
+        moves."""
+        return self._comment_panel
 
     @property
     def transport(self) -> TransportBar:
@@ -209,7 +222,7 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
     # --------------------------------------------------------------- Public updates
 
     def update_sequence_info(self, sequence: SequenceInfo) -> None:
-        """Refresh the title bar, timeline range, channel panel and the
+        """Refresh the title bar, timeline range, and the
         transport bar's channel selector.
 
         Loading a new sequence wipes any per-sequence UI state that
@@ -226,7 +239,6 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         # _refresh_cache_bar tick (~200 ms) re-populates with the
         # actually-cached frames of the new sequence.
         self._timeline.set_cached_frames(frozenset())
-        self._channel_panel.set_channels(sequence.channel_names)
         # Populate the channel-selector combo so the user can pick
         # individual channels (Z, normals, AOVs, …).
         self._transport.set_available_channels(sequence.channel_names)

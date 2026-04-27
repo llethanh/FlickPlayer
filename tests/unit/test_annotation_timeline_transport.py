@@ -54,6 +54,49 @@ class TestTimelineAnnotatedFrames:
         assert timeline._annotated_frames is frames
 
 
+class TestTimelineCommentedFrames:
+    """Twin of ``TestTimelineAnnotatedFrames`` — comments draw a
+    distinct blue dot marker and live in their own state field so the
+    timeline can render the two kinds of notes side-by-side without
+    one obscuring the other."""
+
+    def test_initial_set_is_empty(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        timeline = Timeline()
+        qtbot.addWidget(timeline)
+        assert timeline._commented_frames == frozenset()
+
+    def test_set_stores_state(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        timeline = Timeline()
+        qtbot.addWidget(timeline)
+        frames = frozenset({2, 7, 12})
+        timeline.set_commented_frames(frames)
+        assert timeline._commented_frames == frames
+
+    def test_same_set_is_noop(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        timeline = Timeline()
+        qtbot.addWidget(timeline)
+        frames = frozenset({30})
+        timeline.set_commented_frames(frames)
+        timeline.set_commented_frames(frames)
+        assert timeline._commented_frames is frames
+
+    def test_annotated_and_commented_are_independent(
+        self, qtbot
+    ) -> None:  # type: ignore[no-untyped-def]
+        """A frame can carry both kinds of notes — and a frame
+        carrying only one kind doesn't leak into the other set."""
+        timeline = Timeline()
+        qtbot.addWidget(timeline)
+        timeline.set_annotated_frames(frozenset({10, 42}))
+        timeline.set_commented_frames(frozenset({42, 80}))
+        assert timeline._annotated_frames == frozenset({10, 42})
+        assert timeline._commented_frames == frozenset({42, 80})
+        # 42 is in BOTH — that's how a frame with both notes shows
+        # up as triangle + dot stacked.
+        assert 42 in timeline._annotated_frames
+        assert 42 in timeline._commented_frames
+
+
 # ============================================================================
 # Transport annotation buttons — enabled state
 # ============================================================================

@@ -21,6 +21,7 @@ from img_player.annotate import (
     save_annotations,
 )
 from img_player.annotate.persistence import sidecar_path
+from img_player.comment import CommentStore, load_comments, save_comments
 from img_player.cache.frame_cache import FrameCache
 from img_player.color.gpu_processor import build_shader_bundle
 from img_player.color.ocio_manager import OCIOManager
@@ -154,7 +155,13 @@ class ImgPlayerApp:
             num_workers=num_workers,
         )
         self._controller = PlayerController(self._cache)
-        self._window = MainWindow(self._ocio)
+
+        # Comment store — owned by the app, passed to MainWindow so
+        # the Comments tab can read / write directly. Cohérent with
+        # how the AnnotationStore is owned: app-level for lifecycle,
+        # widgets just hold a reference.
+        self._comment_store = CommentStore()
+        self._window = MainWindow(self._ocio, self._comment_store)
 
         # Slice 5: 1 Hz watchdog that auto-corrects mid-playback. Hooks
         # the controller's state_changed signal itself, so we just
@@ -512,6 +519,13 @@ class ImgPlayerApp:
         self._annotation_store.annotated_frames_changed.connect(
             self._on_annotated_frames_changed
         )
+        # Comments share the same marker / nav path: a frame with
+        # only a comment still gets the orange triangle and counts
+        # for prev/next-noted navigation. Same handler, both
+        # signals.
+        self._comment_store.commented_frames_changed.connect(
+            self._on_annotated_frames_changed
+        )
 
         # Transport annotation buttons -> store / toolbar.
         self._window.transport.annotation_toggle_clicked.connect(
@@ -588,6 +602,8 @@ class ImgPlayerApp:
         # The annotation overlay paints strokes for the current
         # frame — keep it in sync.
         self._annotation_overlay.set_current_frame(frame)
+        # The comment panel re-renders its thread for the new frame.
+        self._window.comment_panel.set_current_frame(frame)
         # Prev/next-annotation transport buttons depend on the
         # playhead position vs the annotated set — re-evaluate.
         self._refresh_annotation_nav_buttons()
@@ -635,12 +651,11 @@ class ImgPlayerApp:
             self._display_array(arr)
             self._last_displayed = frame
             self._wait_timer.stop()
-            # Populate channel panel lazily from the first decoded frame
-            # when probe was skipped at scan time.
-            seq = self._controller.sequence
-            if seq is not None and not seq.channel_names and arr.shape[2] > 0:
-                fallback = ("R", "G", "B", "A")[: arr.shape[2]]
-                self._window.channel_panel.set_channels(fallback)
+            # The Channels panel was retired (replaced by the
+            # Comments tab — see ui/main_window.py). Channel info
+            # still lives in the transport bar's combo + the four
+            # R/G/B/A mute toggles, so the user has full visibility
+            # without a dedicated panel.
 
     def _display_array(self, arr) -> None:  # type: ignore[no-untyped-def]
         if arr.shape[2] > 4:
@@ -696,43 +711,67 @@ class ImgPlayerApp:
 
     def _on_annotation_prev(self) -> None:
         """``[`` or transport prev button — seek to the highest
-        annotated frame strictly less than the current frame. No-op
-        if none (button is disabled in that case but we double-check
-        to keep the keyboard path robust)."""
+        noted frame (annotation OR comment) strictly less than the
+        current frame. No-op if none (button is disabled in that
+        case but we double-check to keep the keyboard path robust)."""
         cur = self._controller.state.current_frame
-        candidates = [
-            f for f in self._annotation_store.annotated_frames() if f < cur
-        ]
+        candidates = [f for f in self._noted_frames() if f < cur]
         if candidates:
             self._controller.seek(max(candidates))
 
     def _on_annotation_next(self) -> None:
-        """``]`` or transport next button — seek to the lowest
-        annotated frame strictly greater than the current frame."""
+        """``]`` or transport next button — seek to the lowest noted
+        frame strictly greater than the current frame."""
         cur = self._controller.state.current_frame
-        candidates = [
-            f for f in self._annotation_store.annotated_frames() if f > cur
-        ]
+        candidates = [f for f in self._noted_frames() if f > cur]
         if candidates:
             self._controller.seek(min(candidates))
 
+    def _noted_frames(self) -> frozenset[int]:
+        """Union of frames that carry annotations OR comments.
+
+        The timeline marker and the prev/next transport buttons treat
+        both kinds of notes uniformly: a frame with a comment but no
+        stroke still gets a marker, and the user can jump to it.
+        """
+        return (
+            self._annotation_store.annotated_frames()
+            | self._comment_store.commented_frames()
+        )
+
     def _on_annotated_frames_changed(self) -> None:
-        """Pushes the new annotated-frames set to the timeline (markers
+        """Pushes the new noted-frames sets to the timeline (markers
         repaint) and re-evaluates whether the transport's prev/next
-        buttons are reachable from the current playhead."""
-        annotated = self._annotation_store.annotated_frames()
-        self._window.timeline.set_annotated_frames(annotated)
+        buttons are reachable from the current playhead.
+
+        Connected to BOTH the annotation store's
+        ``annotated_frames_changed`` and the comment store's
+        ``commented_frames_changed`` — either kind of note flipping
+        in or out of a frame triggers the same recompute path.
+
+        The timeline draws the two kinds of notes with distinct
+        markers (orange triangle for annotations, blue dot for
+        comments) so the user can tell them apart at a glance.
+        Prev/next nav still works on the union — they're both
+        "noted frames the user might want to jump to".
+        """
+        self._window.timeline.set_annotated_frames(
+            self._annotation_store.annotated_frames()
+        )
+        self._window.timeline.set_commented_frames(
+            self._comment_store.commented_frames()
+        )
         self._refresh_annotation_nav_buttons()
 
     def _refresh_annotation_nav_buttons(self) -> None:
         """Enable / disable the transport prev/next buttons based on
-        the current playhead position relative to the annotated set.
-        Called from ``_on_annotated_frames_changed`` (set changed) and
-        ``_on_frame_changed`` (playhead moved)."""
-        annotated = self._annotation_store.annotated_frames()
+        the current playhead position relative to the noted set.
+        Called from ``_on_annotated_frames_changed`` (set changed)
+        and ``_on_frame_changed`` (playhead moved)."""
+        noted = self._noted_frames()
         cur = self._controller.state.current_frame
-        prev_avail = any(f < cur for f in annotated)
-        next_avail = any(f > cur for f in annotated)
+        prev_avail = any(f < cur for f in noted)
+        next_avail = any(f > cur for f in noted)
         self._window.transport.set_annotation_nav_enabled(prev_avail, next_avail)
 
     def _toggle_pen_mode(self) -> None:
@@ -820,7 +859,8 @@ class ImgPlayerApp:
             )
 
     def _prompt_save_annotations(self) -> bool:
-        """Close-time prompt: ask whether to save annotations.
+        """Close-time prompt: ask whether to save review notes
+        (annotations + comments — both share the sidecar).
 
         Called from MainWindow.closeEvent right before the window
         actually closes. Returns:
@@ -831,16 +871,26 @@ class ImgPlayerApp:
         The dialog is skipped entirely when:
 
         * No sequence is open (``_annotations_path`` is ``None``).
-        * The store is clean (no mutations since the last load /
+        * Both stores are clean (no mutations since the last load /
           save) — nothing meaningful to save, no nag.
         """
         if self._annotations_path is None or self._annotations_basename is None:
             return True
-        if not self._annotation_store.is_dirty():
+        annotations_dirty = self._annotation_store.is_dirty()
+        comments_dirty = self._comment_store.is_dirty()
+        if not annotations_dirty and not comments_dirty:
             return True
 
         existing = self._annotations_path.exists()
-        body = "Des annotations ont été modifiées."
+        # Phrase the body to reflect what actually changed — gives
+        # the user a richer picture of why they're being asked.
+        if annotations_dirty and comments_dirty:
+            body = "Des annotations et commentaires ont été modifiés."
+        elif annotations_dirty:
+            body = "Des annotations ont été modifiées."
+        else:
+            body = "Des commentaires ont été modifiés."
+
         if existing:
             informative = (
                 f"Sauvegarder dans {self._annotations_path} "
@@ -853,7 +903,7 @@ class ImgPlayerApp:
 
         box = QMessageBox(self._window)
         box.setIcon(QMessageBox.Icon.Question)
-        box.setWindowTitle("Sauvegarder les annotations ?")
+        box.setWindowTitle("Sauvegarder les notes de review ?")
         box.setText(body)
         box.setInformativeText(informative)
         save_btn = box.addButton(
@@ -870,27 +920,41 @@ class ImgPlayerApp:
         if clicked is cancel_btn:
             return False  # user backed out of the close
         if clicked is save_btn:
-            ok = save_annotations(
-                self._annotations_path,
-                self._annotation_store,
-                basename=self._annotations_basename,
-            )
-            if ok:
-                self._annotation_store.mark_clean()
-            else:
-                # Best-effort save failed (read-only dossier, etc.).
-                # We let the close proceed anyway — blocking exit on
-                # a permission error trapped users in the v1 fix; the
-                # warning is already logged by save_annotations.
-                log.warning(
-                    "[annotations] save failed at close — annotations "
-                    "will be lost. Underlying error already logged."
+            # Save both stores. Order matters: annotations first
+            # (they wrote the "frames" sub-tree); save_comments then
+            # reads that file and writes "comments" alongside it.
+            # Each is best-effort; we record per-store success so a
+            # partial failure (e.g. read-only dossier corrupted
+            # halfway) leaves the other store's dirty flag intact
+            # and the user can re-try.
+            if annotations_dirty:
+                ok_anno = save_annotations(
+                    self._annotations_path,
+                    self._annotation_store,
+                    basename=self._annotations_basename,
                 )
-        # discard_btn or save_btn (whether ok or not): allow close.
-        # ``_ = discard_btn`` to silence "unused variable" lint —
-        # we keep the named binding for readability of the dialog
-        # construction above.
-        _ = discard_btn
+                if ok_anno:
+                    self._annotation_store.mark_clean()
+                else:
+                    log.warning(
+                        "[annotations] save failed at close — "
+                        "underlying error already logged."
+                    )
+            if comments_dirty:
+                ok_com = save_comments(
+                    self._annotations_path,
+                    self._comment_store,
+                    basename=self._annotations_basename,
+                )
+                if ok_com:
+                    self._comment_store.mark_clean()
+                else:
+                    log.warning(
+                        "[comment] save failed at close — "
+                        "underlying error already logged."
+                    )
+        # discard_btn or save_btn (success or fail): allow close.
+        _ = discard_btn  # named binding kept for dialog readability
         return True
 
     def _on_channel_mask_changed(self, mask: tuple) -> None:
@@ -985,6 +1049,9 @@ class ImgPlayerApp:
         # the bug reported. Pushing the frame here removes the lag
         # without altering the seek path.
         self._annotation_overlay.set_current_frame(frame)
+        # And the comment panel — same reason; the thread should
+        # follow the cursor in real time.
+        self._window.comment_panel.set_current_frame(frame)
         # Defer the expensive part.
         self._pending_seek = frame
         self._scrub_debounce.start()
@@ -1134,6 +1201,23 @@ class ImgPlayerApp:
             # Fresh start — clear any leftover state from a previous
             # sequence in this session.
             self._annotation_store.load_from_dict({})
+
+        # Comments share the same sidecar — reload them too. Same
+        # error-tolerant pattern: a missing or unreadable file
+        # yields None, and we just clear the in-memory store.
+        loaded_comments = load_comments(
+            self._annotations_path,
+            basename=self._annotations_basename,
+        )
+        if loaded_comments is not None:
+            self._comment_store.load_from_dict(loaded_comments.to_dict())
+            log.info(
+                "[comment] loaded %d commented frames from %s",
+                len(self._comment_store.commented_frames()),
+                self._annotations_path,
+            )
+        else:
+            self._comment_store.load_from_dict({})
 
     def _enrich_with_header(self, seq: SequenceInfo) -> SequenceInfo:
         """Fill in channel_names / width / height from the first frame's
