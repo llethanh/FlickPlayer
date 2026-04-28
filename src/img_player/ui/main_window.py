@@ -98,6 +98,7 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         self,
         ocio_manager: OCIOManager,
         comment_store: CommentStore,
+        layer_stack=None,  # LayerStack | None — soft-typed to keep main_window Qt-only
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -115,14 +116,27 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         # Replaced by a Comments tab — review-tool comment thread
         # attached to the current frame, see docs.
         self._comment_panel = CommentPanel(comment_store, self)
+        # Multi-layer panel (v1.0) — sits between the timeline and
+        # the transport bar. Always visible (Q10/A); collapses to its
+        # header for vertical-space savings. Constructed only when
+        # the app passes a stack reference, so existing single-layer
+        # tests / programmatic callers can keep building MainWindow
+        # without a stack.
+        self._layer_panel = None
+        if layer_stack is not None:
+            from img_player.ui.layer_panel import LayerPanel
+            self._layer_panel = LayerPanel(layer_stack, self)
 
-        # Central: viewer on top, then timeline + transport stacked at the bottom
+        # Central: viewer on top, then timeline + (optional) layer
+        # panel + transport stacked at the bottom.
         central = QWidget(self)
         layout = QVBoxLayout(central)
         layout.setContentsMargins(S.SM, S.SM, S.SM, S.SM)
         layout.setSpacing(S.SM)
         layout.addWidget(self._viewer, stretch=1)
         layout.addWidget(self._timeline)
+        if self._layer_panel is not None:
+            layout.addWidget(self._layer_panel)
         layout.addWidget(self._transport)
         self.setCentralWidget(central)
 

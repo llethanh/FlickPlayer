@@ -239,6 +239,22 @@ class Preferences:
     def annotation_toolbar_visible(self, value: bool) -> None:
         self._s.setValue("annotation_toolbar/visible", bool(value))
 
+    # ------------------------------------------------------------------ Layer panel (v1.0)
+
+    @property
+    def layer_panel_collapsed(self) -> bool:
+        """Whether the multi-layer panel below the timeline is folded
+        away. Default: ``False`` (= visible) so first-run users see
+        the new feature."""
+        raw = self._s.value("layer_panel/collapsed", False)
+        if isinstance(raw, str):
+            return raw.lower() in ("true", "1", "yes")
+        return bool(raw)
+
+    @layer_panel_collapsed.setter
+    def layer_panel_collapsed(self, value: bool) -> None:
+        self._s.setValue("layer_panel/collapsed", bool(value))
+
     # ------------------------------------------------------------------ Ephemeral annotations (v0.4.1)
 
     @property

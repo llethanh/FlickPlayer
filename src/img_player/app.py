@@ -214,7 +214,9 @@ class ImgPlayerApp:
         on the GL viewport). RuntimeMonitor parents on the window for
         QTimer cleanup at shutdown.
         """
-        self._window = MainWindow(self._ocio, self._comment_store)
+        self._window = MainWindow(
+            self._ocio, self._comment_store, layer_stack=self._layer_stack,
+        )
 
         # Slice 5: 1 Hz watchdog that auto-corrects mid-playback. Hooks
         # the controller's state_changed signal itself, so we just
@@ -391,6 +393,10 @@ class ImgPlayerApp:
         # checked QAction aren't covered by Qt's dock-state blob.
         self._prefs.side_tab_index = self._window.side_tab_index()
         self._prefs.display_timecode = self._window.display_timecode()
+        # LayerPanel collapsed state (v1.0).
+        panel = getattr(self._window, "_layer_panel", None)
+        if panel is not None:
+            self._prefs.layer_panel_collapsed = panel.is_collapsed()
         # Persist the channel menu's state (radio + checkboxes +
         # layout mode) so the user reopens onto the same view.
         # Layout mode is also persisted live in
@@ -1660,6 +1666,12 @@ def _apply_preferences_to_window(app: ImgPlayerApp) -> None:
     # routes through the same slot the user click triggers, so the
     # timeline + transport's frame display update accordingly.
     app._window.set_display_timecode(prefs.display_timecode)
+
+    # LayerPanel collapsed state (v1.0). The widget itself owns the
+    # toggle button; we just sync the boolean at boot.
+    panel = getattr(app._window, "_layer_panel", None)
+    if panel is not None:
+        panel.set_collapsed(prefs.layer_panel_collapsed)
 
     # Color defaults — only apply if they still exist in the current OCIO config.
     cs_list = set(app._ocio.list_colorspaces())
