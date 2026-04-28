@@ -316,7 +316,17 @@ class ExportDialog(QDialog):  # type: ignore[misc]
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        btns.button(QDialogButtonBox.StandardButton.Ok).setText("Export")
+        ok_btn = btns.button(QDialogButtonBox.StandardButton.Ok)
+        ok_btn.setText("Export")
+        # Don't fire Export when the user hits Enter while editing a
+        # field — too easy to launch a long render by mistake. They
+        # have to click the button (or press Tab → Space). Cancel is
+        # also kept off-default for symmetry.
+        ok_btn.setAutoDefault(False)
+        ok_btn.setDefault(False)
+        cancel_btn = btns.button(QDialogButtonBox.StandardButton.Cancel)
+        cancel_btn.setAutoDefault(False)
+        cancel_btn.setDefault(False)
         btns.accepted.connect(self._on_accept)
         btns.rejected.connect(self.reject)
         root.addWidget(btns)
