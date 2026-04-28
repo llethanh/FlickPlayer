@@ -41,10 +41,33 @@ _SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ],
     ),
     (
+        "Annotations",
+        [
+            ("D", "Show / hide the annotation toolbar"),
+            ("P", "Toggle pen tool"),
+            ("E", "Toggle eraser tool"),
+            ("G", "Toggle ghost (ephemeral) mode"),
+            ("A", "Show annotations during playback"),
+            ("Ctrl + Z", "Undo last stroke"),
+            ("Ctrl + Y", "Redo last stroke"),
+            ("[ / ]", "Previous / next annotated frame"),
+        ],
+    ),
+    (
         "File",
         [
+            ("Ctrl + N", "New — clear the loaded sequence"),
             ("Ctrl + O", "Open a file or sequence"),
+            ("Ctrl + R", "Reload — re-scan the source folder"),
+            ("Ctrl + Shift + E", "Export sequence (image seq or video)"),
             ("Ctrl + Q", "Quit img_player"),
+        ],
+    ),
+    (
+        "View",
+        [
+            ("Ctrl + T", "Toggle frame number / timecode display"),
+            ("F1", "Show this shortcuts list"),
         ],
     ),
     (
@@ -63,7 +86,7 @@ class ShortcutsDialog(QDialog):  # type: ignore[misc]
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Keyboard shortcuts")
-        self.setMinimumSize(460, 480)
+        self.setMinimumSize(480, 640)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 12)
