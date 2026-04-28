@@ -5,10 +5,9 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-import threading
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from img_player.annotate import (
@@ -18,11 +17,9 @@ from img_player.annotate import (
     EphemeralStrokeManager,
     ToolbarMode,
     ToolKind,
-    load_annotations,
     save_annotations,
 )
-from img_player.annotate.persistence import sidecar_path
-from img_player.comment import CommentStore, load_comments, save_comments
+from img_player.comment import CommentStore, save_comments
 from img_player.cache.frame_cache import FrameCache
 from img_player.color.gpu_processor import build_shader_bundle
 from img_player.color.ocio_manager import OCIOManager
@@ -47,8 +44,13 @@ from img_player.perf import (
 from img_player.player.controller import PlayerController
 from img_player.player.state import PlaybackState
 from img_player.preferences import Preferences
+from img_player.render.contact_sheet import (
+    CompositeGeometry,
+    bake_labels as bake_contact_sheet_labels,
+    compose as compose_contact_sheet,
+)
+from img_player.sequence.channels import ChannelSelection
 from img_player.sequence.models import SequenceInfo
-from img_player.sequence.scanner import SequenceNotFoundError, scan
 from img_player.ui.main_window import MainWindow
 
 log = logging.getLogger(__name__)
@@ -77,27 +79,6 @@ DEFAULT_NUM_WORKERS = 6
 DEFAULT_OIIO_THREADS: int | None = 1
 
 
-class _ScanRunner(QObject):  # type: ignore[misc]
-    """Runs ``scan(path, probe=False)`` in a worker thread and emits the result.
-
-    The ``done`` signal carries either a :class:`SequenceInfo` or an
-    :class:`Exception`. Qt delivers it on the main thread automatically
-    since emit happens from the worker thread.
-    """
-
-    done = Signal(object)
-
-    def run_async(self, path: Path) -> None:
-        def worker() -> None:
-            try:
-                seq = scan(path, probe=False)
-                self.done.emit(seq)
-            except Exception as err:
-                self.done.emit(err)
-
-        threading.Thread(target=worker, name="scan-worker", daemon=True).start()
-
-
 class ImgPlayerApp:
     """Owns every long-lived object (cache, controller, window) and their wiring."""
 
@@ -110,6 +91,36 @@ class ImgPlayerApp:
         oiio_threads: int | None = DEFAULT_OIIO_THREADS,
         cli_args: argparse.Namespace | None = None,
     ) -> None:
+        # Construction is split into phases so each block stays small
+        # enough to scan. Phase order is load-bearing — Qt objects
+        # need a live QApplication, the window needs the OCIO/cache
+        # backbones, the annotation overlays need the window's GL
+        # viewport. Don't reorder without checking the deps.
+        self._init_plain_state(cli_args, oiio_threads)
+        self._build_qt_runtime(argv, oiio_threads)
+        self._build_models(cache_budget_bytes, num_workers)
+        self._build_window_and_overlays()
+        self._build_timers()
+        self._init_channel_state()
+
+        self._wire()
+
+        # Restore user preferences (colorspace, FPS, window geometry, recent
+        # files) from previous sessions.
+        self._apply_preferences()
+
+        # Push the initial color params so the GL shader is ready before any
+        # frame arrives.
+        self._window.color_panel.emit_current()
+
+    # -- __init__ phases -------------------------------------------------
+
+    def _init_plain_state(
+        self,
+        cli_args: argparse.Namespace | None,
+        oiio_threads: int | None,
+    ) -> None:
+        """Pre-Qt attribute setup. No Qt objects are constructed here."""
         # ``cli_args`` is the Namespace from ``__main__.py``'s parser.
         # Slice 4 needs it so the late-bind tune (after the GL context
         # exists and we know the real GPU) can re-apply CLI overrides
@@ -137,6 +148,29 @@ class ImgPlayerApp:
         self._desired_hw: HardwareProfile | None = None
         self._desired_tune: PerformanceTune | None = None
 
+        # Path of the sidecar for the currently-open sequence — set
+        # by ``_open_path`` when a sequence is loaded, used by
+        # ``_shutdown`` to save. ``None`` when no sequence is open.
+        self._annotations_path: Path | None = None
+        self._annotations_basename: str | None = None
+
+        # Track active scan requests so a newer drag&drop supersedes an older
+        # one still running in a background thread. The runner type is
+        # ``scan_handler.ScanRunner`` but typed as ``object`` here to
+        # avoid pulling Qt into ``_init_plain_state``.
+        self._scan_generation = 0
+        self._scan_runner: object | None = None
+
+        # Last frame we actually pushed to the viewport — used to avoid
+        # redundant uploads when play falls back to the same nearest frame.
+        self._last_displayed: int | None = None
+
+        # Pending seek payload for the scrub debouncer (real timer
+        # built later in ``_build_timers``).
+        self._pending_seek: int | None = None
+
+    def _build_qt_runtime(self, argv: list[str], oiio_threads: int | None) -> None:
+        """QApplication + global stylesheet + OIIO thread pool."""
         self._qapp = QApplication.instance() or QApplication(argv)
         self._qapp.setOrganizationName("img_player")
         self._qapp.setApplicationName("img_player")
@@ -148,38 +182,45 @@ class ImgPlayerApp:
         # any in-flight decode would otherwise see the default value.
         configure_oiio(oiio_threads)
 
+    def _build_models(self, cache_budget_bytes: int, num_workers: int) -> None:
+        """Non-UI domain objects: prefs, cache, controller, stores."""
         self._prefs = Preferences()
-
         self._ocio = OCIOManager()
         self._cache = FrameCache(
             budget_bytes=cache_budget_bytes,
             num_workers=num_workers,
         )
         self._controller = PlayerController(self._cache)
-
         # Comment store — owned by the app, passed to MainWindow so
         # the Comments tab can read / write directly. Cohérent with
         # how the AnnotationStore is owned: app-level for lifecycle,
-        # widgets just hold a reference.
+        # widgets just hold a reference. Constructed before the
+        # window because MainWindow takes it as a constructor arg.
         self._comment_store = CommentStore()
+
+    def _build_window_and_overlays(self) -> None:
+        """Main window + annotation store / overlay / toolbar.
+
+        Window must come before overlays (overlays parent themselves
+        on the GL viewport). RuntimeMonitor parents on the window for
+        QTimer cleanup at shutdown.
+        """
         self._window = MainWindow(self._ocio, self._comment_store)
 
         # Slice 5: 1 Hz watchdog that auto-corrects mid-playback. Hooks
         # the controller's state_changed signal itself, so we just
         # construct it and connect its three user-facing signals to
-        # the status bar. Parented to the window so its QTimer is
-        # cleaned up at shutdown.
+        # the status bar.
         self._runtime_monitor = RuntimeMonitor(
-            self._controller, self._cache, parent=self._window
+            self._controller, self._cache, parent=self._window,
         )
 
-        # Annotations (slices 2-3 of the feature, see
-        # docs/specs/2026-04-27-annotations-design.md). The store is
-        # the source of truth for strokes; the overlay is a
-        # transparent QWidget child of the GL viewport that captures
-        # pen input and paints existing strokes on top of the image;
-        # the toolbar is a composite widget with pen / eraser / palette
-        # / size / undo / redo + a pin button to bascule float ⇄ dock.
+        # Annotations: store + overlay + toolbar. The store is the
+        # source of truth for strokes; the overlay is a transparent
+        # QWidget child of the GL viewport that captures pen input
+        # and paints existing strokes; the toolbar is a composite
+        # widget with pen / eraser / palette / size / undo / redo + a
+        # pin button to bascule float ⇄ dock.
         self._annotation_store = AnnotationStore(parent=self._window)
         # Ephemeral mode (v0.4.1) — companion store for live, fading,
         # never-saved strokes. Owned at app-level so its QTimer
@@ -198,6 +239,10 @@ class ImgPlayerApp:
             self._annotation_store,
             parent=self._window,
         )
+        # Inject the manager into the overlay so ephemeral routes work
+        # at the very first mouseRelease — before any signal-wiring
+        # below has a chance to fire.
+        self._annotation_overlay.set_ephemeral_manager(self._ephemeral_manager)
 
         # Toolbar — load mode + position from prefs.
         toolbar_mode = (
@@ -205,11 +250,6 @@ class ImgPlayerApp:
             if self._prefs.annotation_toolbar_mode == "dock"
             else ToolbarMode.FLOAT
         )
-        # Inject the manager into the overlay so ephemeral routes work
-        # at the very first mouseRelease — before any signal-wiring
-        # below has a chance to fire.
-        self._annotation_overlay.set_ephemeral_manager(self._ephemeral_manager)
-
         self._annotation_toolbar = AnnotationToolbar(
             self._window.viewer.gl,
             self._window.annotation_dock,
@@ -219,7 +259,7 @@ class ImgPlayerApp:
             parent=self._window,
         )
         # Toolbar starts hidden by default. The user opens it with D
-        # or via the Annotations transport button (slice 4).
+        # or via the Annotations transport button.
         self._annotation_toolbar.setVisible(self._prefs.annotation_toolbar_visible)
         if self._prefs.annotation_toolbar_visible:
             # If we want it visible AND we are in dock mode, reveal
@@ -230,15 +270,11 @@ class ImgPlayerApp:
         # Sync the transport's ✏ toggle button with the persisted
         # visibility so the visual matches reality at boot.
         self._window.transport.set_annotation_toggle_active(
-            self._prefs.annotation_toolbar_visible
+            self._prefs.annotation_toolbar_visible,
         )
 
-        # Path of the sidecar for the currently-open sequence — set
-        # by ``_open_path`` when a sequence is loaded, used by
-        # ``_shutdown`` to save. ``None`` when no sequence is open.
-        self._annotations_path: Path | None = None
-        self._annotations_basename: str | None = None
-
+    def _build_timers(self) -> None:
+        """All QTimer instances. Started in :meth:`run`."""
         # A light-touch status timer so we can surface cache hit/miss info.
         self._status_timer = QTimer(self._window)
         self._status_timer.setInterval(500)
@@ -260,30 +296,39 @@ class ImgPlayerApp:
         # clear + re-enqueue dozens of prefetch requests per second. We
         # coalesce into one real seek every ~20 ms. The display is updated
         # immediately (from cache only, no prefetch thrash).
-        self._pending_seek: int | None = None
         self._scrub_debounce = QTimer(self._window)
         self._scrub_debounce.setSingleShot(True)
         self._scrub_debounce.setInterval(20)
         self._scrub_debounce.timeout.connect(self._apply_pending_seek)
 
-        # Track active scan requests so a newer drag&drop supersedes an older
-        # one still running in a background thread.
-        self._scan_generation = 0
-        self._scan_runner: _ScanRunner | None = None
-
-        # Last frame we actually pushed to the viewport — used to avoid
-        # redundant uploads when play falls back to the same nearest frame.
-        self._last_displayed: int | None = None
-
-        self._wire()
-
-        # Restore user preferences (colorspace, FPS, window geometry, recent
-        # files) from previous sessions.
-        self._apply_preferences()
-
-        # Push the initial color params so the GL shader is ready before any
-        # frame arrives.
-        self._window.color_panel.emit_current()
+    def _init_channel_state(self) -> None:
+        """Channel-selection bookkeeping (depends on prefs being loaded)."""
+        # Current channel selection (single-channel + optional
+        # contact-sheet tiles). ``None`` until the first sequence
+        # loads. ``_display_array`` switches to compositing when
+        # ``selection.is_contact_sheet`` is True.
+        self._channel_selection: ChannelSelection | None = None
+        # Grid shape for the contact sheet ("Auto" / "1×N" / "N×1" /
+        # "2×2" / "3×3" / "4×4"). Read once from prefs at boot so the
+        # very first composite uses the saved mode; updated live by
+        # ``_on_channel_layout_mode_changed``.
+        self._channel_layout_mode: str = self._prefs.channel_layout_mode
+        # Most recent contact-sheet layout returned by ``compose()``.
+        # Used to hit-test double-clicks for the click-to-isolate
+        # gesture. ``None`` when single mode is active —
+        # ``_on_tile_isolate_requested`` short-circuits in that case.
+        self._composite_geometry: CompositeGeometry | None = None
+        # Whether the per-tile name chip is baked onto the composite.
+        # Read from prefs at boot so the first composite respects the
+        # saved choice; updated live by
+        # ``_on_channel_labels_visible_changed``.
+        self._channel_labels_visible: bool = self._prefs.channel_labels_visible
+        # Last tile-set the user had checked when they left
+        # contact-sheet mode via Shift+C. Used to restore the same
+        # set on the next Shift+C press, so the shortcut toggles
+        # between single and the "previous" contact sheet rather
+        # than starting from scratch each time.
+        self._last_contact_sheet_tiles: tuple[str, ...] = ()
 
     # ------------------------------------------------------------------ Lifecycle
 
@@ -337,6 +382,22 @@ class ImgPlayerApp:
         # checked QAction aren't covered by Qt's dock-state blob.
         self._prefs.side_tab_index = self._window.side_tab_index()
         self._prefs.display_timecode = self._window.display_timecode()
+        # Persist the channel menu's state (radio + checkboxes +
+        # layout mode) so the user reopens onto the same view.
+        # Layout mode is also persisted live in
+        # ``_on_channel_layout_mode_changed`` — re-saving here is a
+        # no-op safety net if that path was never invoked (e.g. user
+        # never opened the menu).
+        try:
+            active, tiles, layout_mode, labels_visible = (
+                self._window.transport.channel_menu_state()
+            )
+            self._prefs.channel_active_label = active
+            self._prefs.channel_tile_labels = tiles
+            self._prefs.channel_layout_mode = layout_mode
+            self._prefs.channel_labels_visible = labels_visible
+        except Exception as err:  # pragma: no cover — best effort
+            log.warning("[channel-menu] save failed at shutdown: %s", err)
         self._status_timer.stop()
         self._wait_timer.stop()
         self._cache_bar_timer.stop()
@@ -451,204 +512,193 @@ class ImgPlayerApp:
     # ------------------------------------------------------------------ Wiring
 
     def _wire(self) -> None:
-        # Runtime monitor (slice 5) → status bar. The monitor only
-        # emits French user-facing strings; we route them straight to
-        # set_status so the user sees plain language ("la machine ne
-        # suit pas le rythme", "fermez d'autres applications…")
-        # whenever the watchdog catches a degraded condition. The
-        # status-bar UI stays untouched — same set_status path as
-        # every other transient message in the app.
+        """Cross-component signal wiring.
+
+        Split into thematic sub-methods so each block is small enough
+        to scan at a glance. Order doesn't matter for correctness
+        (signal connections are independent) but follows the rough
+        data-flow order: runtime monitor → viewport → controller →
+        window → annotations.
+        """
+        self._wire_runtime_monitor()
+        self._wire_viewport()
+        self._wire_controller()
+        self._wire_main_window()
+        self._wire_channel_menu()
+        self._wire_color_and_zoom()
+        self._wire_annotations()
+        self._wire_keyboard_shortcuts()
+
+    def _wire_runtime_monitor(self) -> None:
+        """Runtime monitor (slice 5) → status bar. The monitor emits
+        French user-facing strings; we route them straight to
+        set_status so the user sees plain language whenever the
+        watchdog catches a degraded condition.
+        """
         self._runtime_monitor.playback_struggle.connect(self._window.set_status)
         self._runtime_monitor.memory_pressure.connect(self._window.set_status)
         self._runtime_monitor.frame_pacing_drop.connect(self._window.set_status)
 
-        # GL viewport -> late-bind tune. The viewport emits this signal
-        # exactly once per session, on its first ``initializeGL``,
-        # carrying the real ``glGetString(GL_RENDERER)``. We then re-run
-        # the auto-tune with the actual GPU classification and push the
-        # results that can be applied at runtime (use_pbo on the viewport,
-        # OIIO thread pool size). The cache budget and worker count are
-        # NOT re-applied — the cache is already alive and reseating it
-        # would lose its content; spec §4 documents this caveat.
+    def _wire_viewport(self) -> None:
+        """GL viewport signals: GPU late-bind + tile-isolate."""
+        # The viewport emits gpu_renderer_detected exactly once per
+        # session, on its first ``initializeGL``, carrying the real
+        # ``glGetString(GL_RENDERER)``. We then re-run the auto-tune
+        # with the actual GPU classification (slice 4 late-bind).
         self._window.viewer.gl.gpu_renderer_detected.connect(
             self._on_gpu_renderer_detected
         )
+        # Double-click in contact-sheet mode → isolate the tile under
+        # the cursor (= switch to single-mode on that group).
+        self._window.viewer.gl.tile_isolate_requested.connect(
+            self._on_tile_isolate_requested
+        )
 
-        # Controller -> UI
+    def _wire_controller(self) -> None:
+        """Controller → UI updates."""
         self._controller.frame_changed.connect(self._on_frame_changed)
         self._controller.state_changed.connect(self._on_state_changed)
 
-        # MainWindow -> Controller
-        self._window.play_toggled.connect(self._on_play_toggled)
-        self._window.step_clicked.connect(self._controller.step)
-        self._window.jump_to_ends.connect(self._on_jump_to_ends)
-        self._window.frame_requested.connect(self._on_scrub_requested)
-        self._window.open_requested.connect(self._open_path)
+    def _wire_main_window(self) -> None:
+        """MainWindow signals → controller / app handlers."""
+        w = self._window
+        w.play_toggled.connect(self._on_play_toggled)
+        w.step_clicked.connect(self._controller.step)
+        w.jump_to_ends.connect(self._on_jump_to_ends)
+        w.frame_requested.connect(self._on_scrub_requested)
+        w.open_requested.connect(self._open_path)
         # Export (v0.5.0) — both menu and transport button route here.
-        self._window.export_requested.connect(self._open_export_dialog)
-        self._window.transport.export_clicked.connect(self._open_export_dialog)
+        w.export_requested.connect(self._open_export_dialog)
+        w.transport.export_clicked.connect(self._open_export_dialog)
         # New / Reload (v0.5.1) — same shape, two routes each.
-        self._window.new_sequence_requested.connect(self._on_new_sequence)
-        self._window.reload_sequence_requested.connect(self._on_reload_sequence)
-        self._window.transport.reload_clicked.connect(self._on_reload_sequence)
-        self._window.exposure_step.connect(self._window.color_panel.bump_exposure)
-        self._window.fps_changed.connect(self._on_fps_changed)
-        self._window.direction_play_requested.connect(self._on_direction_play)
-        self._window.mark_in_requested.connect(self._on_mark_in)
-        self._window.mark_out_requested.connect(self._on_mark_out)
-        self._window.set_in_at_requested.connect(self._on_set_in_at)
-        self._window.set_out_at_requested.connect(self._on_set_out_at)
-        self._window.clear_in_out_requested.connect(lambda: self._controller.set_in_out(None, None))
-        self._window.loop_mode_requested.connect(self._controller.set_loop_mode)
-        self._window.channels_requested.connect(self._on_channels_requested)
-        self._window.channel_mask_changed.connect(self._on_channel_mask_changed)
-        # Zoom from the combo box → propagate to the GL viewport.
-        # The wheel-zoom path (viewport → combo) is wired inside
-        # MainWindow so app.py doesn't have to care.
-        self._window.zoom_requested.connect(self._on_zoom_requested)
-
+        w.new_sequence_requested.connect(self._on_new_sequence)
+        w.reload_sequence_requested.connect(self._on_reload_sequence)
+        w.transport.reload_clicked.connect(self._on_reload_sequence)
+        w.fps_changed.connect(self._on_fps_changed)
+        w.direction_play_requested.connect(self._on_direction_play)
+        w.mark_in_requested.connect(self._on_mark_in)
+        w.mark_out_requested.connect(self._on_mark_out)
+        w.set_in_at_requested.connect(self._on_set_in_at)
+        w.set_out_at_requested.connect(self._on_set_out_at)
+        w.clear_in_out_requested.connect(
+            lambda: self._controller.set_in_out(None, None),
+        )
+        w.loop_mode_requested.connect(self._controller.set_loop_mode)
         # Recent-files menu uses callbacks into preferences.
-        self._window.install_recent_provider(
+        w.install_recent_provider(
             provider=self._prefs.recent_paths,
             clear_callback=self._prefs.clear_recent,
         )
+        # Annotation save prompt — runs from MainWindow.closeEvent
+        # before the window actually closes. Returning False from
+        # this callback cancels the close.
+        w.set_before_close_callback(self._prompt_save_annotations)
 
-        # ColorPanel -> GL viewport
+    def _wire_channel_menu(self) -> None:
+        """Transport channel menu (single + contact-sheet) → app."""
+        w = self._window
+        # The transport's checkable menu emits ``channel_selection_changed``
+        # whenever the user toggles a radio or a checkbox; we bridge
+        # straight to ``set_channel_selection`` which handles cache +
+        # display.
+        w.channel_selection_changed.connect(self._on_channel_selection_changed)
+        w.channel_layout_mode_changed.connect(self._on_channel_layout_mode_changed)
+        w.channel_labels_visible_changed.connect(
+            self._on_channel_labels_visible_changed,
+        )
+        w.contact_sheet_toggle_requested.connect(self.toggle_contact_sheet)
+        w.channel_mask_changed.connect(self._on_channel_mask_changed)
+
+    def _wire_color_and_zoom(self) -> None:
+        """ColorPanel + zoom combo → GL viewport."""
+        # Zoom from the combo box → propagate to the GL viewport. The
+        # wheel-zoom path (viewport → combo) is wired inside
+        # MainWindow so app.py doesn't have to care.
+        self._window.zoom_requested.connect(self._on_zoom_requested)
+        self._window.exposure_step.connect(self._window.color_panel.bump_exposure)
         self._window.color_panel.color_params_changed.connect(self._on_color_params)
 
-        # Annotations: toolbar wiring + keyboard shortcuts.
-        #
-        # Toolbar -> overlay / store: the toolbar is the UI source of
+    def _wire_annotations(self) -> None:
+        """Annotation toolbar / overlay / store wiring + transport buttons."""
+        tb = self._annotation_toolbar
+        ov = self._annotation_overlay
+        # Toolbar → overlay / app: the toolbar is the UI source of
         # truth for which tool / color / size is active; we forward
-        # those to the overlay when they change. Undo / redo dispatch
-        # against the current frame's stack.
-        self._annotation_toolbar.tool_changed.connect(
-            self._annotation_overlay.set_tool
-        )
-        self._annotation_toolbar.color_changed.connect(
-            self._annotation_overlay.set_color
-        )
-        self._annotation_toolbar.size_changed.connect(
-            self._annotation_overlay.set_size
-        )
-        self._annotation_toolbar.undo_requested.connect(self._undo_annotation)
-        self._annotation_toolbar.redo_requested.connect(self._redo_annotation)
-        self._annotation_toolbar.clear_requested.connect(self._clear_annotations)
+        # those to the overlay when they change. Undo / redo / clear
+        # dispatch against the current frame's stack.
+        tb.tool_changed.connect(ov.set_tool)
+        tb.color_changed.connect(ov.set_color)
+        tb.size_changed.connect(ov.set_size)
+        tb.undo_requested.connect(self._undo_annotation)
+        tb.redo_requested.connect(self._redo_annotation)
+        tb.clear_requested.connect(self._clear_annotations)
         # Ephemeral mode (v0.4.1) — toolbar drives overlay (routing
         # decision) and manager (fade duration), and we persist the
         # preset on each change so a restart picks up where the user
         # left off.
-        self._annotation_toolbar.ephemeral_mode_changed.connect(
-            self._on_ephemeral_mode_changed
-        )
-        self._annotation_toolbar.ephemeral_duration_changed.connect(
-            self._on_ephemeral_duration_changed
-        )
+        tb.ephemeral_mode_changed.connect(self._on_ephemeral_mode_changed)
+        tb.ephemeral_duration_changed.connect(self._on_ephemeral_duration_changed)
         # Restore the saved ghost state. Fire through the toolbar's
         # public setter so the overlay routing, glyph swap, eraser
         # disabling and border tint all resync via the wired signal.
         if self._prefs.ephemeral_mode_enabled:
-            self._annotation_toolbar.set_ephemeral_mode(True)
-
-        # Annotation save prompt — runs from MainWindow.closeEvent
-        # before the window actually closes. Returning False from
-        # this callback cancels the close (the user clicked Cancel
-        # in the save dialog).
-        self._window.set_before_close_callback(self._prompt_save_annotations)
+            tb.set_ephemeral_mode(True)
         # Persist mode + float position to prefs so the toolbar
         # comes back where the user left it next session.
-        self._annotation_toolbar.mode_changed.connect(self._on_toolbar_mode_changed)
-        self._annotation_toolbar.floating_pos_changed.connect(
-            self._on_toolbar_floating_pos_changed
-        )
-
-        # Store -> timeline + transport (slice 4): when the set of
-        # annotated frames changes, the timeline repaints its markers
-        # and the transport's prev/next-annotation buttons re-enable
-        # themselves accordingly.
+        tb.mode_changed.connect(self._on_toolbar_mode_changed)
+        tb.floating_pos_changed.connect(self._on_toolbar_floating_pos_changed)
+        # Store → timeline + transport: when the set of annotated
+        # frames changes, the timeline repaints its markers and the
+        # transport's prev/next-annotation buttons re-enable
+        # themselves. Comments share the same marker/nav path.
         self._annotation_store.annotated_frames_changed.connect(
-            self._on_annotated_frames_changed
+            self._on_annotated_frames_changed,
         )
-        # Comments share the same marker / nav path: a frame with
-        # only a comment still gets the orange triangle and counts
-        # for prev/next-noted navigation. Same handler, both
-        # signals.
         self._comment_store.commented_frames_changed.connect(
-            self._on_annotated_frames_changed
+            self._on_annotated_frames_changed,
         )
-
-        # Transport annotation buttons -> store / toolbar.
+        # Transport annotation buttons → store / toolbar.
         self._window.transport.annotation_toggle_clicked.connect(
-            self._toggle_toolbar_visible
+            self._toggle_toolbar_visible,
         )
         self._window.transport.annotation_prev_clicked.connect(
-            self._on_annotation_prev
+            self._on_annotation_prev,
         )
         self._window.transport.annotation_next_clicked.connect(
-            self._on_annotation_next
+            self._on_annotation_next,
         )
-
         # Initialise the overlay from the toolbar's defaults so a user
         # who jumps straight to drawing has the expected color/size.
-        self._annotation_overlay.set_color(self._annotation_toolbar.current_color())
-        self._annotation_overlay.set_size(self._annotation_toolbar.current_size())
+        ov.set_color(tb.current_color())
+        ov.set_size(tb.current_size())
 
-        # Keyboard shortcuts: parented to the window so they fire
-        # from anywhere in the app, not just when the GL viewport has
-        # focus. Existing convention (main_window.py): blocked while a
-        # QLineEdit owns focus, so typing a frame number can't toggle
-        # the pen.
+    def _wire_keyboard_shortcuts(self) -> None:
+        """Annotation keyboard shortcuts (D/P/E/A/G/[ /]/Undo/Redo).
+
+        Parented to the window so they fire from anywhere in the app,
+        not just when the GL viewport has focus. Existing convention
+        (main_window.py): blocked while a QLineEdit owns focus, so
+        typing a frame number can't toggle the pen.
+        """
         from PySide6.QtGui import QKeySequence, QShortcut
-
-        QShortcut(
-            QKeySequence("D"),
-            self._window,
-            activated=self._toggle_toolbar_visible,
-        )
-        QShortcut(
-            QKeySequence("P"),
-            self._window,
-            activated=self._toggle_pen_mode,
-        )
-        QShortcut(
-            QKeySequence("E"),
-            self._window,
-            activated=self._toggle_eraser_mode,
-        )
-        QShortcut(
-            QKeySequence("A"),
-            self._window,
-            activated=self._toggle_show_annotations_during_play,
-        )
-        QShortcut(
-            QKeySequence.StandardKey.Undo,
-            self._window,
-            activated=self._undo_annotation,
-        )
-        QShortcut(
-            QKeySequence.StandardKey.Redo,
-            self._window,
-            activated=self._redo_annotation,
-        )
-        # Prev / next annotated frame.
-        QShortcut(
-            QKeySequence("["),
-            self._window,
-            activated=self._on_annotation_prev,
-        )
-        QShortcut(
-            QKeySequence("]"),
-            self._window,
-            activated=self._on_annotation_next,
-        )
-        # G — toggle ephemeral mode (v0.4.1, mnemonic "ghost"). The
-        # shortcut goes through the toolbar so the UI state stays in
-        # sync with the overlay routing.
-        QShortcut(
-            QKeySequence("G"),
-            self._window,
-            activated=self._toggle_ephemeral_mode,
-        )
+        # (key, action) pairs — keeps the table easy to scan and
+        # maintain compared to N near-identical QShortcut blocks.
+        bindings: list[tuple[QKeySequence, object]] = [
+            (QKeySequence("D"), self._toggle_toolbar_visible),
+            (QKeySequence("P"), self._toggle_pen_mode),
+            (QKeySequence("E"), self._toggle_eraser_mode),
+            (QKeySequence("A"), self._toggle_show_annotations_during_play),
+            (QKeySequence.StandardKey.Undo, self._undo_annotation),
+            (QKeySequence.StandardKey.Redo, self._redo_annotation),
+            (QKeySequence("["), self._on_annotation_prev),
+            (QKeySequence("]"), self._on_annotation_next),
+            # G — toggle ephemeral mode (mnemonic "ghost"). Goes
+            # through the toolbar so UI state and overlay routing
+            # stay in sync.
+            (QKeySequence("G"), self._toggle_ephemeral_mode),
+        ]
+        for keyseq, slot in bindings:
+            QShortcut(keyseq, self._window, activated=slot)
 
     # ------------------------------------------------------------------ Handlers
 
@@ -702,6 +752,20 @@ class ImgPlayerApp:
         candidates = [f for f in cached if f >= frame]
         return min(candidates) if candidates else max(cached)
 
+    def _redisplay_current(self) -> None:
+        """Re-run ``_display_array`` on the cached current frame.
+
+        Used by display-time-only changes (layout mode, labels
+        visibility): no cache invalidation, no decode work — we just
+        re-pipe whatever's already cached through the display path so
+        the new param takes effect immediately. No-op when nothing's
+        cached yet.
+        """
+        cur = self._controller.state.current_frame
+        arr = self._cache.get(cur)
+        if arr is not None:
+            self._display_array(arr)
+
     def _try_display_current_frame(self) -> None:
         frame = self._controller.state.current_frame
         arr = self._cache.get(frame)
@@ -716,9 +780,52 @@ class ImgPlayerApp:
             # without a dedicated panel.
 
     def _display_array(self, arr) -> None:  # type: ignore[no-untyped-def]
+        # Contact-sheet mode: the cache holds the union of all
+        # selected groups' channels in one buffer. We split + tile +
+        # downsample on the CPU into a single composite that the GL
+        # viewport draws through its existing single-texture path —
+        # zero changes to the shader/upload pipeline. See
+        # ``render/contact_sheet.py`` for the trade-off rationale.
+        sel = self._channel_selection
+        if sel is not None and sel.is_contact_sheet:
+            gl = self._window.viewer.gl
+            arr, geometry = compose_contact_sheet(
+                arr, sel,
+                viewport_w=max(1, gl.width()),
+                viewport_h=max(1, gl.height()),
+                layout_mode=self._channel_layout_mode,
+            )
+            # Bake labels onto the composite so each tile shows its
+            # group name. Done after compose so the un-labelled
+            # composite stays available if we ever need it for
+            # export / debug. ``bake_labels`` no-ops when only one
+            # tile is in the geometry.
+            if self._channel_labels_visible:
+                arr = bake_contact_sheet_labels(arr, geometry)
+            self._composite_geometry = geometry
+        else:
+            # Single mode → no contact-sheet geometry to remember.
+            self._composite_geometry = None
+        # Toggle the annotation overlay's contact-sheet flag based on
+        # whether the compose pass actually composited (i.e. the
+        # displayed image differs from the source). When True, the
+        # overlay hides persistent strokes and forces every new
+        # stroke through the ephemeral pipeline — so the user can
+        # still gesture during a side-by-side review without saving
+        # at coords that don't match the displayed composite.
+        geom = self._composite_geometry
+        is_real_composite = geom is not None and (
+            len(geom.tiles) >= 2 or (geom.rows * geom.cols > 1)
+        )
+        self._annotation_overlay.set_contact_sheet_active(is_real_composite)
         if arr.shape[2] > 4:
             arr = arr[:, :, :4]  # viewport only handles RGB/RGBA today
         self._window.viewer.gl.set_frame(arr)
+
+    def set_channel_selection(self, selection: ChannelSelection) -> None:
+        """Switch to a new channel selection (single + optional tiles)."""
+        from img_player.channel_handler import set_channel_selection
+        set_channel_selection(self, selection)
 
     def _on_state_changed(self, state: PlaybackState) -> None:
         self._window.transport.update_from_state(state)
@@ -1108,51 +1215,30 @@ class ImgPlayerApp:
             return
         self._window.viewer.gl.set_zoom(zoom)
 
-    def _on_channels_requested(self, channels: object) -> None:
-        """Switch which channels the cache decodes for subsequent frames.
+    def _on_channel_selection_changed(self, selection: object) -> None:
+        """Apply a fresh :class:`ChannelSelection` from the transport menu."""
+        from img_player.channel_handler import on_channel_selection_changed
+        on_channel_selection_changed(self, selection)
 
-        ``channels`` is either ``None`` (RGB composite default) or a
-        list like ``["Z"]`` or ``["albedo.R", "albedo.G", "albedo.B"]``.
-        We push it to the cache, which clears currently-cached frames
-        (they were decoded with the previous selection) and re-prefetches
-        around the playhead.
+    def _on_tile_isolate_requested(self, widget_x: float, widget_y: float) -> None:
+        """Double-click → isolate the clicked tile."""
+        from img_player.channel_handler import on_tile_isolate_requested
+        on_tile_isolate_requested(self, widget_x, widget_y)
 
-        EXR multichannel decode is intrinsically slow (~700 ms – 2 s per
-        4K frame on this hardware), so the user sees the *previous*
-        channel for a couple of seconds while the worker pool
-        re-decodes. We surface that with an explicit status message —
-        better than silence.
-        """
-        # mypy gets a Signal(object) here, normalise the type at the boundary.
-        cs: list[str] | None = list(channels) if isinstance(channels, list) else None
-        self._cache.set_channels(cs)
-        # The cache just got wiped (frames decoded with the previous
-        # selection are now invalid). The timeline's cache bar polls
-        # at ~200 ms, so without an eager reset the user briefly sees
-        # the *previous* channel's cache runs lingering after the
-        # switch — confusing, especially mid-prefetch. Mirror the same
-        # eager reset we do on sequence load.
-        self._window.timeline.set_cached_frames(frozenset())
+    def toggle_contact_sheet(self) -> None:
+        """Shift+C — bascule single ⇄ contact-sheet."""
+        from img_player.channel_handler import toggle_contact_sheet
+        toggle_contact_sheet(self)
 
-        if cs is None:
-            label = "RGB (composite)"
-        elif len(cs) == 1:
-            label = cs[0]
-        elif "." in cs[0]:
-            # Layer composite (e.g. ["albedo.R", "albedo.G", "albedo.B"])
-            # — pull the layer prefix for a tidy "albedo (composite)"
-            # message rather than a mile-long channel list.
-            label = f"{cs[0].rsplit('.', 1)[0]} (composite)"
-        else:
-            label = " / ".join(cs)
+    def _on_channel_labels_visible_changed(self, on: object) -> None:
+        """Footer "Show labels" toggle → refresh + persist."""
+        from img_player.channel_handler import on_channel_labels_visible_changed
+        on_channel_labels_visible_changed(self, on)
 
-        self._window.set_status(f"Loading channel: {label} — decoding…")
-
-        # Re-trigger the prefetch so the new channel set fills the
-        # cache around the playhead immediately. Easiest path: drive
-        # through the existing seek-to-current-frame route.
-        if self._controller.sequence is not None:
-            self._controller.seek(self._controller.state.current_frame)
+    def _on_channel_layout_mode_changed(self, mode: object) -> None:
+        """Persist the contact-sheet grid mode and force a redisplay."""
+        from img_player.channel_handler import on_channel_layout_mode_changed
+        on_channel_layout_mode_changed(self, mode)
 
     def _on_scrub_requested(self, frame: int) -> None:
         """Timeline scrub: update the display immediately from the cache, but
@@ -1337,93 +1423,8 @@ class ImgPlayerApp:
     def _open_export_dialog(self) -> None:
         """File → Export… (or 💾 transport button) — open the dialog,
         kick off the worker on accept."""
-        from img_player.export import ExportSettings  # local import to keep
-        from img_player.export.dialog import ExportDialog
-        from img_player.export.engine import ExportEngine
-        from img_player.export.progress_dialog import ExportProgressDialog
-        from img_player.export.worker import ExportWorker
-
-        seq = self._controller.sequence
-        if seq is None:
-            self._window.set_status("Export: no sequence loaded.")
-            return
-
-        # Range defaults: respect the player's current in/out points
-        # if the user has set them, otherwise the full sequence.
-        state = self._controller.state
-        in_f = state.in_frame if state.in_frame is not None else seq.first_frame
-        out_f = state.out_frame if state.out_frame is not None else seq.last_frame
-
-        # Restore last-used settings (per-key fall back to the
-        # ExportSettings dataclass defaults).
-        try:
-            initial = ExportSettings.from_prefs_dict(
-                self._prefs.export_settings, in_frame=in_f, out_frame=out_f,
-            )
-        except Exception:
-            initial = None
-
-        dialog = ExportDialog(
-            in_frame=in_f,
-            out_frame=out_f,
-            source_in_frame=seq.first_frame,
-            source_out_frame=seq.last_frame,
-            source_width=seq.width or 1920,
-            source_height=seq.height or 1080,
-            source_fps=state.fps,
-            initial_settings=initial,
-            parent=self._window,
-        )
-        if dialog.exec() != dialog.DialogCode.Accepted:
-            return
-        settings = dialog.get_settings()
-        # Persist for next time.
-        try:
-            self._prefs.export_settings = settings.to_prefs_dict()
-        except Exception:
-            log.exception("[export] failed to persist last-used settings")
-
-        # Build the engine + worker + progress dialog and wire them.
-        engine = ExportEngine(
-            settings=settings,
-            sequence=seq,
-            annotation_store=self._annotation_store,
-            ocio_manager=self._ocio,
-            source_colorspace=self._prefs.source_colorspace,
-            display=self._prefs.display,
-            view=self._prefs.view,
-            sidecar_source=self._annotations_path,
-        )
-        worker = ExportWorker(engine, parent=self._window)
-        progress = ExportProgressDialog(
-            total_frames=settings.total_frames,
-            output_path=settings.output_dir,
-            parent=self._window,
-        )
-
-        worker.progress.connect(progress.update_progress)
-        worker.finished_ok.connect(progress.on_finished)
-        worker.failed.connect(progress.on_failed)
-        worker.canceled.connect(progress.on_canceled)
-        # Cancel routing: the dialog's Cancel button asks the worker
-        # to stop. The progress dialog itself stays open until the
-        # worker reaches its end-state and emits canceled.
-        progress.cancel_button.clicked.connect(worker.cancel)
-        # Final status message on success / failure / cancel.
-        worker.finished_ok.connect(self._on_export_finished)
-        worker.failed.connect(lambda msg: self._window.set_status(f"Export failed: {msg}"))
-        worker.canceled.connect(
-            lambda _p, n: self._window.set_status(f"Export canceled after {n} frames")
-        )
-        # Auto-cleanup once the dialog finishes.
-        progress.finished.connect(worker.deleteLater)
-        progress.finished.connect(progress.deleteLater)
-
-        worker.start()
-        self._window.set_status(
-            f"Exporting {settings.total_frames} frames → {settings.output_dir}"
-        )
-        progress.exec()
+        from img_player.export_handler import open_export_dialog
+        open_export_dialog(self)
 
     def _on_export_finished(self, output_path: str, frames: int, duration_s: float) -> None:
         self._window.set_status(
@@ -1470,106 +1471,12 @@ class ImgPlayerApp:
 
     def _open_path(self, path: Path) -> None:
         """Scan `path` off the main thread so the UI stays responsive."""
-        self._window.set_status(f"Scanning {path}…")
-
-        self._scan_generation += 1
-        gen = self._scan_generation
-
-        runner = _ScanRunner()
-        self._scan_runner = runner  # keep a reference so the QObject stays alive
-
-        def on_done(result: object) -> None:
-            if gen != self._scan_generation:
-                # Superseded by a newer drop — ignore this result.
-                return
-            self._apply_scan_result(path, result)
-
-        runner.done.connect(on_done)
-        # probe=False: don't open any image file just to read metadata.
-        # On lazy filesystems (Google Drive Stream) a single header read
-        # can trigger a full file download (tens of seconds).
-        runner.run_async(path)
+        from img_player.scan_handler import open_path
+        open_path(self, path)
 
     def _apply_scan_result(self, path: Path, result: object) -> None:
-        if isinstance(result, Exception):
-            if isinstance(result, SequenceNotFoundError):
-                QMessageBox.warning(self._window, "Cannot open", str(result))
-            else:
-                log.exception("scan failed for %s: %s", path, result)
-                QMessageBox.critical(self._window, "Scan failed", str(result))
-            self._window.set_status("Ready.")
-            return
-        seq: SequenceInfo = result  # type: ignore[assignment]
-        log.info("loaded sequence: %s (%d frames)", seq.display_pattern(), seq.frame_count)
-
-        # The scanner runs with probe=False to keep the open() snappy on
-        # Drive Stream / network paths — that means the SequenceInfo
-        # arrives without channel names, width or height. Read the
-        # header of the first frame now (one cheap OIIO call, no pixel
-        # decode) so the channel selector can be populated and the
-        # auto-detector has the resolution it needs.
-        seq = self._enrich_with_header(seq)
-
-        self._window.update_sequence_info(seq)
-        self._guess_source_colorspace(seq)
-        self._controller.load_sequence(seq)
-        self._window.set_status(
-            f"Loaded {seq.display_pattern()} ({seq.frame_count} frames) — decoding first frame…"
-        )
-        # Remember this path for next launch and for the Recent menu.
-        self._prefs.last_path = path
-        self._prefs.push_recent(path)
-
-        # Drop any live ephemeral strokes from the previous sequence
-        # (v0.4.1) — they're image-space anchored, not frame-bound,
-        # so they would otherwise float on the new sequence's first
-        # frame until they fade. Cheap and idempotent.
-        self._ephemeral_manager.clear_all()
-
-        # Load any persisted annotations for this sequence. The
-        # sidecar lives next to the frame files; basename routes to
-        # the right sub-payload when several sequences share a dir.
-        # Strip trailing separators ('.', '_') from the base_name so
-        # 'render.' and 'render' both map to the same JSON key — a
-        # cosmetic detail, but it would be confusing if a previously-
-        # saved sequence's notes silently disappeared after a tool
-        # change in the scanner.
-        self._annotations_path = sidecar_path(seq.directory)
-        self._annotations_basename = seq.base_name.rstrip("._-") or seq.base_name
-        loaded = load_annotations(
-            self._annotations_path,
-            basename=self._annotations_basename,
-        )
-        if loaded is not None:
-            # Replace the in-memory store contents (reuse the live
-            # store object so its signal subscribers stay wired).
-            self._annotation_store.load_from_dict(loaded.to_dict()["frames"])
-            log.info(
-                "[annotations] loaded %d annotated frames from %s",
-                len(self._annotation_store.annotated_frames()),
-                self._annotations_path,
-            )
-        else:
-            # Fresh start — clear any leftover state from a previous
-            # sequence in this session.
-            self._annotation_store.load_from_dict({})
-
-        # Comments share the same sidecar — reload them too. Same
-        # error-tolerant pattern: a missing or unreadable file
-        # yields None, and we just clear the in-memory store.
-        loaded_comments = load_comments(
-            self._annotations_path,
-            basename=self._annotations_basename,
-        )
-        if loaded_comments is not None:
-            self._comment_store.load_from_dict(loaded_comments.to_dict())
-            log.info(
-                "[comment] loaded %d commented frames from %s",
-                len(self._comment_store.commented_frames()),
-                self._annotations_path,
-            )
-        else:
-            self._comment_store.load_from_dict({})
+        from img_player.scan_handler import apply_scan_result
+        apply_scan_result(self, path, result)
 
     def _enrich_with_header(self, seq: SequenceInfo) -> SequenceInfo:
         """Fill in channel_names / width / height from the first frame's

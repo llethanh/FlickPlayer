@@ -41,6 +41,13 @@ _SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ],
     ),
     (
+        "Channels",
+        [
+            ("Shift + C", "Toggle contact sheet (restore last tile selection)"),
+            ("Double-click on a tile", "Isolate the channel under the cursor"),
+        ],
+    ),
+    (
         "Annotations",
         [
             ("D", "Show / hide the annotation toolbar"),

@@ -316,6 +316,13 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
     # ``Signal()`` (no args): consumers ask for the current state via
     # :meth:`current_transform` / :meth:`image_size` when they need it.
     transform_changed = Signal()
+    # User double-clicked a point on the viewport (left button). Carries
+    # the click position in widget pixel coords. Used by ``app.py`` in
+    # contact-sheet mode to map the click to a tile via the current
+    # :class:`CompositeGeometry` and isolate that channel group. Plain
+    # double-click is unused outside contact-sheet mode, so emitting
+    # unconditionally is harmless.
+    tile_isolate_requested = Signal(float, float)
 
     # ------------------------------------------------------------------ Lifecycle
 
@@ -587,6 +594,28 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
             event.accept()
             return
         super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        """Left-button double-click → emit
+        :attr:`tile_isolate_requested` with the widget pixel coords.
+
+        ``app.py`` listens to this only in contact-sheet mode; outside
+        of that mode the emission is harmless (no listener acts on
+        it). We also reset any in-progress drag-scrub started by the
+        underlying ``mousePressEvent`` of the second click — without
+        this the scrub would silently keep tracking the cursor while
+        the controller switches selection.
+        """
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_base_frame = None
+            self.setCursor(Qt.CursorShape.SizeHorCursor)
+            self.tile_isolate_requested.emit(
+                float(event.position().x()),
+                float(event.position().y()),
+            )
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         """Mouse-wheel zoom, anchored at the cursor. Scroll up zooms
@@ -960,6 +989,20 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
         if img_w == 0 or img_h == 0:
             return 1.0
         return min(win_w / img_w, win_h / img_h)
+
+    def fit_factor(self) -> float:
+        """Public accessor for the fit-mode scale factor.
+
+        The annotation overlay uses ``current_factor / fit_factor``
+        as a "display scale" so brush widths stay invariant when
+        the image size changes (e.g. switching to contact-sheet
+        mode inflates the composite to N× the source) — but still
+        grow when the user zooms in. Without this normalisation,
+        strokes shrink as soon as the composite gets bigger than
+        the source, which felt wrong because the source content
+        on screen is still the same physical size.
+        """
+        return self._compute_fit_factor()
 
     def _fit_matrix(self) -> np.ndarray:
         """View matrix combining aspect-ratio fit + user zoom.

@@ -59,7 +59,21 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
     new_sequence_requested = Signal()      # File → New (Ctrl+N) — clear the loaded sequence
     reload_sequence_requested = Signal()   # Reload cache (Ctrl+R / button)
     play_toggled = Signal()
-    channels_requested = Signal(object)   # list[str] | None
+    # Full channel selection (single + optional contact-sheet tiles).
+    # Carries a :class:`ChannelSelection`. Bridged from
+    # ``TransportBar.channel_selection_changed`` so ``app.py`` can hook
+    # the rich selection without reaching into the transport widget.
+    channel_selection_changed = Signal(object)
+    # Grid layout mode chosen in the channel menu's footer combo
+    # (Auto / 1×N / N×1 / 2×2 / 3×3 / 4×4). Persisted via Preferences.
+    channel_layout_mode_changed = Signal(str)
+    # "Show labels" toggle in the channel menu — drives whether the
+    # per-tile name chip is baked onto the contact-sheet composite.
+    channel_labels_visible_changed = Signal(bool)
+    # Shift+C — toggle between single-channel mode and the last
+    # known contact-sheet selection. App.py owns the "last known"
+    # state since the menu only knows the current state.
+    contact_sheet_toggle_requested = Signal()
     channel_mask_changed = Signal(tuple)  # (R, G, B, A) bools
     zoom_requested = Signal(object)       # float | None ; None = fit
     step_clicked = Signal(int)  # +1 / -1
@@ -531,6 +545,12 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         QShortcut(QKeySequence(Qt.Key.Key_Home), self, activated=lambda: self.jump_to_ends.emit(-1))
         QShortcut(QKeySequence(Qt.Key.Key_End), self, activated=lambda: self.jump_to_ends.emit(1))
 
+        # Contact-sheet toggle (channel-menu Slice 3)
+        QShortcut(
+            QKeySequence("Shift+C"), self,
+            activated=self.contact_sheet_toggle_requested.emit,
+        )
+
         # In / out points
         QShortcut(QKeySequence(Qt.Key.Key_I), self, activated=self.mark_in_requested.emit)
         QShortcut(QKeySequence(Qt.Key.Key_O), self, activated=self.mark_out_requested.emit)
@@ -569,7 +589,15 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         # Frame display: typing a frame number / TC and pressing Enter
         # asks the controller to seek there.
         self._transport.frame_seek_requested.connect(self.frame_requested.emit)
-        self._transport.channels_requested.connect(self.channels_requested.emit)
+        self._transport.channel_selection_changed.connect(
+            self.channel_selection_changed.emit
+        )
+        self._transport.channel_layout_mode_changed.connect(
+            self.channel_layout_mode_changed.emit
+        )
+        self._transport.channel_labels_visible_changed.connect(
+            self.channel_labels_visible_changed.emit
+        )
         self._transport.channel_mask_changed.connect(self.channel_mask_changed.emit)
         # Zoom: combo → viewport (forward), wheel → combo (back-channel
         # so the displayed value follows the wheel without us

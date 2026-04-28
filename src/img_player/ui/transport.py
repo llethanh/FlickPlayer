@@ -12,11 +12,20 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QToolButton,
     QWidget,
 )
 
 from img_player.player.state import LoopMode
-from img_player.sequence.channels import group_channels
+from img_player.sequence.channels import (
+    ChannelGroup,
+    ChannelSelection,
+    group_channels,
+)
+from img_player.ui.channel_menu import (
+    DEFAULT_LAYOUT_MODE,
+    ChannelMenu,
+)
 from img_player.ui.frame_display import DisplayMode, FrameDisplay
 from img_player.ui.icons import make_icon
 from img_player.ui.theme import G, H, S
@@ -57,10 +66,20 @@ class TransportBar(QWidget):  # type: ignore[misc]
     # User typed a frame / timecode in the FrameDisplay and pressed
     # Enter. Carries the absolute frame index.
     frame_seek_requested  = Signal(int)
-    # Multichannel EXR: user picked a different channel to display.
-    # Carries either ``None`` (= "RGB" composite, default) or a list
-    # like ``["Z"]`` / ``["N.X"]`` for a single channel readout.
-    channels_requested = Signal(object)
+    # Full channel selection (active + tiles + layout mode). The
+    # checkable channel menu emits this whenever the user toggles a
+    # radio or checkbox, so the controller can switch between single
+    # and contact-sheet modes without having to interpret raw channel
+    # lists. Carries a :class:`ChannelSelection`.
+    channel_selection_changed = Signal(object)
+    # Grid shape preference for the contact sheet (Auto / 1×N / N×1
+    # / 2×2 / 3×3 / 4×4). Persisted to QSettings so the user finds
+    # the same layout on next launch.
+    channel_layout_mode_changed = Signal(str)
+    # "Show labels" toggle in the channel menu footer. Drives whether
+    # the per-tile name chips are baked onto the contact sheet (live
+    # display + export). Persisted to QSettings.
+    channel_labels_visible_changed = Signal(bool)
     # Zoom — either ``None`` for fit-to-window, or a float factor
     # (1.0 = 100 %, 0.5 = 50 %, 2.0 = 200 %).
     zoom_requested = Signal(object)
@@ -219,20 +238,40 @@ class TransportBar(QWidget):  # type: ignore[misc]
         self._fps_combo.currentTextChanged.connect(self._on_fps_text)
 
         # --- Channel selector ----------------------------------------------
-        # Multichannel EXR support: pick which channel(s) to display.
-        # "RGB" is the composite default; the others appear once a
-        # sequence is loaded (populated via ``set_available_channels``).
-        # ``_channel_groups`` maps a UI label to the OIIO channel list
-        # to load — built by ``set_available_channels`` from the
-        # grouped channel list.
-        self._channel_groups: dict[str, tuple[str, ...]] = {}
-        self._channel_combo = QComboBox()
-        self._channel_combo.setFixedWidth(96)
-        self._channel_combo.setFixedHeight(G.INPUT_H)
-        self._channel_combo.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
-        self._channel_combo.setToolTip("Channel to display")
-        self._channel_combo.addItem("RGB")  # always the first entry
-        self._channel_combo.currentIndexChanged.connect(self._on_channel_changed)
+        # Multichannel EXR + contact-sheet support: a QToolButton that
+        # opens the :class:`ChannelMenu` popup. The button label
+        # summarises the current selection at a glance:
+        #   * "RGB"             → single mode on RGB
+        #   * "albedo"          → single mode on albedo
+        #   * "RGB +2"          → contact sheet, RGB + 2 other tiles
+        # The popup itself owns the per-row radio + checkbox state.
+        self._channel_button = QToolButton()
+        self._channel_button.setFixedHeight(G.INPUT_H)
+        self._channel_button.setMinimumWidth(96)
+        self._channel_button.setToolTip(
+            "Channel to display — click to open the channel menu "
+            "(check multiple to enable contact-sheet)"
+        )
+        self._channel_button.setText("RGB")
+        # InstantPopup (vs MenuButtonPopup) — the whole button area
+        # opens the menu, no mini arrow split. Cohérent with the loop
+        # button's visual: one bordered button = one click action.
+        self._channel_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._channel_button.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+
+        self._channel_menu = ChannelMenu(self._channel_button)
+        self._channel_menu.selection_changed.connect(self._on_channel_selection_changed)
+        self._channel_menu.layout_mode_changed.connect(
+            self.channel_layout_mode_changed.emit
+        )
+        self._channel_menu.labels_visible_changed.connect(
+            self.channel_labels_visible_changed.emit
+        )
+        self._channel_button.setMenu(self._channel_menu)
+
+        # Track the current ChannelSelection so the button label can
+        # be derived without re-querying the menu.
+        self._current_selection: ChannelSelection | None = None
 
         # --- RGBA mute toggles ---------------------------------------------
         # Four small checkable buttons — the viewer's fragment shader
@@ -332,7 +371,7 @@ class TransportBar(QWidget):  # type: ignore[misc]
         channel_label = QLabel("CH")
         channel_label.setFixedWidth(20)
         layout.addWidget(channel_label)
-        layout.addWidget(self._channel_combo)
+        layout.addWidget(self._channel_button)
 
         # The four RGBA mute toggles sit right after the channel combo,
         # because they're conceptually about the *same* thing (what
@@ -448,7 +487,7 @@ class TransportBar(QWidget):  # type: ignore[misc]
         self._frame_display.set_frame(frame)
 
     def set_available_channels(self, channels: tuple[str, ...]) -> None:
-        """Replace the channel-selector content with grouped channels.
+        """Replace the channel-menu content with grouped channels.
 
         Layers like ``albedo.R``/``.G``/``.B`` collapse into a single
         ``"albedo"`` entry that loads the three channels as an RGB
@@ -457,29 +496,53 @@ class TransportBar(QWidget):  # type: ignore[misc]
         ``normal.X``…) keep their own entry. The first entry is
         always the beauty ``"RGB"``/``"RGBA"`` from the root.
 
-        The mapping ``label → list[channel]`` is stored on the widget
-        so :meth:`_on_channel_changed` knows which channels to ask
-        the cache for.
+        Resets the menu to "first group active, no tiles" — the same
+        fresh-sequence baseline the legacy combo had at index 0. The
+        selection then re-emits via :meth:`_on_channel_selection_changed`
+        so the controller picks up the new active channel.
         """
         groups = group_channels(channels) if channels else []
-        # Cache the mapping label → channels so the dropdown handler
-        # can look up the right OIIO channel list when the user
-        # picks an item.
-        self._channel_groups: dict[str, tuple[str, ...]] = {
-            g.label: g.channels for g in groups
-        }
-
-        self._channel_combo.blockSignals(True)
-        self._channel_combo.clear()
         if not groups:
-            # No header info yet — at least show RGB so the combo
-            # isn't blank. ``None`` → reader's default (R/G/B/A).
-            self._channel_combo.addItem("RGB")
-        else:
-            for g in groups:
-                self._channel_combo.addItem(g.label)
-        self._channel_combo.setCurrentIndex(0)
-        self._channel_combo.blockSignals(False)
+            # No header info yet — at least show RGB so the menu
+            # isn't blank.
+            groups = [ChannelGroup(label="RGB", channels=("R", "G", "B"))]
+        self._channel_menu.set_groups(groups)
+        # Force-emit the initial selection so the controller switches
+        # to the new sequence's beauty pass without the user having
+        # to click anything.
+        sel = self._channel_menu.current_selection()
+        if sel is not None:
+            self._on_channel_selection_changed(sel)
+
+    def restore_channel_state(
+        self,
+        active: str,
+        tiles: tuple[str, ...],
+        layout_mode: str = DEFAULT_LAYOUT_MODE,
+        labels_visible: bool | None = None,
+    ) -> None:
+        """Reapply a saved ChannelMenu state on app boot (called from
+        :class:`Preferences` round-trip in ``app.py``).
+
+        ``labels_visible`` is optional so the existing
+        ``_on_tile_isolate_requested`` / ``toggle_contact_sheet``
+        call sites — which only round-trip the active/tiles/layout
+        triplet — keep compiling. ``None`` leaves the flag untouched.
+        """
+        self._channel_menu.set_state(active, tiles, layout_mode, labels_visible)
+        sel = self._channel_menu.current_selection()
+        if sel is not None:
+            self._on_channel_selection_changed(sel)
+
+    def channel_menu_state(self) -> tuple[str, tuple[str, ...], str, bool]:
+        """Return the menu's current (active, tiles, layout_mode,
+        labels_visible) for persistence."""
+        return (
+            self._channel_menu.active_label,
+            self._channel_menu.tile_labels,
+            self._channel_menu.layout_mode,
+            self._channel_menu.labels_visible,
+        )
 
     # ------------------------------------------------------------------ Internals
 
@@ -510,26 +573,30 @@ class TransportBar(QWidget):  # type: ignore[misc]
         )
         self.channel_mask_changed.emit(mask)
 
-    def _on_channel_changed(self, index: int) -> None:
-        """Translate the combo selection into a ``channels_requested``
-        signal.
+    def _on_channel_selection_changed(self, selection: ChannelSelection) -> None:
+        """Forward a fresh selection from the channel menu.
 
-        Index 0 (the beauty pass) emits ``None`` so the cache reverts
-        to the reader's default (R/G/B/A). Any other index looks up
-        the cached label → channels mapping built by
-        :meth:`set_available_channels` and emits the matching list.
+        Updates the button label to summarise the state ("RGB",
+        "albedo", "RGB +2", …) and emits
+        :attr:`channel_selection_changed` for the controller.
         """
-        if index <= 0:
-            self.channels_requested.emit(None)
+        self._current_selection = selection
+        self._refresh_channel_button_label()
+        self.channel_selection_changed.emit(selection)
+
+    def _refresh_channel_button_label(self) -> None:
+        sel = self._current_selection
+        if sel is None:
+            self._channel_button.setText("RGB")
             return
-        label = self._channel_combo.itemText(index)
-        channels = self._channel_groups.get(label)
-        if channels is None:
-            # Defensive: if for some reason the mapping is out of sync,
-            # treat the label itself as a single channel name. Better
-            # than swallowing the click silently.
-            channels = (label,)
-        self.channels_requested.emit(list(channels))
+        if sel.is_contact_sheet:
+            extra = max(0, len(sel.tiles) - 1)
+            head = sel.tiles[0].label if sel.tiles else sel.active.label
+            self._channel_button.setText(
+                f"{head} +{extra}" if extra else head
+            )
+        else:
+            self._channel_button.setText(sel.active.label)
 
     def _on_zoom_picked(self, index: int) -> None:
         """User picked a preset from the dropdown.

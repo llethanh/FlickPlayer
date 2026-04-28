@@ -23,6 +23,7 @@ from img_player.color.ocio_manager import OCIOManager
 from img_player.export.renderer import FrameRenderer, RenderContext
 from img_player.export.settings import ExportSettings
 from img_player.export.writers import BaseWriter, build_writer
+from img_player.sequence.channels import ChannelSelection
 from img_player.sequence.models import SequenceInfo
 
 log = logging.getLogger(__name__)
@@ -59,9 +60,17 @@ class ExportEngine:
         display: str | None,
         view: str | None,
         sidecar_source: Path | None = None,
+        channel_selection: ChannelSelection | None = None,
+        channel_layout_mode: str = "Auto",
+        channel_labels_visible: bool = True,
     ) -> None:
         self._settings = settings
         self._sequence = sequence
+        # Capture the live channel state so the export reproduces the
+        # exact contact sheet (or single channel) the user has on
+        # screen. ``None`` falls back to the legacy default-channels
+        # path.
+        self._channel_selection = channel_selection
         # The CPU OCIO processor is built once at engine setup. If
         # OCIO isn't available or the user disabled the transform we
         # leave it at None and the renderer skips the colour step.
@@ -77,6 +86,9 @@ class ExportEngine:
             sequence=sequence,
             annotation_store=annotation_store if settings.bake_annotations else None,
             ocio_cpu_processor=ocio_proc,
+            channel_selection=channel_selection,
+            channel_layout_mode=channel_layout_mode,
+            channel_labels_visible=channel_labels_visible,
         )
         self._renderer = FrameRenderer(ctx, settings)
         self._sidecar_source = sidecar_source
