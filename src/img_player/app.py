@@ -191,6 +191,15 @@ class ImgPlayerApp:
             num_workers=num_workers,
         )
         self._controller = PlayerController(self._cache)
+        # Multi-layer foundation (v1.0 phase 2b — shadow mode). The
+        # stack tracks every loaded sequence as a Layer, but the
+        # cache + controller still operate on a single SequenceInfo
+        # for now. The :class:`LayerPanel` UI reads this stack to
+        # draw the rows; phase 2c will switch the cache to
+        # MasterFrameCache and make the stack the source of truth
+        # for playback.
+        from img_player.layers import LayerStack
+        self._layer_stack = LayerStack()
         # Comment store — owned by the app, passed to MainWindow so
         # the Comments tab can read / write directly. Cohérent with
         # how the AnnotationStore is owned: app-level for lifecycle,
@@ -1331,6 +1340,9 @@ class ImgPlayerApp:
         self._controller.pause()
         self._controller._sequence = None  # noqa: SLF001 — there's no public detach
         self._cache.detach()
+        # Clear the LayerStack (v1.0 phase 2b shadow mirror).
+        for layer in self._layer_stack.layers():
+            self._layer_stack.remove(layer.id)
         # Clear in-memory annotation + comment data (their sidecar
         # path tracking goes too).
         self._annotation_store.load_from_dict({})
