@@ -102,8 +102,26 @@ class FrameCache:
     # ------------------------------------------------------------------ Lifecycle
 
     def attach(self, sequence: SequenceInfo) -> None:
-        """Switch to a new sequence; clears cached frames and pending requests."""
+        """Switch to a new sequence; clears cached frames and pending requests.
+
+        Pre-fills the missing-frames set with every hole in
+        ``[first_frame .. last_frame]`` that the scanner didn't
+        find on disk — those are missing FOR THIS SESSION at the
+        scan-time level (not just "decode failed"), so the
+        playback path needs them flagged immediately rather than
+        bouncing through ``request() → no path → no decode``
+        forever, which is what made playback freeze on a hole
+        before this fix. ``_paths_by_frame`` doesn't contain the
+        missing entries, so the worker pool never gets a chance
+        to mark them; we do it here.
+        """
         self._pool.clear()
+        # Build the placeholder before grabbing the lock — placeholder
+        # creation goes through QPainter (slow-ish) and we don't want
+        # to hold the cache lock during that.
+        placeholder = get_missing_placeholder(
+            sequence.width or 512, sequence.height or 512,
+        )
         with self._lock:
             self._frames.clear()
             self._missing_frames.clear()
@@ -114,8 +132,14 @@ class FrameCache:
                 f.frame_number: f.mtime for f in sequence.frames
             }
             self._current_frame = sequence.first_frame
-            # Any decode that was in flight against the previous
-            # sequence is now meaningless — fence them out.
+            # Pre-mark every hole in the range as missing so the
+            # placeholder is served on first access (no stall).
+            for fnum in range(sequence.first_frame, sequence.last_frame + 1):
+                if fnum not in self._paths_by_frame:
+                    self._frames[fnum] = placeholder
+                    self._missing_frames.add(fnum)
+                    # Don't bump bytes_used — every missing slot
+                    # aliases the same shared buffer.
             self._epoch += 1
 
     def detach(self) -> None:

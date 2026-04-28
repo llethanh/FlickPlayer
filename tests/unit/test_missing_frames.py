@@ -142,6 +142,35 @@ class TestCacheMissingFrames:
         assert cache.contains(2) is True
         cache.shutdown()
 
+    def test_holes_in_sequence_premarked_missing_on_attach(
+        self, tmp_path: Path, qtbot,  # type: ignore[no-untyped-def]
+    ) -> None:
+        """Regression: a sparse sequence (e.g. frames 1, 2, 4, 5 — no
+        frame 3) used to freeze playback at frame 3 forever, because
+        the cache had no path to decode and never marked it missing.
+        Now ``attach`` pre-fills the missing-frames set + serves the
+        placeholder so playback skips through the hole."""
+        del qtbot
+        # Build a sparse sequence: frames 1, 2, 4, 5 (no 3).
+        for n in (1, 2, 4, 5):
+            _write_tiny_png(tmp_path / f"shot.{n:04d}.png")
+        seq = scan(tmp_path / "shot.0001.png", probe=False)
+        # Sanity: scanner produced 4 frames, the SequenceInfo's
+        # missing_frames property reports the hole.
+        assert seq.frame_count == 4
+        assert seq.missing_frames == (3,)
+
+        cache = FrameCache(budget_bytes=10 * 1024 * 1024, num_workers=1)
+        cache.attach(seq)
+        # Frame 3 is immediately marked missing + has a placeholder
+        # ready, with no decode attempt needed.
+        assert 3 in cache.missing_frames()
+        assert cache.contains(3) is True
+        arr = cache.get(3)
+        assert arr is not None
+        assert arr.dtype == np.float32
+        cache.shutdown()
+
     def test_present_frame_not_marked_missing(self, tmp_path: Path, qtbot) -> None:  # type: ignore[no-untyped-def]
         del qtbot
         for n in (1, 2, 3):

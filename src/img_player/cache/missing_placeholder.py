@@ -97,3 +97,36 @@ def reset_cache() -> None:
     rebuilds them. Not used in production."""
     with _cache_lock:
         _cache.clear()
+
+
+# ---------------------------------------------------------------- Empty placeholder
+
+# Used by File → New: solid dark-grey buffer matching the app's
+# BG_DEEP. We deliberately don't reuse the missing-frame
+# checkerboard here — "no sequence loaded" is a different state
+# from "this frame's source is missing" and the user shouldn't
+# have to think "what's wrong, did I delete something?" when they
+# clicked New on purpose.
+_EMPTY_GREY = (20, 20, 22)  # = theme.H.BG_DEEP
+
+_empty_cache: dict[tuple[int, int], np.ndarray] = {}
+_empty_lock = Lock()
+
+
+def get_empty_placeholder(width: int, height: int) -> np.ndarray:
+    """Return a HxWx4 float32 RGBA solid-dark-grey buffer."""
+    width = max(1, int(width))
+    height = max(1, int(height))
+    key = (width, height)
+    with _empty_lock:
+        cached = _empty_cache.get(key)
+        if cached is not None:
+            return cached
+        rgba8 = np.empty((height, width, 4), dtype=np.uint8)
+        rgba8[..., 0] = _EMPTY_GREY[0]
+        rgba8[..., 1] = _EMPTY_GREY[1]
+        rgba8[..., 2] = _EMPTY_GREY[2]
+        rgba8[..., 3] = 255
+        arr = (rgba8.astype(np.float32) / 255.0)
+        _empty_cache[key] = arr
+        return arr
