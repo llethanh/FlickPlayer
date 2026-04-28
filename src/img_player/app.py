@@ -484,6 +484,9 @@ class ImgPlayerApp:
         self._window.jump_to_ends.connect(self._on_jump_to_ends)
         self._window.frame_requested.connect(self._on_scrub_requested)
         self._window.open_requested.connect(self._open_path)
+        # Export (v0.5.0) — both menu and transport button route here.
+        self._window.export_requested.connect(self._open_export_dialog)
+        self._window.transport.export_clicked.connect(self._open_export_dialog)
         self._window.exposure_step.connect(self._window.color_panel.bump_exposure)
         self._window.fps_changed.connect(self._on_fps_changed)
         self._window.direction_play_requested.connect(self._on_direction_play)
@@ -1218,6 +1221,104 @@ class ImgPlayerApp:
         self._prefs.source_colorspace = src
         self._prefs.display = display
         self._prefs.view = view
+
+    # ------------------------------------------------------------------ Export (v0.5.0)
+
+    def _open_export_dialog(self) -> None:
+        """File → Export… (or 💾 transport button) — open the dialog,
+        kick off the worker on accept."""
+        from img_player.export import ExportSettings  # local import to keep
+        from img_player.export.dialog import ExportDialog
+        from img_player.export.engine import ExportEngine
+        from img_player.export.progress_dialog import ExportProgressDialog
+        from img_player.export.worker import ExportWorker
+
+        seq = self._controller.sequence
+        if seq is None:
+            self._window.set_status("Export: no sequence loaded.")
+            return
+
+        # Range defaults: respect the player's current in/out points
+        # if the user has set them, otherwise the full sequence.
+        state = self._controller.state
+        in_f = state.in_frame if state.in_frame is not None else seq.first_frame
+        out_f = state.out_frame if state.out_frame is not None else seq.last_frame
+
+        # Restore last-used settings (per-key fall back to the
+        # ExportSettings dataclass defaults).
+        try:
+            initial = ExportSettings.from_prefs_dict(
+                self._prefs.export_settings, in_frame=in_f, out_frame=out_f,
+            )
+        except Exception:
+            initial = None
+
+        dialog = ExportDialog(
+            in_frame=in_f,
+            out_frame=out_f,
+            source_in_frame=seq.first_frame,
+            source_out_frame=seq.last_frame,
+            source_width=seq.width or 1920,
+            source_height=seq.height or 1080,
+            source_fps=state.fps,
+            initial_settings=initial,
+            parent=self._window,
+        )
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        settings = dialog.get_settings()
+        # Persist for next time.
+        try:
+            self._prefs.export_settings = settings.to_prefs_dict()
+        except Exception:
+            log.exception("[export] failed to persist last-used settings")
+
+        # Build the engine + worker + progress dialog and wire them.
+        engine = ExportEngine(
+            settings=settings,
+            sequence=seq,
+            annotation_store=self._annotation_store,
+            ocio_manager=self._ocio,
+            source_colorspace=self._prefs.source_colorspace,
+            display=self._prefs.display,
+            view=self._prefs.view,
+            sidecar_source=self._annotations_path,
+        )
+        worker = ExportWorker(engine, parent=self._window)
+        progress = ExportProgressDialog(
+            total_frames=settings.total_frames,
+            output_path=settings.output_dir,
+            parent=self._window,
+        )
+
+        worker.progress.connect(progress.update_progress)
+        worker.finished_ok.connect(progress.on_finished)
+        worker.failed.connect(progress.on_failed)
+        worker.canceled.connect(progress.on_canceled)
+        # Cancel routing: the dialog's Cancel button asks the worker
+        # to stop. The progress dialog itself stays open until the
+        # worker reaches its end-state and emits canceled.
+        progress.cancel_button.clicked.connect(worker.cancel)
+        # Final status message on success / failure / cancel.
+        worker.finished_ok.connect(self._on_export_finished)
+        worker.failed.connect(lambda msg: self._window.set_status(f"Export failed: {msg}"))
+        worker.canceled.connect(
+            lambda _p, n: self._window.set_status(f"Export canceled after {n} frames")
+        )
+        # Auto-cleanup once the dialog finishes.
+        progress.finished.connect(worker.deleteLater)
+        progress.finished.connect(progress.deleteLater)
+
+        worker.start()
+        self._window.set_status(
+            f"Exporting {settings.total_frames} frames → {settings.output_dir}"
+        )
+        progress.exec()
+
+    def _on_export_finished(self, output_path: str, frames: int, duration_s: float) -> None:
+        self._window.set_status(
+            f"Exported {frames} frames to {output_path} in {duration_s:.1f} s"
+        )
 
     def _on_fps_changed(self, fps: float) -> None:
         self._controller.set_fps(fps)

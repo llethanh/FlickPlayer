@@ -22,25 +22,41 @@ from img_player.preferences import Preferences
 def _isolated_settings(
     monkeypatch: pytest.MonkeyPatch, tmp_path,
 ) -> Iterator[None]:
-    """Force ``QSettings`` to use a per-test ``IniFormat`` file.
+    """Force ``Preferences`` to use a per-test ``IniFormat`` file.
 
     Without this, ``Preferences()`` would touch the developer's real
     registry (Windows) or preference plist (macOS / Linux), leaking
     test state into the user's environment and vice versa.
+
+    Note on the implementation: the obvious approach
+    (``QSettings.setDefaultFormat(IniFormat)`` + ``setPath(...)``)
+    DOES NOT WORK with the ``QSettings(org, app)`` 2-arg constructor
+    that ``Preferences`` uses — Qt always falls back to Native (the
+    registry on Windows) for that constructor regardless of
+    ``setDefaultFormat``. We instead monkeypatch the ``QSettings``
+    symbol the module imported, replacing it with a callable that
+    builds a fully-explicit ``QSettings(IniFormat, UserScope, org,
+    app)`` rooted at the test's tmp dir.
     """
-    # IniFormat is fully file-backed — no registry, no system store.
-    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+    from img_player import preferences as _prefs_mod
+
+    ini_root = str(tmp_path / "qsettings")
     QSettings.setPath(
-        QSettings.Format.IniFormat,
-        QSettings.Scope.UserScope,
-        str(tmp_path / "qsettings"),
+        QSettings.Format.IniFormat, QSettings.Scope.UserScope, ini_root,
     )
-    # Force a unique org/app name per test so cached QSettings instances
-    # in PySide6 don't get reused between fixture invocations.
+
+    def _isolated_qsettings(org: str, app: str) -> QSettings:
+        return QSettings(
+            QSettings.Format.IniFormat,
+            QSettings.Scope.UserScope,
+            org,
+            app,
+        )
+
+    monkeypatch.setattr(_prefs_mod, "QSettings", _isolated_qsettings)
     QCoreApplication.setOrganizationName(f"img_player_test_{tmp_path.name}")
     QCoreApplication.setApplicationName("img_player_test")
     yield
-    QSettings.setDefaultFormat(QSettings.Format.NativeFormat)
 
 
 # ============================================================================

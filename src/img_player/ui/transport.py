@@ -78,6 +78,10 @@ class TransportBar(QWidget):  # type: ignore[misc]
     annotation_toggle_clicked = Signal()
     annotation_prev_clicked = Signal()
     annotation_next_clicked = Signal()
+    # Export button (v0.5.0) — opens the export dialog. Disabled
+    # until the app calls ``set_export_enabled(True)`` (which the
+    # app does after a sequence loads).
+    export_clicked = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -176,6 +180,16 @@ class TransportBar(QWidget):  # type: ignore[misc]
         # annotated frames on either side of the current playhead.
         self._annotation_prev_btn.setEnabled(False)
         self._annotation_next_btn.setEnabled(False)
+
+        # --- Export button (v0.5.0) -----------------------------------
+        # 💾 floppy-disk emoji is the universal "save / export" cue.
+        # Disabled until a sequence is loaded — the app flips it on
+        # via ``set_export_enabled``.
+        self._export_btn = _text_button(
+            "💾", "Export sequence to image seq or video (Ctrl+Shift+E)"
+        )
+        self._export_btn.clicked.connect(self.export_clicked.emit)
+        self._export_btn.setEnabled(False)
 
         # --- FPS ------------------------------------------------------------
         self._fps_combo = QComboBox()
@@ -291,6 +305,9 @@ class TransportBar(QWidget):  # type: ignore[misc]
         layout.addWidget(self._annotation_next_btn)
 
         layout.addWidget(_separator())
+        layout.addWidget(self._export_btn)
+
+        layout.addWidget(_separator())
         fps_label = QLabel("FPS")
         fps_label.setFixedWidth(24)
         layout.addWidget(fps_label)
@@ -369,6 +386,15 @@ class TransportBar(QWidget):  # type: ignore[misc]
         """
         self._annotation_prev_btn.setEnabled(prev_avail)
         self._annotation_next_btn.setEnabled(next_avail)
+
+    def set_export_enabled(self, enabled: bool) -> None:
+        """Enable / disable the 💾 export button.
+
+        The app flips this on after a sequence successfully loads;
+        before that there's nothing to export and clicking the
+        button would just produce a confusing no-op.
+        """
+        self._export_btn.setEnabled(bool(enabled))
 
     def set_annotation_toggle_active(self, active: bool) -> None:
         """Reflect the toolbar's visibility on the ✏ button.

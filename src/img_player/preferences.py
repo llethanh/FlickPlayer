@@ -286,3 +286,45 @@ class Preferences:
     @ephemeral_mode_enabled.setter
     def ephemeral_mode_enabled(self, value: bool) -> None:
         self._s.setValue("ephemeral/mode_enabled", bool(value))
+
+    # ------------------------------------------------------------------ Export dialog (v0.5.0)
+
+    @property
+    def export_settings(self) -> dict[str, object]:
+        """Round-trip the last-used export dialog settings.
+
+        Stored as flat keys under ``export/...`` so QSettings keeps
+        them in plain INI on macOS / Linux. The dialog calls
+        :meth:`ExportSettings.from_prefs_dict` with this on open and
+        :meth:`ExportSettings.to_prefs_dict` on accept. Defaults are
+        produced by :class:`ExportSettings` itself when a key is
+        missing — no defaults baked in here so the source of truth
+        stays in one place.
+        """
+        keys = (
+            "output_dir",
+            "start_frame",
+            "format_key",
+            "width",
+            "height",
+            "fps",
+            "apply_display_transform",
+            "bake_annotations",
+            "copy_sidecar",
+            "jpg_quality",
+            "exr_compression",
+            "video_crf",
+            "prores_profile",
+            "h26x_preset",
+        )
+        out: dict[str, object] = {}
+        for key in keys:
+            raw = self._s.value(f"export/{key}")
+            if raw is not None:
+                out[key] = raw
+        return out
+
+    @export_settings.setter
+    def export_settings(self, data: dict[str, object]) -> None:
+        for key, value in data.items():
+            self._s.setValue(f"export/{key}", value)

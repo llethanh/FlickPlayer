@@ -55,6 +55,7 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
     """Top-level window wiring all the UI pieces together."""
 
     open_requested = Signal(Path)
+    export_requested = Signal()  # File → Export… (v0.5.0)
     play_toggled = Signal()
     channels_requested = Signal(object)   # list[str] | None
     channel_mask_changed = Signal(tuple)  # (R, G, B, A) bools
@@ -263,6 +264,11 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         """
         self.setWindowTitle(f"img_player — {sequence.display_pattern()}")
         self._timeline.set_range(sequence.first_frame, sequence.last_frame)
+        # A sequence is loaded → enable the File → Export… action +
+        # the 💾 transport bar button.
+        if hasattr(self, "_export_act"):
+            self._export_act.setEnabled(True)
+        self._transport.set_export_enabled(True)
         # Clear the cache bar so we don't briefly show the old run
         # rectangles re-mapped onto the new range. The next
         # _refresh_cache_bar tick (~200 ms) re-populates with the
@@ -301,6 +307,15 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         self._recent_menu.aboutToShow.connect(self._refresh_recent_menu)
         # Pre-populate so the submenu is never empty on first open.
         self._refresh_recent_menu()
+
+        file_menu.addSeparator()
+        # Export action (v0.5.0). Disabled until a sequence is loaded —
+        # the app re-enables it after a successful open.
+        self._export_act = QAction("&Export…", self)
+        self._export_act.setShortcut(QKeySequence("Ctrl+Shift+E"))
+        self._export_act.setEnabled(False)
+        self._export_act.triggered.connect(self.export_requested.emit)
+        file_menu.addAction(self._export_act)
 
         file_menu.addSeparator()
         quit_act = QAction("&Quit", self)
