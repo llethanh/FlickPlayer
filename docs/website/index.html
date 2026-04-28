@@ -1,0 +1,1375 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flick — VFX-grade image sequence viewer</title>
+<style>
+:root {
+  /* Pulled straight from src/img_player/ui/theme.py — H class */
+  --bg-deep:    #141416;
+  --bg-base:    #1C1C1F;
+  --bg-raised:  #242428;
+  --bg-surface: #2C2C30;
+  --bg-hover:   #35353A;
+  --bg-select:  #3A3A40;
+
+  --border-subtle:  #28282C;
+  --border-default: #38383C;
+  --border-strong:  #56565C;
+
+  --text-primary:   #E4E4E6;
+  --text-secondary: #8A8A8E;
+  --text-disabled:  #52525A;
+
+  --accent:        #E8901C;
+  --accent-bright: #F5A830;
+  --accent-dim:    #7A4210;
+
+  --playhead:  #F5AA28;
+  --marker-io: #DC3C3C;
+  --cache-ok:  #38B464;
+
+  /* Brand colours specific to the website */
+  --hero-glow: rgba(232, 144, 28, 0.18);
+
+  /* Spacing — same 4 px grid as theme.py S class */
+  --s-xs: 4px;
+  --s-sm: 8px;
+  --s-md: 16px;
+  --s-lg: 24px;
+  --s-xl: 40px;
+  --s-2xl: 80px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg-deep);
+  color: var(--text-primary);
+  font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+code, .mono { font-family: "JetBrains Mono", ui-monospace, "Consolas", monospace; }
+
+/* ============================================================
+   Header
+   ============================================================ */
+header {
+  position: sticky; top: 0; z-index: 50;
+  display: flex; align-items: center; gap: var(--s-lg);
+  padding: var(--s-md) var(--s-xl);
+  background: rgba(20, 20, 22, 0.85);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border-subtle);
+}
+header .logo { display: flex; align-items: center; gap: var(--s-sm); font-weight: 600; font-size: 16px; }
+header .logo-mark {
+  width: 22px; height: 22px;
+  display: grid; place-items: center;
+  border-radius: 5px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-bright));
+}
+header nav { display: flex; gap: var(--s-lg); margin-left: auto; }
+header nav a { color: var(--text-secondary); text-decoration: none; font-size: 13px; }
+header nav a:hover { color: var(--text-primary); }
+
+/* ============================================================
+   Hero
+   ============================================================ */
+.hero {
+  position: relative;
+  padding: 100px var(--s-xl) 60px;
+  text-align: center;
+  overflow: hidden;
+}
+.hero::before {
+  content: "";
+  position: absolute;
+  top: -200px; left: 50%; transform: translateX(-50%);
+  width: 800px; height: 600px;
+  background: radial-gradient(circle, var(--hero-glow), transparent 60%);
+  pointer-events: none;
+}
+.hero h1 {
+  position: relative;
+  font-size: 84px; font-weight: 700; letter-spacing: -2px;
+  background: linear-gradient(180deg, #ffffff 0%, var(--accent-bright) 120%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  margin-bottom: var(--s-md);
+}
+.hero .tag {
+  position: relative;
+  font-size: 18px;
+  color: var(--text-secondary);
+  max-width: 640px; margin: 0 auto var(--s-xl);
+  line-height: 1.55;
+}
+.hero .tag em { color: var(--accent); font-style: normal; font-weight: 500; }
+.hero .ctas {
+  position: relative;
+  display: flex; gap: var(--s-md); justify-content: center;
+  margin-bottom: var(--s-2xl);
+}
+.btn {
+  display: inline-flex; align-items: center; gap: var(--s-sm);
+  padding: 10px 20px; border-radius: 8px;
+  font-size: 14px; font-weight: 500;
+  text-decoration: none; transition: all 0.15s ease;
+  border: 1px solid transparent;
+}
+.btn-primary {
+  background: var(--accent); color: #1c1305;
+}
+.btn-primary:hover { background: var(--accent-bright); }
+.btn-ghost {
+  background: var(--bg-raised); color: var(--text-primary);
+  border-color: var(--border-default);
+}
+.btn-ghost:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+
+/* ============================================================
+   App mockup (faithful HTML/CSS reproduction of the live UI)
+   ============================================================ */
+.app-frame {
+  position: relative;
+  max-width: 1180px; margin: 0 auto;
+  background: var(--bg-base);
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.02),
+    0 30px 80px rgba(0,0,0,0.6),
+    0 0 120px var(--hero-glow);
+}
+.app-titlebar {
+  display: flex; align-items: center; gap: var(--s-md);
+  padding: 6px var(--s-md);
+  background: var(--bg-deep);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 12px; color: var(--text-secondary);
+}
+.app-titlebar .dots { display: flex; gap: 6px; }
+.app-titlebar .dots span {
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--bg-surface);
+}
+.app-titlebar .title { color: var(--text-primary); font-weight: 500; }
+.app-menubar {
+  display: flex; gap: var(--s-md);
+  padding: 4px var(--s-md);
+  background: var(--bg-base);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 13px; color: var(--text-secondary);
+}
+.app-menubar span:hover { color: var(--text-primary); cursor: default; }
+.app-menubar .burger { color: var(--accent); display: inline-flex; align-items: center; }
+
+.app-body {
+  display: grid;
+  grid-template-columns: 1fr 280px;
+  height: 460px;
+}
+.viewport {
+  position: relative;
+  /* Suggests a loaded frame — soft warm rim from a "lit" subject
+     against a darker background. Different from the checkerboard
+     "missing frame" placeholder which lives further down on the
+     page. */
+  background:
+    radial-gradient(ellipse 60% 50% at 50% 55%, rgba(232,144,28,0.18), transparent 70%),
+    radial-gradient(ellipse 80% 70% at 50% 50%, #2a2026, #0e0e10);
+  overflow: hidden;
+}
+.viewport::before {
+  content: "";
+  position: absolute; inset: 0;
+  /* Subtle grain so the area doesn't look like a flat panel */
+  background-image:
+    radial-gradient(circle at 20% 30%, rgba(255,255,255,0.04), transparent 35%),
+    radial-gradient(circle at 80% 70%, rgba(232,144,28,0.06), transparent 40%);
+  pointer-events: none;
+}
+.viewport-strokes {
+  position: absolute; inset: 24px;
+  pointer-events: none;
+}
+/* SVG strokes baked in for the mockup */
+.viewport-stamp {
+  position: absolute;
+  bottom: 36px; left: 36px;
+  display: flex; gap: var(--s-sm); align-items: center;
+  font-size: 11px; color: var(--text-secondary);
+  background: rgba(20,20,22,0.7);
+  padding: 4px 10px;
+  border-radius: 14px;
+  border: 1px solid var(--border-subtle);
+  backdrop-filter: blur(4px);
+}
+.viewport-stamp .pulse {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--cache-ok);
+  box-shadow: 0 0 8px var(--cache-ok);
+}
+
+/* Annotation toolbar floating over the viewport — pixel-faithful
+   reproduction of the real Qt toolbar (annotate/toolbar.py) */
+.ann-toolbar {
+  position: absolute;
+  top: 12px; left: 12px;
+  width: 60px;
+  background: rgba(36, 36, 40, 0.7);
+  border: 2px solid #4A8DE8;  /* ghost mode active = cyan border */
+  border-radius: 8px;
+  padding: 6px;
+  display: flex; flex-direction: column; gap: 5px;
+  align-items: center;
+  backdrop-filter: blur(8px);
+}
+.ann-toolbar.full { width: 60px; }
+.ann-btn {
+  width: 30px; height: 28px;
+  display: grid; place-items: center;
+  background: transparent; color: var(--text-primary);
+  border-radius: 4px; border: 1px solid transparent;
+  font-size: 13px;
+  cursor: default;
+  transition: all 0.12s ease;
+}
+.ann-btn:hover { background: rgba(255,255,255,0.06); }
+.ann-btn.active,
+.ann-btn.ghost-active {
+  background: rgba(74,141,232,0.27);
+  border-color: #4A8DE8;
+}
+.ann-btn.small { width: 22px; height: 22px; font-size: 12px; }
+.ann-btn.dimmed {
+  opacity: 0.35;
+  /* Eraser is greyed out in ghost mode, by design — strokes vanish on
+     their own so erasing makes no sense */
+}
+.ann-btn.clear {
+  margin-top: 2px;
+  font-size: 12px;
+}
+.ann-sep { width: 80%; height: 1px; background: var(--border-subtle); }
+
+.preset-row {
+  display: flex; gap: 6px; align-items: center; justify-content: center;
+  width: 100%;
+}
+.preset-dot {
+  font-size: 8px;
+  color: var(--text-secondary);
+  width: 12px; height: 12px;
+  display: grid; place-items: center;
+  border-radius: 3px;
+}
+.preset-dot.active {
+  color: #4A8DE8;
+  background: rgba(74,141,232,0.14);
+  font-size: 11px;
+}
+.preset-dot.big { font-size: 14px; color: var(--text-secondary); }
+.preset-dot.active.big { color: #4A8DE8; font-size: 14px; }
+
+.stroke-preview {
+  width: 50px; height: 20px;
+  display: grid; place-items: center;
+}
+
+.tool-row { display: flex; gap: 4px; }
+
+.size-label, .size-value {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+.size-label { color: var(--text-primary); font-size: 11px; font-weight: 500; }
+.size-slider {
+  width: 100%;
+  accent-color: var(--accent);
+  height: 4px;
+}
+
+.palette-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 16px);
+  gap: 4px;
+  justify-content: center;
+}
+.swatch {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.08);
+  cursor: pointer;
+}
+.swatch.span2 {
+  grid-column: span 2;
+  width: 100%;
+  border-radius: 8px;
+  height: 14px;
+}
+.swatch.active {
+  box-shadow: 0 0 0 2px var(--bg-raised), 0 0 0 3px var(--text-primary);
+}
+
+/* Right side panel */
+.side-panel {
+  background: var(--bg-base);
+  border-left: 1px solid var(--border-subtle);
+  display: flex; flex-direction: column;
+}
+.tab-bar {
+  display: flex; padding: 0;
+  background: var(--bg-deep);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.tab {
+  padding: 10px var(--s-md);
+  font-size: 12px; color: var(--text-secondary);
+  border-bottom: 2px solid transparent;
+  cursor: default;
+}
+.tab.active { color: var(--text-primary); border-bottom-color: var(--accent); }
+.panel-section {
+  padding: var(--s-md);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.panel-row {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 12px; padding: 4px 0;
+}
+.panel-row .label { color: var(--text-secondary); }
+.panel-row .value {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+}
+.panel-section h4 {
+  font-size: 11px; font-weight: 500;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  margin-bottom: var(--s-sm);
+}
+
+/* Timeline */
+.timeline {
+  height: 56px;
+  background: var(--bg-deep);
+  border-top: 1px solid var(--border-subtle);
+  position: relative;
+  overflow: hidden;
+}
+.timeline-track {
+  position: absolute;
+  left: 16px; right: 16px;
+  bottom: 16px;
+  height: 12px;
+  background: var(--bg-base);
+  border-radius: 2px;
+}
+.timeline-range {
+  position: absolute;
+  background: var(--accent);
+  height: 4px;
+  top: 0;
+  border-radius: 2px;
+  opacity: 0.8;
+}
+.timeline-cache {
+  position: absolute;
+  background: rgba(232,144,28,0.5);
+  border: 1px solid var(--accent);
+  height: 12px;
+  top: 0;
+}
+.timeline-missing {
+  position: absolute;
+  background: rgba(232,74,74,0.5);
+  border: 1px solid #E84A4A;
+  height: 12px;
+  top: 0;
+}
+.timeline-marker {
+  position: absolute;
+  width: 2px; height: 12px; top: 0;
+  background: var(--marker-io);
+}
+.timeline-playhead {
+  position: absolute;
+  width: 2px; bottom: 12px; height: 22px;
+  background: var(--playhead);
+  box-shadow: 0 0 6px rgba(245,170,40,0.6);
+}
+.timeline-playhead::before {
+  content: "";
+  position: absolute;
+  top: 0; left: -4px;
+  border-style: solid;
+  border-width: 6px 5px 0 5px;
+  border-color: var(--playhead) transparent transparent transparent;
+}
+.timeline-ann {
+  position: absolute;
+  width: 0; height: 0;
+  border-style: solid;
+  border-width: 0 4px 7px 4px;
+  border-color: transparent transparent #5DC46C transparent;
+  bottom: 28px;
+}
+.timeline-comment {
+  position: absolute;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: #4A8DE8;
+  bottom: 38px; transform: translateX(-3px);
+}
+.timeline-ticks {
+  position: absolute;
+  left: 16px; right: 16px;
+  top: 8px; bottom: 28px;
+  display: flex; justify-content: space-between;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px; color: var(--text-disabled);
+}
+.timeline-ticks span {
+  position: relative;
+  padding-bottom: 4px;
+}
+
+/* Transport bar */
+.transport {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px var(--s-md);
+  background: var(--bg-base);
+  border-top: 1px solid var(--border-subtle);
+  font-size: 12px;
+}
+.transport .group { display: flex; gap: 4px; }
+.transport .sep { width: 1px; height: 18px; background: var(--border-subtle); margin: 0 6px; }
+.t-btn {
+  width: 30px; height: 28px;
+  display: grid; place-items: center;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  color: var(--text-primary);
+  cursor: default;
+  font-size: 13px;
+}
+.t-btn:hover { background: var(--bg-hover); }
+.t-btn.accent svg, .t-btn.accent { color: var(--accent); }
+.t-btn svg { display: block; }
+.frame-display {
+  background: var(--bg-deep);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  padding: 4px 12px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 13px;
+  color: var(--text-primary);
+  min-width: 70px; text-align: center;
+}
+.t-input {
+  background: var(--bg-deep);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--text-primary);
+  font-family: "JetBrains Mono", monospace;
+  min-width: 48px; text-align: center;
+}
+.t-label { color: var(--text-secondary); font-size: 11px; }
+.ch-letter {
+  width: 22px; height: 28px;
+  display: grid; place-items: center;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  font-weight: 600;
+  font-size: 12px;
+}
+.ch-letter.r { color: #E0606E; }
+.ch-letter.g { color: #6CC275; }
+.ch-letter.b { color: #5E9DD8; }
+.ch-letter.a { color: var(--text-secondary); }
+
+/* ============================================================
+   Sections
+   ============================================================ */
+section {
+  padding: var(--s-2xl) var(--s-xl);
+  max-width: 1200px; margin: 0 auto;
+}
+section h2 {
+  font-size: 36px; font-weight: 600; letter-spacing: -0.5px;
+  margin-bottom: var(--s-sm);
+}
+section h2 .accent { color: var(--accent); }
+section .lede {
+  color: var(--text-secondary);
+  font-size: 16px; line-height: 1.6;
+  max-width: 720px; margin-bottom: var(--s-xl);
+}
+
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--s-md);
+}
+.feature-card {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: var(--s-lg);
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.feature-card:hover {
+  border-color: var(--border-default);
+  transform: translateY(-2px);
+}
+.feature-card .icon {
+  width: 36px; height: 36px;
+  display: grid; place-items: center;
+  background: var(--bg-deep);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  margin-bottom: var(--s-md);
+  color: var(--accent);
+}
+.feature-card h3 {
+  font-size: 16px; font-weight: 600; margin-bottom: 6px;
+}
+.feature-card p { color: var(--text-secondary); font-size: 13px; line-height: 1.55; }
+
+.feature-detail {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-2xl);
+  align-items: center;
+  margin-bottom: var(--s-2xl);
+}
+.feature-detail.reverse { direction: rtl; }
+.feature-detail.reverse > * { direction: ltr; }
+.feature-detail .copy h2 {
+  font-size: 28px; margin-bottom: var(--s-md);
+}
+.feature-detail .copy p {
+  color: var(--text-secondary);
+  font-size: 15px; line-height: 1.65;
+  margin-bottom: var(--s-md);
+}
+.feature-detail .copy ul {
+  list-style: none;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.feature-detail .copy li {
+  padding-left: var(--s-md);
+  position: relative;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+.feature-detail .copy li::before {
+  content: "›";
+  color: var(--accent);
+  position: absolute; left: 0; top: 0;
+  font-weight: 700;
+}
+.feature-detail .copy li b { color: var(--text-primary); font-weight: 500; }
+
+.mockup {
+  background: var(--bg-base);
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  padding: var(--s-md);
+  box-shadow: 0 12px 30px rgba(0,0,0,0.4);
+}
+.mockup-label {
+  font-size: 10px; color: var(--text-disabled);
+  text-transform: uppercase; letter-spacing: 0.08em;
+  margin-bottom: var(--s-sm);
+  font-family: "JetBrains Mono", monospace;
+}
+
+/* Comments panel */
+.comments-panel {
+  background: var(--bg-base);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex; flex-direction: column;
+  max-width: 380px;
+}
+.comment-frame-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px var(--s-md);
+  background: var(--bg-deep);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.comment-frame-header .frame-num {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  color: var(--accent);
+  font-weight: 500;
+}
+.comment-frame-header .frame-meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.comment-list {
+  display: flex; flex-direction: column; gap: var(--s-sm);
+  padding: var(--s-md);
+  max-height: 320px; overflow-y: auto;
+}
+.comment-card {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.comment-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 4px;
+}
+.comment-author {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.comment-time {
+  font-size: 10px;
+  color: var(--text-disabled);
+  font-family: "JetBrains Mono", monospace;
+}
+.comment-text {
+  font-size: 12px;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+.comment-input {
+  display: flex; gap: var(--s-sm);
+  padding: var(--s-md);
+  background: var(--bg-deep);
+  border-top: 1px solid var(--border-subtle);
+}
+.comment-input textarea {
+  flex: 1;
+  background: var(--bg-base);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+  resize: none;
+  outline: none;
+}
+.comment-input textarea:focus {
+  border-color: var(--accent);
+}
+.comment-send {
+  background: var(--accent);
+  color: #1c1305;
+  border: none;
+  border-radius: 4px;
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.comment-send:hover { background: var(--accent-bright); }
+
+/* Codecs grid */
+.codecs {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px;
+}
+.codec-pill {
+  display: flex; align-items: center; gap: var(--s-sm);
+  padding: 6px 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.codec-pill .ext {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--accent);
+  background: rgba(232,144,28,0.1);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+/* Shortcuts table */
+.kbd-table {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--s-sm);
+}
+.kbd-row {
+  display: grid; grid-template-columns: 130px 1fr;
+  align-items: center; gap: var(--s-md);
+  padding: 8px 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+}
+.kbd {
+  display: inline-block;
+  padding: 2px 8px;
+  background: var(--bg-deep);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--text-primary);
+}
+.kbd-row .desc { font-size: 13px; color: var(--text-secondary); }
+
+/* Footer */
+footer {
+  margin-top: var(--s-2xl);
+  padding: var(--s-xl);
+  border-top: 1px solid var(--border-subtle);
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-disabled);
+}
+footer a { color: var(--text-secondary); text-decoration: none; }
+footer a:hover { color: var(--accent); }
+
+@media (max-width: 800px) {
+  .hero h1 { font-size: 56px; }
+  .feature-detail { grid-template-columns: 1fr; gap: var(--s-md); }
+  .feature-detail.reverse { direction: ltr; }
+  .app-body { grid-template-columns: 1fr; height: auto; }
+  .side-panel { display: none; }
+  .kbd-table { grid-template-columns: 1fr; }
+  header nav { display: none; }
+}
+</style>
+</head>
+<body>
+
+<!-- =========================================================================
+     Header
+     ========================================================================= -->
+<header>
+  <div class="logo">
+    <div class="logo-mark">
+      <!-- Stylised "f" mark — same line-art idiom as the app's icons -->
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#1c1305" stroke-width="2" stroke-linecap="round">
+        <path d="M5 13 L5 5 Q5 3 7 3 L11 3"/>
+        <path d="M3.5 8 L9 8"/>
+      </svg>
+    </div>
+    Flick
+  </div>
+  <nav>
+    <a href="#features">Features</a>
+    <a href="#timeline">Timeline</a>
+    <a href="#annotations">Annotations</a>
+    <a href="#comments">Comments</a>
+    <a href="#export">Export</a>
+    <a href="#shortcuts">Shortcuts</a>
+  </nav>
+</header>
+
+<!-- =========================================================================
+     Hero
+     ========================================================================= -->
+<section class="hero">
+  <h1>Flick</h1>
+  <p class="tag">
+    A <em>VFX-grade image sequence viewer</em>. Open EXR / DPX / TIFF / PNG dailies,
+    review in real OCIO color, annotate with the pen, ship the result as a video or
+    a baked sequence — all from one fast desktop app.
+  </p>
+  <div class="ctas">
+    <a class="btn btn-primary" href="#download">Download for Windows</a>
+    <a class="btn btn-ghost" href="#features">See features →</a>
+  </div>
+
+  <!-- Faithful HTML/CSS reproduction of the live UI -->
+  <div class="app-frame">
+    <div class="app-titlebar">
+      <div class="dots"><span></span><span></span><span></span></div>
+      <div class="title">Flick — render.####.exr</div>
+    </div>
+    <div class="app-menubar">
+      <span>File</span><span>View</span><span>Help</span>
+      <span class="burger" style="margin-left: auto; padding-right: 4px;">
+        <svg width="16" height="16" viewBox="0 0 16 16">
+          <rect x="3" y="3" width="10" height="2" rx="1" fill="currentColor"/>
+          <rect x="3" y="7" width="10" height="2" rx="1" fill="currentColor"/>
+          <rect x="3" y="11" width="10" height="2" rx="1" fill="currentColor"/>
+        </svg>
+      </span>
+    </div>
+
+    <div class="app-body">
+      <!-- Viewport -->
+      <div class="viewport">
+        <!-- Floating annotation toolbar — full reproduction of the
+             real toolbar (toolbar.py): pin → ghost → preset row →
+             stroke preview → pen+eraser pair → size slider →
+             7-color palette grid → undo/redo pair → clear. -->
+        <div class="ann-toolbar full">
+          <div class="ann-btn" title="Pin">📌</div>
+          <div class="ann-btn ghost-active" title="Ghost mode">👻</div>
+          <!-- Ephemeral preset row, ghost mode active -->
+          <div class="preset-row">
+            <div class="preset-dot" title="Court">●</div>
+            <div class="preset-dot active" title="Moyen">●</div>
+            <div class="preset-dot big" title="Long">●</div>
+          </div>
+          <div class="ann-sep"></div>
+          <!-- Stroke preview (sample wavy stroke) -->
+          <div class="stroke-preview">
+            <svg width="50" height="20" viewBox="0 0 50 20">
+              <path d="M3 14 Q 10 4 17 12 T 31 8 T 47 12" stroke="#E84A4A" stroke-width="2.4" fill="none" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <!-- Tool row: pen + eraser side by side -->
+          <div class="tool-row">
+            <div class="ann-btn small active">✏️</div>
+            <div class="ann-btn small dimmed">🧽</div>
+          </div>
+          <div class="ann-sep"></div>
+          <div class="size-label">Size</div>
+          <input type="range" min="1" max="30" value="5" class="size-slider">
+          <div class="size-value">5px</div>
+          <div class="ann-sep"></div>
+          <!-- 7-color palette grid (2 cols, last swatch spans both) -->
+          <div class="palette-grid">
+            <div class="swatch active" style="background:#E84A4A" title="Red"></div>
+            <div class="swatch" style="background:#F5C842" title="Yellow"></div>
+            <div class="swatch" style="background:#5DC46C" title="Green"></div>
+            <div class="swatch" style="background:#4A8DE8" title="Blue"></div>
+            <div class="swatch" style="background:#E8901C" title="Orange"></div>
+            <div class="swatch" style="background:#FFFFFF" title="White"></div>
+            <div class="swatch span2" style="background:#000000" title="Black"></div>
+          </div>
+          <div class="ann-sep"></div>
+          <!-- Undo + redo pair -->
+          <div class="tool-row">
+            <div class="ann-btn small">↶</div>
+            <div class="ann-btn small">↷</div>
+          </div>
+          <!-- Clear (trash) -->
+          <div class="ann-btn small clear">🗑️</div>
+        </div>
+
+        <!-- Annotation strokes baked into the mockup, anchored
+             image-space so they ride with any zoom -->
+        <svg class="viewport-strokes" viewBox="0 0 100 100" preserveAspectRatio="none">
+          <path d="M 38 32 Q 42 27 47 36 T 57 42 T 52 52" stroke="#E84A4A" stroke-width="0.55" fill="none" stroke-linecap="round"/>
+          <circle cx="63" cy="58" r="6" stroke="#E84A4A" stroke-width="0.45" fill="none"/>
+        </svg>
+
+        <div class="viewport-stamp">
+          <span class="pulse"></span>
+          <span>OCIO: ACEScg → sRGB - Display</span>
+        </div>
+      </div>
+
+      <!-- Side panel (Color tab — Comments tab in its own section below) -->
+      <div class="side-panel">
+        <div class="tab-bar">
+          <div class="tab active">Color</div>
+          <div class="tab">Comments</div>
+        </div>
+        <div class="panel-section">
+          <h4>Source colorspace</h4>
+          <div class="panel-row">
+            <span class="label">Input</span>
+            <span class="value">ACEScg</span>
+          </div>
+          <div class="panel-row">
+            <span class="label">Display</span>
+            <span class="value">sRGB - Display</span>
+          </div>
+          <div class="panel-row">
+            <span class="label">View</span>
+            <span class="value">ACES 1.0 - SDR</span>
+          </div>
+        </div>
+        <div class="panel-section">
+          <h4>Tone</h4>
+          <div class="panel-row">
+            <span class="label">Exposure</span>
+            <span class="value">+0.25</span>
+          </div>
+          <div class="panel-row">
+            <span class="label">Gamma</span>
+            <span class="value">1.00</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Timeline -->
+    <div class="timeline">
+      <div class="timeline-ticks">
+        <span>1001</span><span>1020</span><span>1040</span>
+        <span>1060</span><span>1080</span><span>1100</span>
+        <span>1120</span><span>1140</span>
+      </div>
+      <div class="timeline-track">
+        <div class="timeline-range" style="left: 12%; width: 76%;"></div>
+        <div class="timeline-cache" style="left: 12%; width: 35%;"></div>
+        <div class="timeline-cache" style="left: 50%; width: 22%;"></div>
+        <div class="timeline-missing" style="left: 47%; width: 3%;"></div>
+        <div class="timeline-marker" style="left: 12%;"></div>
+        <div class="timeline-marker" style="left: 88%;"></div>
+      </div>
+      <div class="timeline-ann" style="left: 23%;"></div>
+      <div class="timeline-ann" style="left: 38%;"></div>
+      <div class="timeline-ann" style="left: 67%;"></div>
+      <div class="timeline-comment" style="left: 38%;"></div>
+      <div class="timeline-playhead" style="left: 41%;"></div>
+    </div>
+
+    <!-- Transport bar -->
+    <div class="transport">
+      <div class="group">
+        <div class="t-btn" title="Mark IN (I)">🚩</div>
+        <div class="t-btn" title="Mark OUT (O)">🏁</div>
+        <div class="t-btn" title="Clear range">🧹</div>
+      </div>
+      <div class="sep"></div>
+      <div class="t-btn" title="Loop">🔁</div>
+      <div class="sep"></div>
+      <div class="group">
+        <div class="t-btn"><svg width="14" height="14" viewBox="0 0 16 16"><rect x="2" y="2" width="2" height="12" rx="1" fill="currentColor"/><polygon points="14,2 6,8 14,14" fill="currentColor"/></svg></div>
+        <div class="t-btn"><svg width="14" height="14" viewBox="0 0 16 16"><polygon points="12,2 4,8 12,14" fill="currentColor"/><polygon points="6,2 4,8 6,14" fill="currentColor" opacity=".5"/></svg></div>
+        <div class="t-btn accent"><svg width="14" height="14" viewBox="0 0 16 16"><polygon points="12,2 2,8 12,14" fill="currentColor"/></svg></div>
+        <div class="frame-display">1041</div>
+        <div class="t-btn accent"><svg width="14" height="14" viewBox="0 0 16 16"><polygon points="4,2 14,8 4,14" fill="currentColor"/></svg></div>
+        <div class="t-btn"><svg width="14" height="14" viewBox="0 0 16 16"><polygon points="4,2 12,8 4,14" fill="currentColor"/><polygon points="10,2 12,8 10,14" fill="currentColor" opacity=".5"/></svg></div>
+        <div class="t-btn"><svg width="14" height="14" viewBox="0 0 16 16"><rect x="12" y="2" width="2" height="12" rx="1" fill="currentColor"/><polygon points="2,2 10,8 2,14" fill="currentColor"/></svg></div>
+      </div>
+      <div class="sep"></div>
+      <div class="group">
+        <div class="t-btn" title="Annotation prev">⏮️</div>
+        <div class="t-btn" title="Toolbar">✏️</div>
+        <div class="t-btn" title="Annotation next">⏭️</div>
+        <div class="t-btn" title="Reload">🔄</div>
+        <div class="t-btn" title="Export">💾</div>
+      </div>
+      <div class="sep"></div>
+      <span class="t-label">FPS</span>
+      <div class="t-input">25</div>
+      <div class="sep"></div>
+      <span class="t-label">CH</span>
+      <div class="t-input" style="min-width: 56px;">RGBA</div>
+      <div class="ch-letter r">R</div>
+      <div class="ch-letter g">G</div>
+      <div class="ch-letter b">B</div>
+      <div class="ch-letter a">A</div>
+      <div class="sep"></div>
+      <span class="t-label">Zoom</span>
+      <div class="t-input" style="min-width: 48px;">Fit</div>
+    </div>
+  </div>
+</section>
+
+<!-- =========================================================================
+     Features grid
+     ========================================================================= -->
+<section id="features">
+  <h2>Built for <span class="accent">VFX review</span>, not generic playback.</h2>
+  <p class="lede">
+    Flick reads what your pipeline produces — multichannel EXRs, OCIO-aware floats,
+    sparse sequences with holes — and gives you the tools you need to actually review them:
+    annotate, comment, export, share.
+  </p>
+
+  <div class="feature-grid">
+    <div class="feature-card">
+      <div class="icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3v9l6 3"/></svg>
+      </div>
+      <h3>Real-time playback</h3>
+      <p>Async RAM cache + OpenGL viewport. Smooth scrubbing on 4K EXRs at 24 fps.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="13" r="2.5"/><circle cx="8" cy="20" r="2.5"/><circle cx="6.5" cy="9" r="2.5"/><line x1="6.5" y1="9" x2="13.5" y2="6.5"/><line x1="13.5" y1="6.5" x2="17.5" y2="13"/><line x1="8" y1="20" x2="6.5" y2="9"/><line x1="8" y1="20" x2="17.5" y2="13"/></svg>
+      </div>
+      <h3>OCIO color</h3>
+      <p>ACES 1.3 / 2.0 built-in configs, full source / display / view round-trip on the GPU shader.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18 L17 6"/><path d="M14 4 L20 10 L17 13 L11 7 Z"/><path d="M3 21 L6 21"/></svg>
+      </div>
+      <h3>Annotations</h3>
+      <p>Pen / eraser / 7-color palette / per-frame undo. Persistent strokes, plus a Google-Meet-style ghost mode.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"/><rect x="6" y="9" width="6" height="6"/><line x1="14" y1="9" x2="18" y2="9"/><line x1="14" y1="12" x2="18" y2="12"/><line x1="14" y1="15" x2="18" y2="15"/></svg>
+      </div>
+      <h3>Multichannel EXR</h3>
+      <p>Channel selector for AOVs, depth, normals, cryptomattes. Per-channel R/G/B/A mute toggles.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 7 6 7 6 17 9 17"/><polyline points="9 7 12 7 12 17 15 17"/><polyline points="15 7 18 7 18 17 21 17"/></svg>
+      </div>
+      <h3>Smart cache</h3>
+      <p>Reload only re-decodes files whose mtime changed. Missing frames serve a checkerboard placeholder so playback never freezes.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12"/><polyline points="6 10 12 16 18 10"/><path d="M4 20h16"/></svg>
+      </div>
+      <h3>Export</h3>
+      <p>PNG / JPG / EXR / TIFF sequences or H.264 / H.265 / ProRes / DNxHR / VP9 / FFV1 / v210 video, with annotations baked in.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </div>
+      <h3>Comments</h3>
+      <p>Per-frame text threads alongside the visual annotations. Saved next to the sidecar.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="14" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="3" x2="8" y2="6"/><line x1="16" y1="3" x2="16" y2="6"/></svg>
+      </div>
+      <h3>Sidecar JSON</h3>
+      <p>Annotations + comments live in one human-readable JSON file next to the sequence. Travels with the work.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+      </div>
+      <h3>Hardware-adaptive</h3>
+      <p>Auto-tunes cache budget + worker count to your GPU / RAM. PBO upload on discrete GPUs, sync upload on integrated.</p>
+    </div>
+  </div>
+</section>
+
+<!-- =========================================================================
+     Detailed feature: Timeline
+     ========================================================================= -->
+<section id="timeline">
+  <div class="feature-detail">
+    <div class="copy">
+      <h2>A <span class="accent">timeline</span> that tells you what's going on.</h2>
+      <p>
+        One bar carries every dimension of the sequence's state — at a glance, you know
+        which frames are cached, which are missing, where you've left a note, what's
+        in/out range, and where the playhead is.
+      </p>
+      <ul>
+        <li><b>Orange runs</b> show frames already in RAM. The fill width is your prefetch buffer.</li>
+        <li><b>Red runs</b> mark missing frames — Flick still plays through them with a checkerboard placeholder.</li>
+        <li><b>Green triangles</b> = annotated frames. <b>Blue dots</b> = frames with comments.</li>
+        <li><b>Ctrl + click</b> sets and drags the in / out points. Like Nuke.</li>
+        <li>The cursor is free to scrub <b>outside</b> the in/out range — playback snaps back inside on press.</li>
+      </ul>
+    </div>
+    <div class="mockup">
+      <div class="mockup-label">timeline.py</div>
+      <div class="timeline" style="border-radius: 4px; border: 1px solid var(--border-subtle);">
+        <div class="timeline-ticks">
+          <span>1001</span><span>1030</span><span>1060</span><span>1090</span><span>1120</span>
+        </div>
+        <div class="timeline-track">
+          <div class="timeline-range" style="left: 8%; width: 84%;"></div>
+          <div class="timeline-cache" style="left: 8%; width: 30%;"></div>
+          <div class="timeline-cache" style="left: 42%; width: 18%;"></div>
+          <div class="timeline-cache" style="left: 65%; width: 12%;"></div>
+          <div class="timeline-missing" style="left: 38%; width: 4%;"></div>
+          <div class="timeline-marker" style="left: 8%;"></div>
+          <div class="timeline-marker" style="left: 92%;"></div>
+        </div>
+        <div class="timeline-ann" style="left: 18%;"></div>
+        <div class="timeline-ann" style="left: 50%;"></div>
+        <div class="timeline-ann" style="left: 71%;"></div>
+        <div class="timeline-comment" style="left: 50%;"></div>
+        <div class="timeline-playhead" style="left: 33%;"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =========================================================================
+     Detailed feature: Annotations
+     ========================================================================= -->
+<section id="annotations">
+  <div class="feature-detail reverse">
+    <div class="copy">
+      <h2>Two ways to <span class="accent">annotate</span>.</h2>
+      <p>
+        <b>Persistent</b> mode = the marks you draw are saved to a sidecar JSON, frame-keyed,
+        ready to share. <b>Ghost</b> mode (👻) = marks fade out on their own, perfect for live
+        screen-share commentary in a Meet / Discord call.
+      </p>
+      <ul>
+        <li><b>7-color review palette</b> tuned for VFX (red / yellow / green / blue / orange / b&w).</li>
+        <li><b>Per-frame undo</b> — Ctrl+Z only undoes the current frame's edits, no surprise jumps.</li>
+        <li><b>Eraser</b> deletes whole strokes by hit-testing the polyline, not pixel-level.</li>
+        <li><b>Three fade presets</b> in ghost mode: court ~2 s, moyen ~5 s (default), long ~10 s.</li>
+        <li><b>Bake into export</b> if you want a self-contained MP4 to send a colleague.</li>
+      </ul>
+    </div>
+    <div class="mockup" style="display: flex; justify-content: center; padding: var(--s-xl);">
+      <!-- Annotation toolbar standalone mockup -->
+      <div style="position: relative;">
+        <div style="
+          width: 56px; padding: 10px 8px;
+          background: rgba(36, 36, 40, 0.98);
+          border: 2px solid #4A8DE8;
+          border-radius: 8px;
+          display: flex; flex-direction: column; gap: 6px; align-items: center;">
+          <div class="ann-btn" style="border:1px solid var(--border-default);">📌</div>
+          <div class="ann-btn active">👻</div>
+          <div style="display: flex; gap: 4px;">
+            <div style="width:10px;height:10px;border-radius:50%;background:#4A8DE8;"></div>
+            <div style="width:8px;height:8px;border-radius:50%;background:#4A8DE8;align-self:center;"></div>
+            <div style="width:6px;height:6px;border-radius:50%;background:#4A8DE8;align-self:center;opacity:0.6;"></div>
+          </div>
+          <div class="ann-sep"></div>
+          <div style="display: flex; gap: 4px;">
+            <div class="ann-btn">👻</div>
+            <div class="ann-btn" style="opacity: 0.4;">🧽</div>
+          </div>
+          <div class="ann-sep"></div>
+          <input type="range" min="1" max="30" value="5" style="width: 100%; accent-color: var(--accent);">
+          <div style="font-size:10px; color: var(--text-secondary);">5px</div>
+          <div class="ann-sep"></div>
+          <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px;">
+            <div class="swatch active" style="background:#E84A4A"></div>
+            <div class="swatch" style="background:#F5C842"></div>
+            <div class="swatch" style="background:#5DC46C"></div>
+            <div class="swatch" style="background:#4A8DE8"></div>
+            <div class="swatch" style="background:#E8901C"></div>
+            <div class="swatch" style="background:#FFFFFF"></div>
+            <div class="swatch" style="grid-column: span 2; width: 100%; height: 16px; border-radius: 8px; background:#000000"></div>
+          </div>
+          <div class="ann-sep"></div>
+          <div style="display: flex; gap: 4px;">
+            <div class="ann-btn" style="font-size:11px;">↶</div>
+            <div class="ann-btn" style="font-size:11px;">↷</div>
+          </div>
+          <div class="ann-btn" style="font-size:11px;">🗑</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =========================================================================
+     Detailed feature: Export
+     ========================================================================= -->
+<section id="export">
+  <div class="feature-detail">
+    <div class="copy">
+      <h2>Export to <span class="accent">anything</span>.</h2>
+      <p>
+        Send your sequence as an image-per-frame run for the next tool in the pipe, or
+        bake it into one of eight video codecs to ship a review reel. Annotations toggle
+        on / off; the OCIO display transform too.
+      </p>
+      <ul>
+        <li><b>Range</b>: full sequence, in/out, or custom from / to.</li>
+        <li><b>Resolution</b>: source / 720p / 1080p / 4K UHD / custom.</li>
+        <li><b>Frame rate</b>: source / 23.976 / 24 / 25 / 29.97 / 30 / 60 / custom.</li>
+        <li><b>Color</b>: bake the OCIO display transform, or write the linear buffer untouched (recommended for EXR + TIFF).</li>
+        <li><b>Annotations</b>: bake into pixels + optional sidecar JSON copy alongside the export.</li>
+      </ul>
+    </div>
+    <div class="mockup">
+      <div class="mockup-label">supported codecs</div>
+      <div class="codecs">
+        <div class="codec-pill"><span class="ext">.png</span> PNG · 8-bit lossless</div>
+        <div class="codec-pill"><span class="ext">.jpg</span> JPEG · 8-bit lossy</div>
+        <div class="codec-pill"><span class="ext">.exr</span> OpenEXR · half float</div>
+        <div class="codec-pill"><span class="ext">.tif</span> TIFF · 16-bit</div>
+        <div class="codec-pill"><span class="ext">.mp4</span> H.264 · universal</div>
+        <div class="codec-pill"><span class="ext">.mp4</span> H.265 · modern</div>
+        <div class="codec-pill"><span class="ext">.mov</span> ProRes 422 HQ</div>
+        <div class="codec-pill"><span class="ext">.mov</span> ProRes 4444</div>
+        <div class="codec-pill"><span class="ext">.mov</span> DNxHR · Avid</div>
+        <div class="codec-pill"><span class="ext">.webm</span> VP9 · web</div>
+        <div class="codec-pill"><span class="ext">.mkv</span> FFV1 · lossless</div>
+        <div class="codec-pill"><span class="ext">.mov</span> v210 · broadcast</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =========================================================================
+     Detailed feature: OCIO color
+     ========================================================================= -->
+<section id="color">
+  <div class="feature-detail reverse">
+    <div class="copy">
+      <h2>Real <span class="accent">OCIO</span> color, on the GPU.</h2>
+      <p>
+        Flick ships with the ACES 2.0 CG built-in config. Point it at your studio's
+        custom <code>config.ocio</code> via the <code>$OCIO</code> env var if you have one.
+        The display transform runs on the fragment shader, so toggling source / display / view
+        is free.
+      </p>
+      <ul>
+        <li><b>Auto-detect</b> input colorspace from filename + EXR header attributes.</li>
+        <li><b>Per-image exposure</b> nudge with <code>+</code> / <code>-</code> (±0.25 stops).</li>
+        <li><b>Multichannel EXR</b>: pick a single AOV / depth / normals layer and view it as RGB.</li>
+        <li><b>RGBA mute</b>: toggle channels off in the shader without invalidating the cache.</li>
+      </ul>
+    </div>
+    <div class="mockup">
+      <div class="mockup-label">color panel</div>
+      <div class="side-panel" style="border: 1px solid var(--border-subtle); border-radius: 6px; max-width: 320px;">
+        <div class="panel-section">
+          <h4>Source colorspace</h4>
+          <div class="panel-row">
+            <span class="label">Auto-detected</span>
+            <span class="value">ACEScg</span>
+          </div>
+        </div>
+        <div class="panel-section">
+          <h4>Display</h4>
+          <div class="panel-row">
+            <span class="label">Display</span>
+            <span class="value">sRGB - Display</span>
+          </div>
+          <div class="panel-row">
+            <span class="label">View</span>
+            <span class="value">ACES 1.0 - SDR</span>
+          </div>
+        </div>
+        <div class="panel-section" style="border-bottom: none;">
+          <h4>Tone</h4>
+          <div class="panel-row">
+            <span class="label">Exposure</span>
+            <span class="value">+0.25</span>
+          </div>
+          <div class="panel-row">
+            <span class="label">Gamma</span>
+            <span class="value">1.00</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =========================================================================
+     Detailed feature: Comments
+     ========================================================================= -->
+<section id="comments">
+  <div class="feature-detail">
+    <div class="copy">
+      <h2>Per-frame <span class="accent">comments</span> for the team.</h2>
+      <p>
+        Annotations are visual; <b>comments</b> are textual. A side panel beside the
+        viewer holds a thread of notes attached to whatever frame the playhead is on
+        — perfect for "the lighting is too cool" feedback that doesn't need a stroke.
+      </p>
+      <ul>
+        <li><b>Author auto-filled</b> from the OS username — no login flow, comments just work.</li>
+        <li><b>Created / edited timestamps</b> tracked per comment.</li>
+        <li><b>Blue dots</b> on the timeline mark every commented frame so you can jump straight to the conversations.</li>
+        <li><b>Same JSON sidecar</b> as annotations — one file travels with the sequence.</li>
+        <li>The Comments tab shares the side dock with the Color tab; flip with one click.</li>
+      </ul>
+    </div>
+    <div class="mockup">
+      <div class="mockup-label">comments panel</div>
+      <div class="comments-panel">
+        <div class="tab-bar">
+          <div class="tab">Color</div>
+          <div class="tab active">Comments</div>
+        </div>
+        <div class="comment-frame-header">
+          <span class="frame-num">Frame 1042</span>
+          <span class="frame-meta">3 comments</span>
+        </div>
+        <div class="comment-list">
+          <div class="comment-card">
+            <div class="comment-head">
+              <span class="comment-author">lam</span>
+              <span class="comment-time">2 min ago</span>
+            </div>
+            <p class="comment-text">Lighting on the bear is too cool — push warm a notch to match the lanterns?</p>
+          </div>
+          <div class="comment-card">
+            <div class="comment-head">
+              <span class="comment-author" style="color: #5DC46C;">marie</span>
+              <span class="comment-time">15 min ago · edited</span>
+            </div>
+            <p class="comment-text">Logo entrance feels late. Can we trigger it 4-5 frames earlier?</p>
+          </div>
+          <div class="comment-card">
+            <div class="comment-head">
+              <span class="comment-author" style="color: #4A8DE8;">julien</span>
+              <span class="comment-time">1 h ago</span>
+            </div>
+            <p class="comment-text">Approved on the comp side — pending color review.</p>
+          </div>
+        </div>
+        <div class="comment-input">
+          <textarea placeholder="Add a comment for frame 1042…" rows="2"></textarea>
+          <button class="comment-send">Post</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =========================================================================
+     Shortcuts
+     ========================================================================= -->
+<section id="shortcuts">
+  <h2>Built around the <span class="accent">keyboard</span>.</h2>
+  <p class="lede">
+    Every meaningful action has a one-or-two-key shortcut. Ergonomics matter when
+    you're reviewing 200 shots back to back.
+  </p>
+
+  <div class="kbd-table">
+    <div class="kbd-row"><span><span class="kbd">Space</span> / <span class="kbd">K</span></span><span class="desc">Toggle play / pause</span></div>
+    <div class="kbd-row"><span><span class="kbd">J</span> / <span class="kbd">L</span></span><span class="desc">Play reverse / forward</span></div>
+    <div class="kbd-row"><span><span class="kbd">←</span> / <span class="kbd">→</span></span><span class="desc">Previous / next frame</span></div>
+    <div class="kbd-row"><span><span class="kbd">I</span> / <span class="kbd">O</span></span><span class="desc">Set in / out at current frame</span></div>
+    <div class="kbd-row"><span><span class="kbd">D</span></span><span class="desc">Show / hide annotation toolbar</span></div>
+    <div class="kbd-row"><span><span class="kbd">P</span> / <span class="kbd">E</span></span><span class="desc">Pen / eraser tool</span></div>
+    <div class="kbd-row"><span><span class="kbd">G</span></span><span class="desc">Toggle ghost (ephemeral) mode</span></div>
+    <div class="kbd-row"><span><span class="kbd">[</span> / <span class="kbd">]</span></span><span class="desc">Previous / next annotated frame</span></div>
+    <div class="kbd-row"><span><span class="kbd">Ctrl</span> + <span class="kbd">Z</span> / <span class="kbd">Y</span></span><span class="desc">Undo / redo last stroke</span></div>
+    <div class="kbd-row"><span><span class="kbd">Ctrl</span> + <span class="kbd">N</span></span><span class="desc">Clear current sequence</span></div>
+    <div class="kbd-row"><span><span class="kbd">Ctrl</span> + <span class="kbd">O</span></span><span class="desc">Open file or sequence</span></div>
+    <div class="kbd-row"><span><span class="kbd">Ctrl</span> + <span class="kbd">R</span></span><span class="desc">Reload — re-scan source folder</span></div>
+    <div class="kbd-row"><span><span class="kbd">Ctrl</span> + <span class="kbd">Shift</span> + <span class="kbd">E</span></span><span class="desc">Open export dialog</span></div>
+    <div class="kbd-row"><span><span class="kbd">+</span> / <span class="kbd">-</span></span><span class="desc">Nudge exposure ± 0.25 stops</span></div>
+  </div>
+</section>
+
+<!-- =========================================================================
+     Footer
+     ========================================================================= -->
+<footer id="download">
+  <p>
+    <strong>Flick</strong> · open-source VFX sequence viewer · <a href="#">Download</a> · <a href="#">GitHub</a> · <a href="#">Docs</a>
+  </p>
+  <p style="margin-top: var(--s-sm);">
+    Built with PySide6, OpenColorIO, OpenImageIO and PyAV. Designed for Windows.
+  </p>
+</footer>
+
+</body>
+</html>
