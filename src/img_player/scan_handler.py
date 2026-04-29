@@ -81,6 +81,63 @@ class ScanRunner(QObject):  # type: ignore[misc]
         threading.Thread(target=worker, name="scan-worker", daemon=True).start()
 
 
+def add_layer(app: ImgPlayerApp, path: Path) -> None:
+    """Scan ``path`` and add the result as a new top-of-stack layer.
+
+    Bypasses the controller's load_sequence — the existing
+    sequence's master range stays bound to the controller's
+    ``_sequence``. The added layer is positioned at
+    ``offset = sequence.first_frame`` so its source frames align
+    with master frame numbers (= same convention as the original
+    sequence's wrapping). The user can later drag the layer to
+    shift it once the offset-drag UI lands.
+
+    Single-file paths and multi-sequence folders both supported:
+    multi-seq dirs prompt the picker, single-seq / file paths load
+    directly. Errors surface via the status bar.
+    """
+    app._window.set_status(f"Scanning {path} for add-layer…")
+    runner = ScanRunner()
+    # Same lifecycle dance as ``open_path``: keep a strong reference
+    # so the QObject survives until the worker emits.
+    app._scan_runner = runner
+
+    def on_done(result: object) -> None:
+        from img_player.layers import Layer
+        from img_player.sequence.scanner import SequenceNotFoundError
+        if isinstance(result, Exception):
+            log.warning("[add-layer] scan failed for %s: %s", path, result)
+            app._window.set_status(f"Add layer failed: {result}")
+            return
+        if isinstance(result, list):
+            sequences: list[SequenceInfo] = result
+            if not sequences:
+                app._window.set_status("Add layer: no sequence found.")
+                return
+            if len(sequences) == 1:
+                seq = sequences[0]
+            else:
+                from img_player.ui.sequence_picker import SequencePickerDialog
+                picked = SequencePickerDialog.pick(sequences, parent=app._window)
+                if picked is None:
+                    app._window.set_status("Add layer canceled.")
+                    return
+                seq = picked
+        else:
+            seq = result  # type: ignore[assignment]
+        # Header probe so the new layer carries width / height /
+        # channel info — same enrichment the main load path uses.
+        seq = app._enrich_with_header(seq)
+        layer = Layer.from_sequence(seq, offset=seq.first_frame)
+        app._layer_stack.add(layer)  # auto-positions at top (= focus shifts)
+        app._window.set_status(
+            f"Added layer: {seq.display_pattern()} ({seq.frame_count} frames)"
+        )
+
+    runner.done.connect(on_done)
+    runner.run_async(path)
+
+
 def open_path(app: ImgPlayerApp, path: Path) -> None:
     """Scan ``path`` off the main thread so the UI stays responsive."""
     app._window.set_status(f"Scanning {path}…")

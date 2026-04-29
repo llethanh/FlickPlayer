@@ -57,6 +57,8 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
     open_requested = Signal(Path)
     export_requested = Signal()  # File → Export… (v0.5.0)
     new_sequence_requested = Signal()      # File → New (Ctrl+N) — clear the loaded sequence
+    add_layer_requested = Signal(Path)     # File → Add layer… (v1.0)
+                                           #   carries the picked path
     reload_sequence_requested = Signal()   # Reload cache (Ctrl+R / button)
     play_toggled = Signal()
     # Full channel selection (single + optional contact-sheet tiles).
@@ -307,6 +309,8 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
             self._export_act.setEnabled(True)
         if hasattr(self, "_reload_act"):
             self._reload_act.setEnabled(True)
+        if hasattr(self, "_add_layer_act"):
+            self._add_layer_act.setEnabled(True)
         self._transport.set_export_enabled(True)
         self._transport.set_reload_enabled(True)
         # Clear the cache bar so we don't briefly show the old run
@@ -352,6 +356,17 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         open_act.setShortcut(QKeySequence.StandardKey.Open)
         open_act.triggered.connect(self._on_open_action)
         file_menu.addAction(open_act)
+
+        # File → Add layer… (v1.0). Pops the same folder picker as
+        # Open, but the result is *added* to the LayerStack as a
+        # new top layer instead of replacing the current sequence.
+        # Disabled until at least one sequence is loaded — adding
+        # a "first" layer goes through Open / drag-drop.
+        self._add_layer_act = QAction("&Add layer…", self)
+        self._add_layer_act.setShortcut(QKeySequence("Ctrl+Shift+O"))
+        self._add_layer_act.setEnabled(False)
+        self._add_layer_act.triggered.connect(self._on_add_layer_action)
+        file_menu.addAction(self._add_layer_act)
 
         # File → Reload (Ctrl+R): smart re-scan of the source folder.
         # Keeps cached frames whose mtime is unchanged, drops the
@@ -639,6 +654,17 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         )
         if path_str:
             self.open_requested.emit(Path(path_str))
+
+    def _on_add_layer_action(self) -> None:
+        """File → Add layer… opens a folder picker; the chosen folder
+        is added to the LayerStack as a new top layer."""
+        path_str = QFileDialog.getExistingDirectory(
+            self,
+            "Pick a folder to add as a new layer",
+            "",
+        )
+        if path_str:
+            self.add_layer_requested.emit(Path(path_str))
 
     def _show_about(self) -> None:
         QMessageBox.about(

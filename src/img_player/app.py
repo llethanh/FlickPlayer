@@ -581,6 +581,7 @@ class ImgPlayerApp:
         w.jump_to_ends.connect(self._on_jump_to_ends)
         w.frame_requested.connect(self._on_scrub_requested)
         w.open_requested.connect(self._open_path)
+        w.add_layer_requested.connect(self._on_add_layer_requested)
         # Export (v0.5.0) — both menu and transport button route here.
         w.export_requested.connect(self._open_export_dialog)
         w.transport.export_clicked.connect(self._open_export_dialog)
@@ -1491,6 +1492,12 @@ class ImgPlayerApp:
         """Scan `path` off the main thread so the UI stays responsive."""
         from img_player.scan_handler import open_path
         open_path(self, path)
+
+    def _on_add_layer_requested(self, path: Path) -> None:
+        """File → Add layer… handler — appends a new layer to the
+        stack without replacing the existing sequence."""
+        from img_player.scan_handler import add_layer
+        add_layer(self, path)
 
     def _apply_scan_result(self, path: Path, result: object) -> None:
         from img_player.scan_handler import apply_scan_result
