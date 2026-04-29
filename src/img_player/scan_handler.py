@@ -198,18 +198,6 @@ def apply_scan_result(app: ImgPlayerApp, path: Path, result: object) -> None:
     seq = app._enrich_with_header(seq)
 
     app._window.update_sequence_info(seq)
-    # Restore the saved channel-menu state (active radio + tile
-    # checkboxes + layout). Best-effort: labels not present in
-    # this sequence's group list are silently skipped, so the
-    # user never sees a stale state cause a crash. Same call
-    # also re-emits ``channel_selection_changed`` which drives
-    # the cache via :meth:`set_channel_selection`.
-    app._window.transport.restore_channel_state(
-        app._prefs.channel_active_label,
-        app._prefs.channel_tile_labels,
-        app._prefs.channel_layout_mode,
-        app._prefs.channel_labels_visible,
-    )
     app._guess_source_colorspace(seq)
     # ``controller.load_sequence(seq)`` calls ``cache.attach(seq)``,
     # which on the MasterFrameCache path replaces the LayerStack's
@@ -217,7 +205,29 @@ def apply_scan_result(app: ImgPlayerApp, path: Path, result: object) -> None:
     # FrameCache path is a no-op for the stack (the cache holds its
     # own _paths_by_frame map). Either way, no manual stack mutation
     # is required here.
+    #
+    # Order matters: ``load_sequence`` runs BEFORE
+    # ``restore_channel_state`` so the layer exists (and is
+    # focused) by the time the menu's ``selection_changed`` fires
+    # — otherwise ``set_channel_selection`` early-returns when no
+    # layer is focused and the layer's per-layer
+    # ``channel_selection`` field stays ``None``, causing the
+    # cache to decode the reader's RGB(A) default rather than
+    # what the menu shows.
     app._controller.load_sequence(seq)
+    # Restore the saved channel-menu state (active radio + tile
+    # checkboxes + layout). Best-effort: labels not present in
+    # this sequence's group list are silently skipped, so the
+    # user never sees a stale state cause a crash. Same call
+    # also re-emits ``channel_selection_changed`` which drives
+    # the cache via :meth:`set_channel_selection` and writes the
+    # selection onto the just-added focused layer.
+    app._window.transport.restore_channel_state(
+        app._prefs.channel_active_label,
+        app._prefs.channel_tile_labels,
+        app._prefs.channel_layout_mode,
+        app._prefs.channel_labels_visible,
+    )
     app._window.set_status(
         f"Loaded {seq.display_pattern()} ({seq.frame_count} frames) — decoding first frame…"
     )

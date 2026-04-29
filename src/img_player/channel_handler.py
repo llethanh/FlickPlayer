@@ -27,39 +27,25 @@ if TYPE_CHECKING:
 
 
 def set_channel_selection(app: ImgPlayerApp, selection: ChannelSelection) -> None:
-    """Switch to a new channel selection (single + optional tiles).
+    """Switch the FOCUSED layer's channel selection.
 
-    Drives both the cache (decode the union of all displayed
-    channels in one OIIO call) and the display path (composite when
-    contact-sheet mode is on).
+    The selection (active group + optional contact-sheet tiles)
+    lives on the layer itself so that adding multiple sequences
+    each preserves its own choice. The legacy ``app._channel_selection``
+    attribute is kept in sync as a fallback for code paths that
+    haven't been migrated yet (e.g. the export-time snapshot).
+
+    Mutating the focused layer fires ``layer_modified`` → cache
+    invalidates that layer's master range → the wired
+    ``_refresh_after_stack_change`` re-issues prefetch + display.
     """
-    app._channel_selection = selection
-    union = list(selection.union_channels()) or None
-    app._cache.set_channels(union)
-    # Wipe the timeline's cache bar so we don't briefly show the
-    # previous selection's runs while the prefetcher catches up.
-    app._window.timeline.set_cached_frames(frozenset())
-    if app._controller.sequence is None:
+    focused = app._layer_stack.focused()
+    app._channel_selection = selection  # legacy fallback
+    if focused is None:
+        # No sequence loaded yet — keep the selection on app state
+        # so it's there for the first layer when it lands.
         return
-    cur = app._controller.state.current_frame
-    # Re-issue a prefetch around the playhead. ``controller.seek``
-    # short-circuits when we ask for the frame we're already
-    # parked on, so without this explicit call no decode would
-    # ever fire after a Reset / Shift+C / double-click-isolate
-    # — the user would have to scrub the timeline to see the new
-    # selection take effect.
-    app._cache.request_range(
-        cur - 5, cur + 30, direction=app._controller.state.direction,
-    )
-    # Re-run the display pipeline against the (now stale) cache.
-    # ``_on_frame_changed`` handles the miss correctly: it shows
-    # the closest fallback frame if any and starts the wait-timer
-    # poll so the freshly-decoded buffer lands the moment it's
-    # ready. Without this call, the viewport would keep painting
-    # the previous selection's composite until the next frame
-    # change naturally triggered ``_on_frame_changed``.
-    app._last_displayed = None  # force re-upload even if frame unchanged
-    app._on_frame_changed(cur)
+    app._layer_stack.update(focused.id, channel_selection=selection)
 
 
 def on_channel_selection_changed(app: ImgPlayerApp, selection: object) -> None:
@@ -150,25 +136,36 @@ def toggle_contact_sheet(app: ImgPlayerApp) -> None:
 def on_channel_labels_visible_changed(app: ImgPlayerApp, on: object) -> None:
     """Footer "Show labels" checkbox toggled — refresh + persist.
 
-    Pure display-time parameter (no decode involved): just stash the
-    flag, persist, and re-run the display pipeline so the composite
-    repaints with or without label chips.
+    Per-layer setting on the focused layer. The app-level fallback
+    + QSettings are kept in sync so freshly added layers inherit
+    the user's last preference rather than reverting to the
+    dataclass default.
     """
     if not isinstance(on, bool):
         return
     app._channel_labels_visible = on
     app._prefs.channel_labels_visible = on
+    focused = app._layer_stack.focused()
+    if focused is not None:
+        # Display-time only — no cache invalidation. We bypass
+        # ``stack.update`` (which would invalidate the layer range)
+        # and mutate the field directly + redisplay.
+        focused.channel_labels_visible = on
     app._redisplay_current()
 
 
 def on_channel_layout_mode_changed(app: ImgPlayerApp, mode: object) -> None:
-    """Persist the contact-sheet grid mode and force a redisplay
-    so the user sees the new layout immediately (without having to
-    nudge the playhead)."""
+    """Per-layer contact-sheet grid mode + global preference snapshot.
+
+    Like the labels-visible flag: bypasses ``stack.update`` because
+    layout is purely a display-time parameter. Mutating the layer
+    field directly skips the cache-invalidation path.
+    """
     if not isinstance(mode, str):
         return
     app._channel_layout_mode = mode
     app._prefs.channel_layout_mode = mode
-    # No cache invalidation: layout is purely a display-time
-    # parameter, the composite repaints with the new shape.
+    focused = app._layer_stack.focused()
+    if focused is not None:
+        focused.channel_layout_mode = mode
     app._redisplay_current()

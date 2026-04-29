@@ -595,6 +595,9 @@ class ImgPlayerApp:
         self._layer_stack.layer_modified.connect(
             lambda _id: self._refresh_after_stack_change(),
         )
+        self._layer_stack.focus_changed.connect(
+            self._on_layer_focus_changed,
+        )
 
     def _wire_main_window(self) -> None:
         """MainWindow signals → controller / app handlers."""
@@ -841,6 +844,60 @@ class ImgPlayerApp:
         self._last_displayed = None
         self._on_frame_changed(cur)
 
+    def _on_layer_focus_changed(self, layer_id: str) -> None:
+        """Repopulate the channel menu from the newly-focused layer.
+
+        Each layer carries its own channel selection / layout mode /
+        labels-visible (Phase 5a). Switching focus rebuilds the
+        menu to reflect the focused layer's saved state without
+        firing the menu's ``channel_selection_changed`` signal —
+        that would trigger a redundant ``set_channel_selection``
+        which would no-op for matching state but also unnecessarily
+        invalidate the layer's cache range.
+
+        Empty ``layer_id`` clears focus (= no layers loaded); the
+        menu keeps its last state.
+        """
+        if not layer_id:
+            return
+        layer = self._layer_stack.find(layer_id)
+        if layer is None:
+            return
+        transport = self._window.transport
+        # Block transport's signals during the rebuild so the
+        # menu's selection_changed (emitted by both
+        # set_available_channels and restore_channel_state) doesn't
+        # round-trip back to the layer it just came from.
+        transport.blockSignals(True)
+        try:
+            transport.set_available_channels(layer.sequence.channel_names)
+            sel = layer.channel_selection
+            if sel is not None:
+                transport.restore_channel_state(
+                    sel.active.label,
+                    tuple(g.label for g in sel.tiles),
+                    layer.channel_layout_mode,
+                    layer.channel_labels_visible,
+                )
+            else:
+                # Layer never had a selection set (just added) —
+                # apply the global / prefs-fallback state so the
+                # menu isn't blank, and write it back to the layer.
+                transport.restore_channel_state(
+                    self._prefs.channel_active_label,
+                    self._prefs.channel_tile_labels,
+                    self._prefs.channel_layout_mode,
+                    self._prefs.channel_labels_visible,
+                )
+        finally:
+            transport.blockSignals(False)
+        # Sync app-level fallback fields with the focused layer's
+        # state so legacy export-snapshot code keeps working.
+        self._channel_layout_mode = layer.channel_layout_mode
+        self._channel_labels_visible = layer.channel_labels_visible
+        if layer.channel_selection is not None:
+            self._channel_selection = layer.channel_selection
+
     def _redisplay_current(self) -> None:
         """Re-run ``_display_array`` on the cached current frame.
 
@@ -869,27 +926,38 @@ class ImgPlayerApp:
             # without a dedicated panel.
 
     def _display_array(self, arr) -> None:  # type: ignore[no-untyped-def]
-        # Contact-sheet mode: the cache holds the union of all
-        # selected groups' channels in one buffer. We split + tile +
-        # downsample on the CPU into a single composite that the GL
-        # viewport draws through its existing single-texture path —
-        # zero changes to the shader/upload pipeline. See
-        # ``render/contact_sheet.py`` for the trade-off rationale.
-        sel = self._channel_selection
+        # The displayed pixels come from the *topmost-visible* layer
+        # at the current master frame — that's also the layer the
+        # cache decoded with, so its ChannelSelection / layout mode
+        # / labels-visible drive the contact-sheet compose. (The
+        # FOCUSED layer is what the menu edits, but it can differ
+        # from the displayed layer when several layers cover the
+        # playhead.)
+        cur = self._controller.state.current_frame
+        displayed = self._layer_stack.topmost_visible_at(cur)
+        sel = displayed.channel_selection if displayed else None
+        layout_mode = (
+            displayed.channel_layout_mode if displayed
+            else self._channel_layout_mode
+        )
+        labels_visible = (
+            displayed.channel_labels_visible if displayed
+            else self._channel_labels_visible
+        )
         if sel is not None and sel.is_contact_sheet:
             gl = self._window.viewer.gl
             arr, geometry = compose_contact_sheet(
                 arr, sel,
                 viewport_w=max(1, gl.width()),
                 viewport_h=max(1, gl.height()),
-                layout_mode=self._channel_layout_mode,
+                layout_mode=layout_mode,
             )
             # Bake labels onto the composite so each tile shows its
             # group name. Done after compose so the un-labelled
             # composite stays available if we ever need it for
             # export / debug. ``bake_labels`` no-ops when only one
             # tile is in the geometry.
-            if self._channel_labels_visible:
+            if labels_visible:
                 arr = bake_contact_sheet_labels(arr, geometry)
             self._composite_geometry = geometry
         else:
