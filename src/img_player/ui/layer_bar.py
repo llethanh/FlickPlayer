@@ -54,8 +54,10 @@ from img_player.ui.theme import F, H
 
 # Pixel-space styling tokens. Tuned visually against the Studio
 # Dark palette; adjust here if the row height ever changes.
-HANDLE_W = 6           # vertical handle thickness in px
-HANDLE_GRAB = 8        # extra hit-test margin around handles
+HANDLE_W = 8           # vertical handle thickness in px
+HANDLE_GRAB = 12       # extra hit-test margin around handles —
+                       # generous so the OUT handle pinned at the
+                       # bar's right edge isn't fiddly to click.
 SNAP_PX = 6            # snap distance in screen pixels
 PADDING_X = 4          # left/right inner padding
 BAR_RADIUS = 2         # corner rounding for the bar fill
@@ -294,13 +296,21 @@ class LayerBar(QWidget):  # type: ignore[misc]
 
         # Trim handles — drawn on top of the bar so they're always
         # grabable. Brighter than the body so they read as
-        # interactive.
-        handle_color = QColor("#FFFFFF")
+        # interactive. Active drag highlights the handle being
+        # dragged in accent so the user has feedback that the
+        # gesture was registered.
+        handle_default = QColor("#FFFFFF")
+        handle_active = QColor(H.ACCENT_BRIGHT)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(handle_color)
         in_handle = QRectF(x1, 4, HANDLE_W, BAR_HEIGHT - 8)
         out_handle = QRectF(x2 - HANDLE_W, 4, HANDLE_W, BAR_HEIGHT - 8)
+        painter.setBrush(
+            handle_active if self._drag_kind == "in" else handle_default,
+        )
         painter.drawRect(in_handle)
+        painter.setBrush(
+            handle_active if self._drag_kind == "out" else handle_default,
+        )
         painter.drawRect(out_handle)
 
         # Playhead line on top of everything.
@@ -385,15 +395,27 @@ class LayerBar(QWidget):  # type: ignore[misc]
             self._drag_preview_layer_in = new_in
             self._drag_preview_offset = new_offset
         elif self._drag_kind == "out":
+            # Standard NLE out-trim: the RIGHT edge of the bar moves,
+            # the left edge stays put. Only ``layer_out`` changes;
+            # ``offset`` and ``layer_in`` are untouched.
             new_out = self._drag_start_layer_out + delta_frames
+            # Clamp to source range and keep at least one frame
+            # between in/out.
             new_out = min(layer.sequence.last_frame, new_out)
             new_out = max(self._drag_start_layer_in + 1, new_out)
-            master_out = layer.offset + (new_out - self._drag_start_layer_in)
+            # Snap on the *visible* right edge (= master_end =
+            # layer.offset + (layer_out - layer_in)). The previous
+            # version overwrote ``new_out`` with
+            # ``drag_start + (snapped - master_out)`` which reset it
+            # to the original whenever no snap target was within
+            # range — symptom: the OUT handle wouldn't budge at all
+            # outside snap zones.
+            master_out = layer.offset + (new_out - layer.layer_in)
             snapped_master = snap_master_frame(
                 master_out, geom, self._snap_targets(exclude_self=True),
                 snap_dist,
             )
-            new_out = self._drag_start_layer_out + (snapped_master - master_out)
+            new_out += snapped_master - master_out
             new_out = min(layer.sequence.last_frame, new_out)
             new_out = max(self._drag_start_layer_in + 1, new_out)
             self._drag_preview_layer_out = new_out
