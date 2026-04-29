@@ -145,16 +145,28 @@ class LayerStack(QObject):  # type: ignore[misc]
         :attr:`layer_modified` so multi-field updates (e.g. exposure
         + gamma at once from the color panel) don't fire N signals.
         Unknown attributes are logged and ignored.
+
+        Suppresses the signal emit when **none** of the fields
+        actually change value. Without this, ``restore_channel_state``
+        on a fresh layer fires ``layer_modified`` even when the
+        new selection happens to match the layer's defaults — which
+        invalidates the cache mid-prefetch and forces a costly
+        re-decode of every frame the controller had just queued.
         """
         layer = self._find(layer_id)
         if layer is None or not fields:
             return
+        changed = False
         for name, value in fields.items():
             if not hasattr(layer, name):
                 log.warning("LayerStack.update: unknown field %r", name)
                 continue
+            if getattr(layer, name) == value:
+                continue  # no-op; skip the setattr to keep ``changed`` honest
             setattr(layer, name, value)
-        self.layer_modified.emit(layer_id)
+            changed = True
+        if changed:
+            self.layer_modified.emit(layer_id)
 
     # ------------------------------------------------------------------ Queries
 

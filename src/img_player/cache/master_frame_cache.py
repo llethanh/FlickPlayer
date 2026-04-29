@@ -506,16 +506,42 @@ class MasterFrameCache:
 
     def _invalidate_master_range(self, first: int, last: int) -> None:
         """Drop cached frames in ``[first, last]`` + bump epoch so
-        in-flight decodes for that range don't sneak back in."""
+        in-flight decodes for that range don't sneak back in.
+
+        Skips the epoch bump when no frames are *currently cached*
+        in the range. Important for the fresh-load case:
+
+        1. ``cache.attach`` adds a layer; controller queues 100
+           decodes against the new layer's channels (== ``None`` →
+           reader default RGBA).
+        2. ``restore_channel_state`` then writes the prefs-saved
+           ``ChannelSelection`` onto the layer, firing
+           ``layer_modified``.
+
+        Without the skip, step 2 invalidates an empty range AND
+        bumps the epoch — the 100 in-flight decodes from step 1
+        store their results, hit the epoch mismatch, and drop. The
+        viewport stays black until a second prefetch wave decodes
+        again. With the skip, the in-flight decodes succeed; their
+        captured channels (default RGBA) are at worst slightly
+        broader than the prefs-saved selection (typically RGB),
+        which the compose path handles fine.
+
+        For the legitimate user-driven case (channel toggle while
+        frames are cached), ``to_drop`` is non-empty so we still
+        bump the epoch and discard the stale workers.
+        """
         if first > last:
             return
         with self._lock:
-            for f in list(self._frames.keys()):
-                if first <= f <= last:
-                    arr = self._frames.pop(f)
-                    if f not in self._missing:
-                        self._bytes_used -= arr.nbytes
-                    self._missing.discard(f)
+            to_drop = [f for f in self._frames if first <= f <= last]
+            if not to_drop:
+                return
+            for f in to_drop:
+                arr = self._frames.pop(f)
+                if f not in self._missing:
+                    self._bytes_used -= arr.nbytes
+                self._missing.discard(f)
             self._epoch += 1
 
     def _ensure_index(self, layer: Layer) -> None:
