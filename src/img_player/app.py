@@ -745,6 +745,12 @@ class ImgPlayerApp:
         # The viewport needs to know the current frame so the next
         # drag-scrub can use it as a base reference.
         self._window.viewer.gl.set_current_frame(frame)
+        # Push the master playhead to the layer panel so each
+        # LayerBar can draw the playhead line + snap to it during
+        # drag.
+        panel = getattr(self._window, "_layer_panel", None)
+        if panel is not None:
+            panel.set_playhead(frame)
         # The annotation overlay paints strokes for the current
         # frame — keep it in sync.
         self._annotation_overlay.set_current_frame(frame)
@@ -915,6 +921,11 @@ class ImgPlayerApp:
         # Timeline needs in/out markers and the fps for its timecode labels.
         self._window.timeline.set_in_out(state.in_frame, state.out_frame)
         self._window.timeline.set_fps(state.fps)
+        # The layer-panel bars need the master in/out so their drag
+        # snap targets reflect the playback range.
+        panel = getattr(self._window, "_layer_panel", None)
+        if panel is not None:
+            panel.set_master_in_out(state.in_frame, state.out_frame)
         # Tell the annotation overlay whether to render: hidden during
         # play unless the show-during-playback toggle is on.
         self._annotation_overlay.set_is_playing(state.is_playing)

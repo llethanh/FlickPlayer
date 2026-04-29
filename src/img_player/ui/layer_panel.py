@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from img_player.layers import Layer, LayerStack
+from img_player.ui.layer_bar import LayerBar
 from img_player.ui.theme import C, F, G, H, S
 
 
@@ -60,6 +61,11 @@ class LayerRow(QFrame):  # type: ignore[misc]
     # Move this row up / down in the stack. Carries the layer id.
     move_up_requested = Signal(str)
     move_down_requested = Signal(str)
+    # LayerBar drag commits — forwarded as-is to the panel which
+    # routes to LayerStack.update.
+    offset_changed = Signal(str, int)
+    layer_in_changed = Signal(str, int)
+    layer_out_changed = Signal(str, int)
 
     def __init__(self, layer: Layer, index: int, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -94,14 +100,17 @@ class LayerRow(QFrame):  # type: ignore[misc]
         self._eye_btn.clicked.connect(self._on_eye_clicked)
         layout.addWidget(self._eye_btn)
 
-        # --- Name (filename pattern) -----------------------------------
-        self._name_label = QLabel(layer.name)
-        self._name_label.setMinimumWidth(120)
-        self._name_label.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred,
-        )
-        self._name_label.setFont(F.mono(F.SIZE_SM))
-        layout.addWidget(self._name_label, 1)
+        # --- Layer bar (range + drag handles) ---------------------------
+        # Replaces the plain filename label with an interactive
+        # visualisation of the layer's master range. The bar handles
+        # offset / trim drags itself; signals bubble back through
+        # the row to the panel and finally LayerStack.update.
+        self._bar = LayerBar(layer, parent=self)
+        self._bar.offset_changed.connect(self.offset_changed.emit)
+        self._bar.layer_in_changed.connect(self.layer_in_changed.emit)
+        self._bar.layer_out_changed.connect(self.layer_out_changed.emit)
+        self._bar.focus_requested.connect(self.focus_requested.emit)
+        layout.addWidget(self._bar, 1)
 
         # --- Reorder buttons (↑ / ↓) -----------------------------------
         # Phase 3 keyboard-free path. Drag-to-reorder lands in a
@@ -149,7 +158,29 @@ class LayerRow(QFrame):  # type: ignore[misc]
         self._eye_btn.blockSignals(False)
 
     def set_name(self, name: str) -> None:
-        self._name_label.setText(name)
+        # Layer.name is consulted by the bar's paintEvent; we just
+        # poke it to repaint via set_layer.
+        self._bar.set_layer(self._bar._layer)  # type: ignore[attr-defined]
+
+    def update_layer(self, layer: Layer) -> None:
+        """Push a fresh Layer reference into the bar — call after the
+        underlying layer's offset/trim/visibility has mutated."""
+        self._bar.set_layer(layer)
+
+    def set_master_range(self, first: int, last: int) -> None:
+        """Coordinate-space update from the panel."""
+        self._bar.set_master_range(first, last)
+
+    def set_playhead(self, master_frame: int | None) -> None:
+        self._bar.set_playhead(master_frame)
+
+    def set_master_in_out(
+        self, in_frame: int | None, out_frame: int | None,
+    ) -> None:
+        self._bar.set_master_in_out(in_frame, out_frame)
+
+    def set_snap_edges(self, edges: list[int]) -> None:
+        self._bar.set_snap_edges(edges)
 
     def set_focused(self, on: bool) -> None:
         if on == self._focused:
@@ -324,8 +355,15 @@ class LayerPanel(QFrame):  # type: ignore[misc]
             row.visibility_toggle_requested.connect(self._on_row_visibility_toggle)
             row.move_up_requested.connect(self._on_row_move_up)
             row.move_down_requested.connect(self._on_row_move_down)
+            row.offset_changed.connect(self._on_row_offset_changed)
+            row.layer_in_changed.connect(self._on_row_layer_in_changed)
+            row.layer_out_changed.connect(self._on_row_layer_out_changed)
             self._rows_layout.addWidget(row)
             self._rows[layer.id] = row
+        # Synchronise master-range + snap edges across every row
+        # after construction so the bars draw at the right scale on
+        # first paint.
+        self._sync_bar_geometry()
 
         # Empty stack → still draw an empty hint so the panel
         # doesn't look broken.
@@ -345,7 +383,10 @@ class LayerPanel(QFrame):  # type: ignore[misc]
         layer = self._stack.find(layer_id)
         row = self._rows.get(layer_id)
         if layer is not None and row is not None:
-            row.set_name(layer.name)
+            row.update_layer(layer)
+        # Master range may have shifted (offset / trim changed) →
+        # every row needs to re-scale its bar.
+        self._sync_bar_geometry()
 
     def _on_focus_changed(self, layer_id: str) -> None:
         for lid, row in self._rows.items():
@@ -369,3 +410,54 @@ class LayerPanel(QFrame):  # type: ignore[misc]
             if layer.id == layer_id and i < len(layers) - 1:
                 self._stack.reorder(layer_id, i + 1)
                 return
+
+    # --- Drag commits from LayerBar ----------------------------------
+
+    def _on_row_offset_changed(self, layer_id: str, new_offset: int) -> None:
+        self._stack.update(layer_id, offset=new_offset)
+
+    def _on_row_layer_in_changed(self, layer_id: str, new_in: int) -> None:
+        self._stack.update(layer_id, layer_in=new_in)
+
+    def _on_row_layer_out_changed(self, layer_id: str, new_out: int) -> None:
+        self._stack.update(layer_id, layer_out=new_out)
+
+    # --- Geometry coordination across rows ---------------------------
+
+    def set_playhead(self, master_frame: int | None) -> None:
+        """Push the current master playhead to every row's bar so it
+        draws the snap-target line at the right place."""
+        for row in self._rows.values():
+            row.set_playhead(master_frame)
+
+    def set_master_in_out(
+        self, in_frame: int | None, out_frame: int | None,
+    ) -> None:
+        for row in self._rows.values():
+            row.set_master_in_out(in_frame, out_frame)
+
+    def _sync_bar_geometry(self) -> None:
+        """Refresh master_range + per-row snap edges across all bars.
+
+        Called whenever the stack composition changes (= a layer was
+        added, removed, reordered, or modified). The master-range
+        widens when a layer is added at an extreme offset; snap
+        edges include every other layer's master_start / master_end
+        so the user can drag-snap one layer to align with another.
+        """
+        layers = self._stack.layers()
+        if not layers:
+            return
+        first, last = self._stack.master_range()
+        for layer in layers:
+            row = self._rows.get(layer.id)
+            if row is None:
+                continue
+            row.set_master_range(first, last)
+            edges = []
+            for other in layers:
+                if other.id == layer.id:
+                    continue
+                edges.append(other.master_start)
+                edges.append(other.master_end)
+            row.set_snap_edges(edges)
