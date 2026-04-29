@@ -240,9 +240,17 @@ class MasterFrameCache:
         # ``layer_modified`` signal doesn't fire — that signal would
         # invalidate the entire layer range, defeating the
         # mtime-based "kept" frames we just preserved.
+        #
+        # In v1.0-phase-2c we also re-anchor offset to the new
+        # sequence's first_frame so master_frame == source_frame
+        # stays true after reload (matches pre-v1.0 single-layer
+        # behaviour). Phase 4 will introduce a "preserve user
+        # offset / trim" flag for multi-layer workflows where the
+        # user has manually shifted layers.
         target.sequence = new_sequence
         target.layer_in = new_sequence.first_frame
         target.layer_out = new_sequence.last_frame
+        target.offset = new_sequence.first_frame
         self._path_index[target.id] = new_paths
         self._mtime_index[target.id] = new_mtimes
         missing = sum(
