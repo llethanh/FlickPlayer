@@ -61,6 +61,12 @@ class LayerRow(QFrame):  # type: ignore[misc]
     # Move this row up / down in the stack. Carries the layer id.
     move_up_requested = Signal(str)
     move_down_requested = Signal(str)
+    # Delete this layer from the stack — the panel forwards to
+    # LayerStack.remove. No confirmation dialog: the user already
+    # has File → New for a clean slate, and the stack is in-memory
+    # so the action is non-destructive (the source files on disk
+    # stay put).
+    delete_requested = Signal(str)
     # LayerBar drag commits — forwarded as-is to the panel which
     # routes to LayerStack.update.
     offset_changed = Signal(str, int)
@@ -134,6 +140,24 @@ class LayerRow(QFrame):  # type: ignore[misc]
             lambda: self.move_down_requested.emit(self._layer_id),
         )
         layout.addWidget(self._down_btn)
+
+        # --- Delete button ---------------------------------------------
+        # "×" sits last so it doesn't get hit by accident when the
+        # user is reaching for the reorder arrows. Drawn red on
+        # hover via QSS so its destructive intent is obvious.
+        self._delete_btn = QToolButton()
+        self._delete_btn.setFixedSize(_BUTTONS_W, _ROW_HEIGHT - 4)
+        self._delete_btn.setText("×")
+        self._delete_btn.setToolTip("Remove this layer from the stack")
+        self._delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._delete_btn.setStyleSheet(
+            "QToolButton { color: #B0B0B0; }"
+            "QToolButton:hover { color: #E84A4A; font-weight: bold; }"
+        )
+        self._delete_btn.clicked.connect(
+            lambda: self.delete_requested.emit(self._layer_id),
+        )
+        layout.addWidget(self._delete_btn)
 
         # Default unfocused look. ``set_focused(True)`` paints the
         # accent background to match PDPlayer / Nuke conventions.
@@ -355,6 +379,7 @@ class LayerPanel(QFrame):  # type: ignore[misc]
             row.visibility_toggle_requested.connect(self._on_row_visibility_toggle)
             row.move_up_requested.connect(self._on_row_move_up)
             row.move_down_requested.connect(self._on_row_move_down)
+            row.delete_requested.connect(self._on_row_delete_requested)
             row.offset_changed.connect(self._on_row_offset_changed)
             row.trim_in_changed.connect(self._on_row_trim_in_changed)
             row.layer_out_changed.connect(self._on_row_layer_out_changed)
@@ -410,6 +435,13 @@ class LayerPanel(QFrame):  # type: ignore[misc]
             if layer.id == layer_id and i < len(layers) - 1:
                 self._stack.reorder(layer_id, i + 1)
                 return
+
+    def _on_row_delete_requested(self, layer_id: str) -> None:
+        """Remove this layer. The cache invalidates the layer's
+        master range via ``layers_changed`` and the app's
+        ``_refresh_after_stack_change`` re-displays whatever's
+        underneath (or black if nothing covers the playhead)."""
+        self._stack.remove(layer_id)
 
     # --- Drag commits from LayerBar ----------------------------------
 
