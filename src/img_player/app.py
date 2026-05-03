@@ -212,12 +212,19 @@ class ImgPlayerApp:
         # signals), then controller (which uses the cache).
         from img_player.cache.master_frame_cache import MasterFrameCache
         from img_player.layers import LayerStack
+        from img_player.media import VideoSourceManager
         self._layer_stack = LayerStack()
         self._cache = MasterFrameCache(
             self._layer_stack,
             budget_bytes=cache_budget_bytes,
             num_workers=num_workers,
         )
+        # Video decoders. Image-sequence layers go through ``self._cache``;
+        # video layers (mp4 / mov / …) bypass the cache and pull pixels
+        # directly from this manager — long-GOP video has fundamentally
+        # different access patterns (sequential cheap, random expensive)
+        # that don't fit the cache's per-frame independent model.
+        self._video_sources = VideoSourceManager()
         self._controller = PlayerController(self._cache)
         # Comment store — owned by the app, passed to MainWindow so
         # the Comments tab can read / write directly. Cohérent with
@@ -446,6 +453,13 @@ class ImgPlayerApp:
         self._scrub_debounce.stop()
         self._controller.shutdown()
         self._cache.shutdown()
+        # Close every open video decoder. Important on Windows where
+        # PyAV holds an OS file handle on the container; without this
+        # close the next session reload could see "file in use".
+        try:
+            self._video_sources.shutdown()
+        except Exception:  # pragma: no cover — best effort
+            log.exception("video sources shutdown failed")
         # Drop python-level refs to anything that could still pin big
         # numpy arrays from the cache, then force a collection. Numpy
         # buffers backed by malloc are released on dict.clear() above,
@@ -628,6 +642,15 @@ class ImgPlayerApp:
         """
         self._layer_stack.layers_changed.connect(
             self._refresh_after_stack_change,
+        )
+        # Close VideoSource handles for layers that just left the
+        # stack — separate slot from the redisplay because the order
+        # matters: close FIRST, redisplay AFTER (close on a removed
+        # layer is the only place we can tell PyAV the file handle is
+        # no longer needed; doing it post-redisplay would leak across
+        # session swaps on Windows).
+        self._layer_stack.layers_changed.connect(
+            self._close_orphan_video_sources,
         )
         self._layer_stack.visibility_changed.connect(
             lambda _id: self._refresh_after_stack_change(),
@@ -863,6 +886,27 @@ class ImgPlayerApp:
         # Prev/next-annotation transport buttons depend on the
         # playhead position vs the annotated set — re-evaluate.
         self._refresh_annotation_nav_buttons()
+
+        # Video early-out: when the topmost-visible layer is video,
+        # bypass the per-frame OIIO cache and decode through the
+        # PyAV-backed VideoSourceManager. Long-GOP video doesn't fit
+        # the random-access cache model — the manager's single-frame
+        # cache + seek-then-decode-forward strategy is the right shape.
+        displayed = (
+            self._layer_stack.topmost_visible_at(frame)
+            if self._layer_stack else None
+        )
+        if displayed is not None and displayed.is_video:
+            try:
+                arr = self._decode_video_layer(displayed, frame)
+                if arr is not None:
+                    self._display_array(arr)
+                    self._last_displayed = frame
+                    self._wait_timer.stop()
+                    return
+            except Exception:
+                log.exception("video decode failed at master frame %d", frame)
+
         arr = self._cache.get(frame)
         if arr is not None:
             self._display_array(arr)
@@ -923,6 +967,21 @@ class ImgPlayerApp:
             return max(candidates) if candidates else min(cached)
         candidates = [f for f in cached if f >= frame]
         return min(candidates) if candidates else max(cached)
+
+    def _close_orphan_video_sources(self) -> None:
+        """Close video decoders whose layer is no longer in the stack.
+
+        Hooked into ``layers_changed`` — without it, removing a video
+        layer leaks a PyAV container (file handle on Windows). Cheap:
+        the manager dict is small (one entry per video layer) and
+        ``close`` is a no-op when the layer id is unknown.
+        """
+        if not self._video_sources._sources:
+            return
+        live_ids = {layer.id for layer in self._layer_stack}
+        for layer_id in list(self._video_sources._sources.keys()):
+            if layer_id not in live_ids:
+                self._video_sources.close(layer_id)
 
     def _refresh_after_stack_change(self) -> None:
         """Re-prefetch + re-display after a LayerStack mutation.
@@ -1114,6 +1173,37 @@ class ImgPlayerApp:
         ``_display_array`` route — independent from this function.
         """
         self._window.viewer.gl.clear_image()
+
+    def _decode_video_layer(self, layer, master_frame: int):  # type: ignore[no-untyped-def]
+        """Pull pixels for ``master_frame`` from a video-backed layer.
+
+        Maps master_frame → video-source time using the layer's
+        offset and the video's native fps (taken from the probe), then
+        delegates to :class:`VideoSourceManager` which handles the
+        seek-then-decode-forward strategy and its single-frame cache.
+
+        Returns ``(H, W, 4)`` float32 RGBA in [0, 1], ready for the
+        GL viewport's ``set_frame``. Returns ``None`` when the master
+        frame falls outside the layer's range (caller falls back to
+        the gap placeholder logic via the cache path).
+        """
+        if not layer.is_video or layer.video_metadata is None:
+            return None
+        if not layer.covers(master_frame):
+            return None
+        meta = layer.video_metadata
+        if meta.fps is None or meta.fps <= 0:
+            return None
+        # ``master_frame - master_start`` is the source frame index in
+        # the video's own 0..N-1 range. Convert to seconds at the
+        # video's native rate so a session FPS that differs from the
+        # video FPS still hits the right time on the source clock —
+        # the v1 simplification (session FPS == video FPS) means this
+        # falls out as ``frame / fps``, but the math stays correct
+        # once we mix sources later.
+        source_frame_idx = master_frame - layer.master_start
+        t_seconds = source_frame_idx / float(meta.fps)
+        return self._video_sources.decode_at(layer.id, meta.path, t_seconds)
 
     def _display_array(self, arr) -> None:  # type: ignore[no-untyped-def]
         # The displayed pixels come from the *topmost-visible* layer
@@ -2025,6 +2115,23 @@ class ImgPlayerApp:
             return
         primary = path_list[0]
 
+        # Video file? Single-file mp4 / mov / … drop creates a video
+        # layer that bypasses the per-frame OIIO cache and pulls
+        # pixels via PyAV (see ``VideoSourceManager``). Multi-source
+        # drops mixing video and image sequences would need a tree
+        # picker variant — for now only single-video drops route here;
+        # mixed drops fall through to the regular sequence path and
+        # the videos are silently skipped (logged).
+        from img_player.media import is_video_file
+        if len(path_list) == 1 and path_list[0].is_file() and is_video_file(path_list[0]):
+            video_path = path_list[0]
+            if self._is_replace_destructive():
+                if not self._confirm_replace(video_path):
+                    self._window.set_status("Replace annulé.")
+                    return
+            self._open_video_path(video_path)
+            return
+
         # Project file? A ``.session`` drop is a "load this whole
         # project" gesture, not a sequence open. Route to the session
         # loader so the LayerStack, Color panel and recent-sessions
@@ -2063,6 +2170,61 @@ class ImgPlayerApp:
             open_path(self, primary)
         else:
             open_paths(self, path_list)
+
+    def _open_video_path(self, path: Path) -> None:
+        """Replace the current state with a single video file.
+
+        Probes the container, builds a ``Layer.from_video``, wipes the
+        previous LayerStack contents, and seeds the controller with
+        the synthetic SequenceInfo so transport / timeline / frame
+        navigation work the same way as for image sequences. The
+        actual decode happens lazily in ``_on_frame_changed`` via
+        :class:`VideoSourceManager`.
+        """
+        from img_player.layers.models import Layer
+        from img_player.media import probe_video
+        try:
+            metadata = probe_video(path)
+        except Exception as exc:
+            log.exception("video probe failed for %s", path)
+            QMessageBox.critical(
+                self._window, "Cannot open video", f"{path.name}\n\n{exc}",
+            )
+            self._window.set_status("Ready.")
+            return
+        if not metadata.has_video:
+            QMessageBox.warning(
+                self._window, "Cannot open video",
+                f"{path.name} has no video stream.",
+            )
+            self._window.set_status("Ready.")
+            return
+
+        layer = Layer.from_video(metadata)
+        # Wipe the previous stack in one batched undo step. Mirrors
+        # the "load sequence" semantic: a fresh open replaces, doesn't
+        # accumulate.
+        with self._layer_stack.batch():
+            for existing in tuple(self._layer_stack):
+                self._layer_stack.remove(existing.id)
+            self._layer_stack.add(layer, position=0)
+            self._layer_stack.set_focus(layer.id)
+        # The controller needs a sequence to drive the transport — the
+        # synthetic one we attached to the layer plays that role.
+        # ``load_sequence`` resets the playhead to first_frame and
+        # broadcasts state_changed, which is exactly what we want.
+        self._controller.load_sequence(layer.sequence)
+        # Default playback FPS to the video's native rate so the
+        # session FPS combo reads "23.976" / "29.97" / etc.
+        if metadata.fps is not None:
+            self._controller.set_fps(float(metadata.fps))
+        self._window.update_sequence_info(layer.sequence)
+        self._window.set_status(
+            f"Loaded video {path.name} "
+            f"({metadata.width}×{metadata.height}, "
+            f"{float(metadata.fps):.3f} fps, {metadata.frame_count} frames)"
+            if metadata.fps else f"Loaded video {path.name}"
+        )
 
     def _is_replace_destructive(self) -> bool:
         """True when a Replace would wipe state the user might want
