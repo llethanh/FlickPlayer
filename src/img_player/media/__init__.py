@@ -21,11 +21,15 @@ from img_player.media.video_probe import (
     is_video_file,
     probe_video,
 )
+from img_player.media.audio_output import AudioOutput
+from img_player.media.audio_source import AudioSource
 from img_player.media.video_renderer import VideoSourceManager
 from img_player.media.video_source import VideoSource
 
 __all__ = [
     "VIDEO_EXTENSIONS",
+    "AudioOutput",
+    "AudioSource",
     "VideoMetadata",
     "VideoSource",
     "VideoSourceManager",
