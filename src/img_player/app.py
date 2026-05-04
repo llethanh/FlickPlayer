@@ -212,12 +212,31 @@ class ImgPlayerApp:
         # signals), then controller (which uses the cache).
         from img_player.cache.master_frame_cache import MasterFrameCache
         from img_player.layers import LayerStack
+        from img_player.media import VideoSourceManager
         self._layer_stack = LayerStack()
         self._cache = MasterFrameCache(
             self._layer_stack,
             budget_bytes=cache_budget_bytes,
             num_workers=num_workers,
         )
+        # Video decoders. Image-sequence layers go through ``self._cache``;
+        # video layers (mp4 / mov / …) bypass the cache and pull pixels
+        # directly from this manager — long-GOP video has fundamentally
+        # different access patterns (sequential cheap, random expensive)
+        # that don't fit the cache's per-frame independent model.
+        self._video_sources = VideoSourceManager()
+        # Persistent audio output (sounddevice + feeder thread). Stays
+        # open from boot through shutdown — option (b) of the design:
+        # no play-time latency at the cost of holding the device.
+        # Initially silent (no source); ``_refresh_active_audio`` swaps
+        # the active AudioSource on layer-stack / playhead changes.
+        from img_player.media import AudioOutput
+        self._audio_output = AudioOutput()
+        self._audio_output.open()
+        # Tracks which layer id is currently feeding the AudioOutput,
+        # so ``_refresh_active_audio`` doesn't re-open the source on
+        # every frame_changed when the active layer is unchanged.
+        self._active_audio_layer_id: str | None = None
         self._controller = PlayerController(self._cache)
         # Comment store — owned by the app, passed to MainWindow so
         # the Comments tab can read / write directly. Cohérent with
@@ -446,6 +465,19 @@ class ImgPlayerApp:
         self._scrub_debounce.stop()
         self._controller.shutdown()
         self._cache.shutdown()
+        # Close every open video decoder. Important on Windows where
+        # PyAV holds an OS file handle on the container; without this
+        # close the next session reload could see "file in use".
+        try:
+            self._video_sources.shutdown()
+        except Exception:  # pragma: no cover — best effort
+            log.exception("video sources shutdown failed")
+        # Close the audio output (stops the feeder thread + closes
+        # the sounddevice stream + closes the active AudioSource).
+        try:
+            self._audio_output.close()
+        except Exception:  # pragma: no cover — best effort
+            log.exception("audio output close failed")
         # Drop python-level refs to anything that could still pin big
         # numpy arrays from the cache, then force a collection. Numpy
         # buffers backed by malloc are released on dict.clear() above,
@@ -628,6 +660,25 @@ class ImgPlayerApp:
         """
         self._layer_stack.layers_changed.connect(
             self._refresh_after_stack_change,
+        )
+        # Close VideoSource handles for layers that just left the
+        # stack — separate slot from the redisplay because the order
+        # matters: close FIRST, redisplay AFTER (close on a removed
+        # layer is the only place we can tell PyAV the file handle is
+        # no longer needed; doing it post-redisplay would leak across
+        # session swaps on Windows).
+        self._layer_stack.layers_changed.connect(
+            self._close_orphan_video_sources,
+        )
+        # Refresh the active audio source whenever the stack composition,
+        # visibility, or per-layer audio fields change. Cheap when the
+        # active layer is unchanged (just updates gain).
+        self._layer_stack.layers_changed.connect(self._refresh_active_audio)
+        self._layer_stack.visibility_changed.connect(
+            lambda _id: self._refresh_active_audio(),
+        )
+        self._layer_stack.layer_modified.connect(
+            lambda _id: self._refresh_active_audio(),
         )
         self._layer_stack.visibility_changed.connect(
             lambda _id: self._refresh_after_stack_change(),
@@ -863,6 +914,27 @@ class ImgPlayerApp:
         # Prev/next-annotation transport buttons depend on the
         # playhead position vs the annotated set — re-evaluate.
         self._refresh_annotation_nav_buttons()
+
+        # Video early-out: when the topmost-visible layer is video,
+        # bypass the per-frame OIIO cache and decode through the
+        # PyAV-backed VideoSourceManager. Long-GOP video doesn't fit
+        # the random-access cache model — the manager's single-frame
+        # cache + seek-then-decode-forward strategy is the right shape.
+        displayed = (
+            self._layer_stack.topmost_visible_at(frame)
+            if self._layer_stack else None
+        )
+        if displayed is not None and displayed.is_video:
+            try:
+                arr = self._decode_video_layer(displayed, frame)
+                if arr is not None:
+                    self._display_array(arr)
+                    self._last_displayed = frame
+                    self._wait_timer.stop()
+                    return
+            except Exception:
+                log.exception("video decode failed at master frame %d", frame)
+
         arr = self._cache.get(frame)
         if arr is not None:
             self._display_array(arr)
@@ -923,6 +995,21 @@ class ImgPlayerApp:
             return max(candidates) if candidates else min(cached)
         candidates = [f for f in cached if f >= frame]
         return min(candidates) if candidates else max(cached)
+
+    def _close_orphan_video_sources(self) -> None:
+        """Close video decoders whose layer is no longer in the stack.
+
+        Hooked into ``layers_changed`` — without it, removing a video
+        layer leaks a PyAV container (file handle on Windows). Cheap:
+        the manager dict is small (one entry per video layer) and
+        ``close`` is a no-op when the layer id is unknown.
+        """
+        if not self._video_sources._sources:
+            return
+        live_ids = {layer.id for layer in self._layer_stack}
+        for layer_id in list(self._video_sources._sources.keys()):
+            if layer_id not in live_ids:
+                self._video_sources.close(layer_id)
 
     def _refresh_after_stack_change(self) -> None:
         """Re-prefetch + re-display after a LayerStack mutation.
@@ -1115,6 +1202,139 @@ class ImgPlayerApp:
         """
         self._window.viewer.gl.clear_image()
 
+    def _pick_active_audio_layer(self):  # type: ignore[no-untyped-def]
+        """Choose which video layer's audio should play.
+
+        Policy (option 1c of the design discussion — "solo / mute per
+        layer with topmost-fallback"):
+
+        * Solo wins. If any video layer has ``audio_solo=True``, that
+          one plays even if another video layer is on top.
+        * Otherwise the topmost-visible video layer with audio plays.
+        * Layers with ``audio_mute=True`` never play.
+        * Layers without an audio stream (``has_audio=False``) never
+          play, regardless of solo/mute.
+
+        Returns ``None`` when no layer qualifies (all muted, no
+        audio, or no video layer at all).
+        """
+        if self._layer_stack is None:
+            return None
+        # Solo first: walk the stack top→bottom, return the first
+        # solo'd video layer with audio.
+        for layer in self._layer_stack.layers():
+            if (
+                layer.is_video
+                and layer.audio_solo
+                and not layer.audio_mute
+                and layer.video_metadata
+                and layer.video_metadata.has_audio
+            ):
+                return layer
+        # No solo — pick the topmost visible video layer with audio.
+        for layer in self._layer_stack.layers():
+            if (
+                layer.visible
+                and layer.is_video
+                and not layer.audio_mute
+                and layer.video_metadata
+                and layer.video_metadata.has_audio
+            ):
+                return layer
+        return None
+
+    def _refresh_active_audio(self) -> None:
+        """Sync the AudioOutput's source + gain with the layer stack.
+
+        Idempotent: if the active layer is unchanged we just update the
+        gain (cheap). When the active layer changes we open a new
+        AudioSource and ``set_source`` it on the output (which closes
+        the previous one). When no layer qualifies we set source to
+        None — the output goes silent.
+        """
+        layer = self._pick_active_audio_layer()
+        from img_player.media import AudioSource
+        if layer is None:
+            if self._active_audio_layer_id is not None:
+                self._audio_output.set_source(None, None)
+                self._active_audio_layer_id = None
+            return
+        if self._active_audio_layer_id == layer.id:
+            # Same layer — only the gain may have changed.
+            self._audio_output.set_gain(float(layer.audio_gain))
+            return
+        # Open a new AudioSource for this layer. Failures (corrupt
+        # audio stream, sample format we can't resample) downgrade
+        # to silence rather than crashing.
+        try:
+            assert layer.video_metadata is not None
+            source = AudioSource(layer.video_metadata.path)
+        except Exception:
+            log.exception("[audio] failed to open source for layer %s", layer.id)
+            self._audio_output.set_source(None, None)
+            self._active_audio_layer_id = None
+            return
+        # Position the new source at the current playhead so the user
+        # hears the right offset, not the start of the file.
+        try:
+            t = self._current_layer_time(layer)
+            if t is not None:
+                source.seek(t)
+        except Exception:
+            log.exception("[audio] initial seek failed")
+        self._audio_output.set_source(layer.id, source)
+        self._audio_output.set_gain(float(layer.audio_gain))
+        self._active_audio_layer_id = layer.id
+
+    def _current_layer_time(self, layer) -> float | None:  # type: ignore[no-untyped-def]
+        """Master playhead → seconds on ``layer``'s native timebase.
+
+        Mirrors the math in :meth:`_decode_video_layer`. Returns
+        ``None`` when the layer doesn't cover the playhead (caller
+        treats as "nothing to seek").
+        """
+        if not layer.is_video or layer.video_metadata is None:
+            return None
+        meta = layer.video_metadata
+        if meta.fps is None or meta.fps <= 0:
+            return None
+        cur = self._controller.state.current_frame
+        if not layer.covers(cur):
+            return None
+        source_frame_idx = cur - layer.master_start
+        return source_frame_idx / float(meta.fps)
+
+    def _decode_video_layer(self, layer, master_frame: int):  # type: ignore[no-untyped-def]
+        """Pull pixels for ``master_frame`` from a video-backed layer.
+
+        Maps master_frame → video-source time using the layer's
+        offset and the video's native fps (taken from the probe), then
+        delegates to :class:`VideoSourceManager` which handles the
+        seek-then-decode-forward strategy and its single-frame cache.
+
+        Returns ``(H, W, 4)`` float32 RGBA in [0, 1], ready for the
+        GL viewport's ``set_frame``. Returns ``None`` when the master
+        frame falls outside the layer's range (caller falls back to
+        the gap placeholder logic via the cache path).
+        """
+        if not layer.is_video or layer.video_metadata is None:
+            return None
+        if not layer.covers(master_frame):
+            return None
+        meta = layer.video_metadata
+        if meta.fps is None or meta.fps <= 0:
+            return None
+        # ``master_frame - master_start`` is the source frame index in
+        # the video's own 0..N-1 range. Convert to seconds at the
+        # video's native rate so a session FPS that differs from the
+        # video FPS still hits the right time on the source clock —
+        # the v1 simplification (session FPS == video FPS) means this
+        # falls out as ``frame / fps``, but the math stays correct
+        # once we mix sources later.
+        source_frame_idx = master_frame - layer.master_start
+        t_seconds = source_frame_idx / float(meta.fps)
+        return self._video_sources.decode_at(layer.id, meta.path, t_seconds)
+
     def _display_array(self, arr) -> None:  # type: ignore[no-untyped-def]
         # The displayed pixels come from the *topmost-visible* layer
         # at the current master frame — that's also the layer the
@@ -1187,6 +1407,54 @@ class ImgPlayerApp:
         # Tell the annotation overlay whether to render: hidden during
         # play unless the show-during-playback toggle is on.
         self._annotation_overlay.set_is_playing(state.is_playing)
+        # Drive the audio output. Three cases:
+        # - play/pause flip → call play() / pause() and reseek audio
+        #   to the current playhead so the user hears from the right
+        #   spot, not the residue of a previous run.
+        # - large playhead jump (= seek, scrub, J/K-step) → reseek
+        #   audio so the feeder picks up at the new time.
+        # - small +1 step while playing (= normal tick) → leave the
+        #   audio feeder alone; it runs free.
+        # set_speed compares session FPS vs the active video layer's
+        # native FPS — anything else than 1.0× ratio mutes (option
+        # 2(a): no time-stretch).
+        active = self._pick_active_audio_layer()
+        if active is not None and active.video_metadata is not None \
+                and active.video_metadata.fps is not None:
+            native = float(active.video_metadata.fps)
+            ratio = state.fps / native if native > 0 else 1.0
+            self._audio_output.set_speed(ratio)
+        else:
+            self._audio_output.set_speed(1.0)
+        prev_play = getattr(self, "_last_audio_play_state", False)
+        prev_frame = getattr(self, "_last_audio_synced_frame", None)
+        if state.is_playing != prev_play:
+            # Transition: pause → play OR play → pause. On a play
+            # transition, seek audio to the current frame so the user
+            # hears the right offset (the feeder may have stale data
+            # from a previous run).
+            if state.is_playing and active is not None:
+                t = self._current_layer_time(active)
+                if t is not None:
+                    self._audio_output.seek(t)
+            if state.is_playing:
+                self._audio_output.play()
+            else:
+                self._audio_output.pause()
+        else:
+            # Same play state — check for a large frame jump (= scrub
+            # / step). Tolerance ±2 covers normal forward / reverse
+            # play ticks; everything else is a seek.
+            if (
+                prev_frame is not None
+                and abs(state.current_frame - prev_frame) > 2
+                and active is not None
+            ):
+                t = self._current_layer_time(active)
+                if t is not None:
+                    self._audio_output.seek(t)
+        self._last_audio_play_state = state.is_playing
+        self._last_audio_synced_frame = state.current_frame
 
     def _on_play_toggled(self) -> None:
         if self._controller.state.is_playing:
@@ -1644,7 +1912,21 @@ class ImgPlayerApp:
     def _on_scrub_requested(self, frame: int) -> None:
         """Timeline scrub: update the display immediately from the cache, but
         defer the full seek (which re-does prefetch planning) to coalesce
-        rapid slider events."""
+        rapid slider events.
+
+        Auto-pause during scrub: when the user drags the timeline while
+        the controller is playing, the play-tick and the scrub fight
+        for the decoder cursor — each fires every ~20 ms in opposite
+        directions, the threaded video decoder seeks backward on every
+        tick, throughput collapses. Pause on the first scrub event of
+        a gesture, then ``_apply_pending_seek`` resumes once the
+        debounce window closes (= the user stopped dragging). 20 ms is
+        short enough that a flick-of-the-wrist scrub never feels like
+        a deliberate stop.
+        """
+        if self._controller.state.is_playing:
+            self._scrub_was_playing = True
+            self._controller.pause()
         # Immediate visual feedback: show whatever's closest in cache.
         self._show_best_available(frame)
         self._window.timeline.set_current_frame(frame)
@@ -1671,12 +1953,43 @@ class ImgPlayerApp:
 
     def _apply_pending_seek(self) -> None:
         if self._pending_seek is None:
+            # Even with no pending seek, an active scrub-pause may need
+            # to resume — the debounce timer fires 20 ms after the last
+            # scrub event regardless of whether we coalesced one.
+            if getattr(self, "_scrub_was_playing", False):
+                self._scrub_was_playing = False
+                self._controller.play()
             return
         frame = self._pending_seek
         self._pending_seek = None
         self._controller.seek(frame)
+        # Resume playback if we paused for the scrub. Done after the
+        # seek so play() picks up at the new playhead, not the
+        # pre-scrub one.
+        if getattr(self, "_scrub_was_playing", False):
+            self._scrub_was_playing = False
+            self._controller.play()
 
     def _show_best_available(self, frame: int) -> None:
+        # Video layer? Decode synchronously so scrub gives the user
+        # frame-accurate feedback under the cursor instead of the
+        # MISSING-FRAME placeholder (the cache never has anything for
+        # video). Same code path as ``_on_frame_changed``'s video
+        # branch — VideoSource caches the last frame internally so
+        # repeated calls within the same display interval are free.
+        displayed = (
+            self._layer_stack.topmost_visible_at(frame)
+            if self._layer_stack else None
+        )
+        if displayed is not None and displayed.is_video:
+            try:
+                arr_v = self._decode_video_layer(displayed, frame)
+                if arr_v is not None:
+                    self._last_displayed = frame
+                    self._display_array(arr_v)
+                    return
+            except Exception:
+                log.exception("video scrub decode failed at frame %d", frame)
         arr = self._cache.get(frame)
         if arr is not None:
             self._last_displayed = frame
@@ -2025,6 +2338,48 @@ class ImgPlayerApp:
             return
         primary = path_list[0]
 
+        # Video file? mp4 / mov / … drops create video layer(s) that
+        # bypass the per-frame OIIO cache and pull pixels via PyAV
+        # (see ``VideoSourceManager``).
+        # Three cases:
+        #   1. Single video → replace-load via ``_open_video_path``.
+        #   2. Multi-video drop → first video replace-loads, rest
+        #      append as layers (mirrors multi-folder image-sequence
+        #      drops).
+        #   3. Mixed drop (videos + image-sequence folders) →
+        #      currently unsupported; surface a status hint and route
+        #      the image-sequence portion only. Mixing both in one
+        #      gesture would need a unified picker variant.
+        from img_player.media import is_video_file
+        video_paths = [
+            p for p in path_list if p.is_file() and is_video_file(p)
+        ]
+        non_video_paths = [p for p in path_list if p not in video_paths]
+        if video_paths and not non_video_paths:
+            primary = video_paths[0]
+            if self._is_replace_destructive():
+                if not self._confirm_replace(primary):
+                    self._window.set_status("Replace annulé.")
+                    return
+            self._open_video_path(primary)
+            for extra in video_paths[1:]:
+                self._add_video_layer(extra)
+            if len(video_paths) > 1:
+                self._window.set_status(
+                    f"Loaded {primary.name} + "
+                    f"{len(video_paths) - 1} additional video layer"
+                    f"{'s' if len(video_paths) > 1 else ''}."
+                )
+            return
+        if video_paths and non_video_paths:
+            self._window.set_status(
+                "Mixing videos and image sequences in one drop is "
+                "not yet supported — loaded only the image sequences."
+            )
+            # Fall through with non_video_paths only.
+            path_list = non_video_paths
+            primary = path_list[0]
+
         # Project file? A ``.session`` drop is a "load this whole
         # project" gesture, not a sequence open. Route to the session
         # loader so the LayerStack, Color panel and recent-sessions
@@ -2063,6 +2418,92 @@ class ImgPlayerApp:
             open_path(self, primary)
         else:
             open_paths(self, path_list)
+
+    def _open_video_path(self, path: Path) -> None:
+        """Replace the current state with a single video file.
+
+        Probes the container, builds a ``Layer.from_video``, wipes the
+        previous LayerStack contents, and seeds the controller with
+        the synthetic SequenceInfo so transport / timeline / frame
+        navigation work the same way as for image sequences. The
+        actual decode happens lazily in ``_on_frame_changed`` via
+        :class:`VideoSourceManager`.
+        """
+        from img_player.layers.models import Layer
+        from img_player.media import probe_video
+        try:
+            metadata = probe_video(path)
+        except Exception as exc:
+            log.exception("video probe failed for %s", path)
+            QMessageBox.critical(
+                self._window, "Cannot open video", f"{path.name}\n\n{exc}",
+            )
+            self._window.set_status("Ready.")
+            return
+        if not metadata.has_video:
+            QMessageBox.warning(
+                self._window, "Cannot open video",
+                f"{path.name} has no video stream.",
+            )
+            self._window.set_status("Ready.")
+            return
+
+        layer = Layer.from_video(metadata)
+        # Detach the cache first — without this the previous sequence's
+        # prefetch keeps walking image paths in the background while
+        # we swap in a video layer the cache can't decode.
+        self._cache.detach()
+        # Wipe the previous stack in one batched undo step, then add
+        # the video layer. We do NOT call ``controller.load_sequence``
+        # because that calls ``cache.attach(sequence)`` which would
+        # rebuild a *image-sequence* Layer wrapping the synthetic
+        # video sequence — clobbering our Layer.from_video and
+        # pointing the cache's path index at the .mp4 container.
+        # Instead, push the controller's sequence + navigable range
+        # directly, then re-emit a synthetic frame_changed so the
+        # viewport renders the first video frame.
+        with self._layer_stack.batch():
+            for existing in tuple(self._layer_stack):
+                self._layer_stack.remove(existing.id)
+            self._layer_stack.add(layer, position=0)
+            self._layer_stack.set_focus(layer.id)
+        # Bypass ``controller.load_sequence`` (which would re-attach
+        # the cache and re-create an image-sequence layer). Directly
+        # seed the private state instead — the controller's invariant
+        # is that ``self._sequence`` describes a frame range; the
+        # synthetic sequence does. Bounds come from the video layer's
+        # master range so play / scrub honour the clip length.
+        from dataclasses import replace
+        self._controller._sequence = layer.sequence  # type: ignore[attr-defined]
+        self._controller._state = replace(  # type: ignore[attr-defined]
+            self._controller._state,  # type: ignore[attr-defined]
+            current_frame=layer.master_start,
+            is_playing=False,
+            in_frame=None,
+            out_frame=None,
+            dropped_frames=0,
+        )
+        self._controller.set_navigable_range(
+            layer.master_start, layer.master_end,
+        )
+        # Default playback FPS to the video's native rate so the
+        # session FPS combo reads "23.976" / "29.97" / etc.
+        if metadata.fps is not None:
+            self._controller.set_fps(float(metadata.fps))
+        # Broadcast the state we just installed by hand so transport,
+        # timeline, layer panel etc. all rebind to the new clip.
+        self._controller.state_changed.emit(self._controller._state)  # type: ignore[attr-defined]
+        self._controller.frame_changed.emit(layer.master_start)
+        self._window.update_sequence_info(layer.sequence)
+        if metadata.fps is not None:
+            self._window.set_status(
+                f"Loaded video {path.name} "
+                f"({metadata.width}×{metadata.height}, "
+                f"{float(metadata.fps):.3f} fps, "
+                f"{metadata.frame_count} frames)"
+            )
+        else:
+            self._window.set_status(f"Loaded video {path.name}")
 
     def _is_replace_destructive(self) -> bool:
         """True when a Replace would wipe state the user might want
@@ -2131,6 +2572,13 @@ class ImgPlayerApp:
         Single-path call (file menu, programmatic) loads directly via
         the legacy ``add_layer`` helper; multi-source drops route
         through ``add_layers`` which shows the grouped picker first.
+
+        Video files (mp4 / mov / …) are split out and added as
+        :meth:`Layer.from_video` directly — the OIIO-driven scan path
+        can't handle video containers. Mixed drops (videos + image
+        sequences in the same gesture) work: each video lands as its
+        own layer, the image sequences flow through the normal
+        scan / picker.
         """
         path_list = [paths] if isinstance(paths, Path) else list(paths)
         if not path_list:
@@ -2145,11 +2593,54 @@ class ImgPlayerApp:
                 "viewer to load the project."
             )
             return
-        from img_player.scan_handler import add_layer, add_layers
-        if len(path_list) == 1:
-            add_layer(self, path_list[0])
-        else:
-            add_layers(self, path_list)
+        # Split video files out — they take the dedicated
+        # Layer.from_video path; everything else goes through the
+        # OIIO scan / picker as before.
+        from img_player.media import is_video_file
+        video_paths = [
+            p for p in path_list if p.is_file() and is_video_file(p)
+        ]
+        other_paths = [p for p in path_list if p not in video_paths]
+        added = 0
+        for vp in video_paths:
+            if self._add_video_layer(vp):
+                added += 1
+        if other_paths:
+            from img_player.scan_handler import add_layer, add_layers
+            if len(other_paths) == 1:
+                add_layer(self, other_paths[0])
+            else:
+                add_layers(self, other_paths)
+        if video_paths and not other_paths:
+            self._window.set_status(
+                f"Added {added} video layer{'s' if added != 1 else ''}."
+            )
+
+    def _add_video_layer(self, path: Path) -> bool:
+        """Probe ``path`` and append a :class:`Layer.from_video` at the
+        top of the stack. Returns ``True`` on success, ``False`` when
+        the probe failed (unsupported / corrupt / no video stream).
+
+        Used both by ``_on_add_layer_requested`` (drop on layer panel,
+        no replace) and by ``_open_path`` when a multi-source drop
+        contains a mix of video and image sequences.
+        """
+        from img_player.layers.models import Layer
+        from img_player.media import probe_video
+        try:
+            metadata = probe_video(path)
+        except Exception as exc:
+            log.exception("video probe failed for %s", path)
+            self._window.set_status(f"Cannot add video {path.name}: {exc}")
+            return False
+        if not metadata.has_video:
+            self._window.set_status(
+                f"Cannot add {path.name}: no video stream."
+            )
+            return False
+        layer = Layer.from_video(metadata)
+        self._layer_stack.add(layer, position=0)
+        return True
 
     def _on_save_session_requested(self, path: Path) -> None:
         """File → Save session… — write the full LayerStack to a

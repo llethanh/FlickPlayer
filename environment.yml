@@ -7,7 +7,11 @@ dependencies:
   - py-openimageio       # Python bindings (shipped separately on conda-forge)
   - pyside6
   - numpy
+  - av                   # PyAV — FFmpeg bindings for video decode (mp4/mov, ProRes, DNxHR)
   - pip
   - pip:
       - opencolorio>=2.3  # ASWF wheels — not available on conda-forge win-64 as of 2026-04
+      - sounddevice>=0.5  # pip wheel ships its own PortAudio DLL — conda-forge build
+                          # mismatches the loader path on Windows (looks for
+                          # libportaudio-2.dll, conda ships portaudio.dll)
       - -e .[dev]

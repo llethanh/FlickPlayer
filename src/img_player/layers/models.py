@@ -5,6 +5,14 @@ signal emission stays centralised; the dataclass itself is
 intentionally mutable (default for ``@dataclass``) because the user
 edits offset / trim / visibility live and a frozen-and-replace
 pattern would force a stack-wide rebroadcast on each tweak.
+
+Video-backed layers (mp4 / mov / etc.) reuse the same dataclass with
+``video_metadata`` populated — the constructor :meth:`from_video`
+synthesises a one-virtual-frame-per-video-frame ``SequenceInfo`` so
+all the existing geometry methods (``covers``, ``source_frame_at``,
+master-range math) keep working unchanged. The renderer dispatches
+on ``video_metadata is not None`` to take a separate decode path
+(see ``img_player.media.video_source``).
 """
 
 from __future__ import annotations
@@ -13,8 +21,9 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from img_player.media.video_probe import VideoMetadata
 from img_player.sequence.channels import ChannelSelection
-from img_player.sequence.models import SequenceInfo
+from img_player.sequence.models import FrameInfo, SequenceInfo
 
 
 def _new_id() -> str:
@@ -79,6 +88,24 @@ class Layer:
     annotations_path: Path | None = None
     comments_path: Path | None = None
 
+    # Video-backed layers populate this from the PyAV probe; image
+    # sequences leave it ``None``. Renderer code branches on
+    # ``is_video`` to send video layers down the VideoSource decode
+    # path instead of the per-frame OIIO file loader. The synthetic
+    # ``sequence`` field still describes the virtual frame range so
+    # all timeline / trim / offset arithmetic stays uniform.
+    video_metadata: VideoMetadata | None = None
+    # Per-layer audio policy for video layers. ``solo``: only this
+    # layer's audio plays even when other video layers are visible;
+    # ``mute``: never play this layer's audio. Defaults match what
+    # the user expects on import — no solo, no mute, the active
+    # layer policy decides which track is audible.
+    audio_solo: bool = False
+    audio_mute: bool = False
+    # Volume in linear gain (1.0 = unity, 0.0 = silent). Applied to
+    # the audio mix only; no effect on image-sequence layers.
+    audio_gain: float = 1.0
+
     @classmethod
     def from_sequence(
         cls,
@@ -104,7 +131,87 @@ class Layer:
             name=name or sequence.display_pattern(),
         )
 
+    @classmethod
+    def from_video(
+        cls,
+        metadata: VideoMetadata,
+        offset: int = 0,
+        name: str | None = None,
+    ) -> Layer:
+        """Build a video-backed layer from a PyAV probe result.
+
+        The ``SequenceInfo`` we attach is **synthetic** — one virtual
+        :class:`FrameInfo` per video frame, all pointing at the same
+        container file. This keeps every existing geometry method
+        (``covers``, ``source_frame_at``, master-range math) working
+        without a parallel "video Layer" class. The renderer detects
+        :attr:`is_video` and routes pixel fetches through
+        :class:`img_player.media.video_source.VideoSource` instead of
+        the per-file OIIO loader.
+
+        ``frame_count`` falls back to ``duration × fps`` when the
+        container header didn't report a clean count (common with
+        streamed mp4s). At minimum we synthesise one frame so the
+        sequence invariant ("at least one frame") holds.
+        """
+        if not metadata.has_video:
+            raise ValueError(f"Cannot build Layer from non-video file: {metadata.path}")
+        # Resolve a frame count from whatever the probe gave us.
+        # Container ``frame_count`` first; ``duration × fps`` second;
+        # absolute fallback = 1 (so the dataclass invariant holds).
+        n_frames = metadata.frame_count
+        if n_frames is None and metadata.duration_seconds and metadata.fps:
+            n_frames = max(1, int(round(
+                metadata.duration_seconds * float(metadata.fps),
+            )))
+        if n_frames is None or n_frames < 1:
+            n_frames = 1
+        # mtime captured once — the per-frame mtime exists for the
+        # sequence path's "did the file change" reload semantic. For a
+        # single video file there's just one mtime; we copy it to
+        # every virtual frame so callers can keep a uniform interface.
+        try:
+            mtime = metadata.path.stat().st_mtime
+        except OSError:
+            mtime = 0.0
+        frames = tuple(
+            FrameInfo(path=metadata.path, frame_number=i, mtime=mtime)
+            for i in range(n_frames)
+        )
+        sequence = SequenceInfo(
+            base_name=metadata.path.stem,
+            extension=metadata.path.suffix,
+            directory=metadata.path.parent,
+            padding=0,
+            frames=frames,
+            fps_default=float(metadata.fps) if metadata.fps else 24.0,
+            width=metadata.width,
+            height=metadata.height,
+        )
+        return cls(
+            sequence=sequence,
+            layer_in=sequence.first_frame,
+            layer_out=sequence.last_frame,
+            offset=offset,
+            name=name or metadata.path.name,
+            video_metadata=metadata,
+            # Video frames coming out of FFmpeg are already display-
+            # range RGB (no alpha). The premult / straight distinction
+            # only matters for compositing layers with alpha. Mark
+            # straight so the alpha-composite path no-ops cleanly.
+            alpha_is_straight=True,
+        )
+
     # ---- Derived properties --------------------------------------------
+
+    @property
+    def is_video(self) -> bool:
+        """``True`` when this layer is backed by a video container.
+
+        Used by renderer / cache code to dispatch to the VideoSource
+        decode path instead of the per-frame OIIO file loader.
+        """
+        return self.video_metadata is not None
 
     @property
     def trim_length(self) -> int:
