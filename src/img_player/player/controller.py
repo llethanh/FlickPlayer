@@ -469,13 +469,28 @@ class PlayerController(QObject):  # type: ignore[misc]  # mypy: QObject is Any
         elapsed = self._clock() - self._play_start_clock
         d = self._state.direction
         target_offset = int(round(d * elapsed * self._state.fps))
-        tentative = self._play_start_frame + target_offset
-        # Same frame as we're already on → idle tick (clock fired
-        # before a full frame interval elapsed). Skip the advance
-        # path so we don't burn cache requests on no-op transitions.
-        if tentative == self._state.current_frame:
+        wall_target = self._play_start_frame + target_offset
+        cur = self._state.current_frame
+        # Idle tick: clock fired before a full frame interval elapsed.
+        # Skip the advance path so we don't burn cache requests on
+        # no-op transitions.
+        if wall_target == cur:
             self._maybe_emit_metrics()
             return
+        # Cap the per-tick step to ±1 frame. The wall-clock target
+        # still corrects long-term drift (a "behind" tick stays
+        # behind until the next idle tick lets the wall clock
+        # advance the target past us — the playhead catches up
+        # gradually instead of jumping multiple frames at once,
+        # which reads as visual stutter even though it's
+        # technically more accurate). For genuine multi-frame
+        # slips (GC pause, GUI redraw stall) the catch-up plays
+        # out over the next few ticks at +1/-1 each — perceptually
+        # smoother and within a few frames of true wall time.
+        if wall_target > cur:
+            tentative = cur + 1
+        else:
+            tentative = cur - 1
         next_frame, next_dir, should_stop = self._advance(tentative)
 
         # Cache-bound playback: stall the playhead instead of running

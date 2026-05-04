@@ -113,14 +113,15 @@ def test_tick_advances_forward(controller: PlayerController) -> None:
 
 
 def test_tick_catches_up_after_slow_qtimer(controller: PlayerController) -> None:
-    """Wall-clock-driven advance: a single tick fired late jumps the
-    playhead by however many frame intervals elapsed.
+    """Wall-clock-driven advance gradually catches up after a slip.
 
     Pre-refactor the controller advanced ``current_frame`` by exactly
-    +1 per tick. If the QTimer slipped (GC pause, GUI redraw), the
-    playhead fell behind wall time → A/V drift built up. With the
-    wall-clock anchor, the next tick targets the right frame and
-    skips through the missed ones.
+    +1 per tick — if the QTimer slipped, the playhead fell behind
+    wall time and A/V drift built up. With the wall-clock anchor
+    the next ticks target the wall-clock-correct frame; we cap the
+    per-tick step to ±1 (smoother visual at the cost of one or two
+    ticks to fully catch up after a slip), so a 5-frame slip is
+    caught up over the next 5 ticks at +1 each.
     """
     controller.seek(2)
     controller.play()
@@ -129,10 +130,18 @@ def test_tick_catches_up_after_slow_qtimer(controller: PlayerController) -> None
     # so we control the elapsed time directly.
     clock = controller._mock_clock  # type: ignore[attr-defined]
     clock.advance(5.0 / controller.state.fps)
-    # Call the real _tick (the fixture wraps it; reach the underlying
-    # method to avoid double-advance).
+    # First tick after the slip: +1 (capped) → frame 3.
     PlayerController._tick(controller)
-    assert controller.state.current_frame == 7  # 2 + 5
+    assert controller.state.current_frame == 3
+    # Subsequent ticks (no further wall-clock advance) keep advancing
+    # +1 each because the wall-clock target is still ahead of us,
+    # until we catch up at frame 7 (= 2 + 5).
+    for expected in (4, 5, 6, 7):
+        PlayerController._tick(controller)
+        assert controller.state.current_frame == expected
+    # Now caught up: another tick with no clock advance is a no-op.
+    PlayerController._tick(controller)
+    assert controller.state.current_frame == 7
 
 
 def test_loop_mode_wraps_to_start(controller: PlayerController) -> None:
