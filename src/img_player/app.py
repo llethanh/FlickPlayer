@@ -1912,7 +1912,21 @@ class ImgPlayerApp:
     def _on_scrub_requested(self, frame: int) -> None:
         """Timeline scrub: update the display immediately from the cache, but
         defer the full seek (which re-does prefetch planning) to coalesce
-        rapid slider events."""
+        rapid slider events.
+
+        Auto-pause during scrub: when the user drags the timeline while
+        the controller is playing, the play-tick and the scrub fight
+        for the decoder cursor — each fires every ~20 ms in opposite
+        directions, the threaded video decoder seeks backward on every
+        tick, throughput collapses. Pause on the first scrub event of
+        a gesture, then ``_apply_pending_seek`` resumes once the
+        debounce window closes (= the user stopped dragging). 20 ms is
+        short enough that a flick-of-the-wrist scrub never feels like
+        a deliberate stop.
+        """
+        if self._controller.state.is_playing:
+            self._scrub_was_playing = True
+            self._controller.pause()
         # Immediate visual feedback: show whatever's closest in cache.
         self._show_best_available(frame)
         self._window.timeline.set_current_frame(frame)
@@ -1939,10 +1953,22 @@ class ImgPlayerApp:
 
     def _apply_pending_seek(self) -> None:
         if self._pending_seek is None:
+            # Even with no pending seek, an active scrub-pause may need
+            # to resume — the debounce timer fires 20 ms after the last
+            # scrub event regardless of whether we coalesced one.
+            if getattr(self, "_scrub_was_playing", False):
+                self._scrub_was_playing = False
+                self._controller.play()
             return
         frame = self._pending_seek
         self._pending_seek = None
         self._controller.seek(frame)
+        # Resume playback if we paused for the scrub. Done after the
+        # seek so play() picks up at the new playhead, not the
+        # pre-scrub one.
+        if getattr(self, "_scrub_was_playing", False):
+            self._scrub_was_playing = False
+            self._controller.play()
 
     def _show_best_available(self, frame: int) -> None:
         # Video layer? Decode synchronously so scrub gives the user
