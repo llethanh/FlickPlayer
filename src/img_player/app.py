@@ -1151,9 +1151,18 @@ class ImgPlayerApp:
                 # Layer never had a selection set (just added) —
                 # apply the global / prefs-fallback state so the
                 # menu isn't blank, and write it back to the layer.
+                # ``tile_labels`` deliberately left empty: contact-
+                # sheet tile selections are session-bound (the
+                # user's last tile set rarely matches the next EXR's
+                # AOV layout, and auto-checking "the same labels"
+                # ends up auto-checking the first two groups every
+                # fresh load — confusing). Layout mode + labels
+                # visibility ARE preference-restored because they
+                # describe the contact-sheet's *shape*, which the
+                # user genuinely wants stable across loads.
                 transport.restore_channel_state(
                     self._prefs.channel_active_label,
-                    self._prefs.channel_tile_labels,
+                    (),
                     self._prefs.channel_layout_mode,
                     self._prefs.channel_labels_visible,
                 )
