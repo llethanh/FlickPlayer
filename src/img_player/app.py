@@ -2115,22 +2115,47 @@ class ImgPlayerApp:
             return
         primary = path_list[0]
 
-        # Video file? Single-file mp4 / mov / … drop creates a video
-        # layer that bypasses the per-frame OIIO cache and pulls
-        # pixels via PyAV (see ``VideoSourceManager``). Multi-source
-        # drops mixing video and image sequences would need a tree
-        # picker variant — for now only single-video drops route here;
-        # mixed drops fall through to the regular sequence path and
-        # the videos are silently skipped (logged).
+        # Video file? mp4 / mov / … drops create video layer(s) that
+        # bypass the per-frame OIIO cache and pull pixels via PyAV
+        # (see ``VideoSourceManager``).
+        # Three cases:
+        #   1. Single video → replace-load via ``_open_video_path``.
+        #   2. Multi-video drop → first video replace-loads, rest
+        #      append as layers (mirrors multi-folder image-sequence
+        #      drops).
+        #   3. Mixed drop (videos + image-sequence folders) →
+        #      currently unsupported; surface a status hint and route
+        #      the image-sequence portion only. Mixing both in one
+        #      gesture would need a unified picker variant.
         from img_player.media import is_video_file
-        if len(path_list) == 1 and path_list[0].is_file() and is_video_file(path_list[0]):
-            video_path = path_list[0]
+        video_paths = [
+            p for p in path_list if p.is_file() and is_video_file(p)
+        ]
+        non_video_paths = [p for p in path_list if p not in video_paths]
+        if video_paths and not non_video_paths:
+            primary = video_paths[0]
             if self._is_replace_destructive():
-                if not self._confirm_replace(video_path):
+                if not self._confirm_replace(primary):
                     self._window.set_status("Replace annulé.")
                     return
-            self._open_video_path(video_path)
+            self._open_video_path(primary)
+            for extra in video_paths[1:]:
+                self._add_video_layer(extra)
+            if len(video_paths) > 1:
+                self._window.set_status(
+                    f"Loaded {primary.name} + "
+                    f"{len(video_paths) - 1} additional video layer"
+                    f"{'s' if len(video_paths) > 1 else ''}."
+                )
             return
+        if video_paths and non_video_paths:
+            self._window.set_status(
+                "Mixing videos and image sequences in one drop is "
+                "not yet supported — loaded only the image sequences."
+            )
+            # Fall through with non_video_paths only.
+            path_list = non_video_paths
+            primary = path_list[0]
 
         # Project file? A ``.session`` drop is a "load this whole
         # project" gesture, not a sequence open. Route to the session
@@ -2324,6 +2349,13 @@ class ImgPlayerApp:
         Single-path call (file menu, programmatic) loads directly via
         the legacy ``add_layer`` helper; multi-source drops route
         through ``add_layers`` which shows the grouped picker first.
+
+        Video files (mp4 / mov / …) are split out and added as
+        :meth:`Layer.from_video` directly — the OIIO-driven scan path
+        can't handle video containers. Mixed drops (videos + image
+        sequences in the same gesture) work: each video lands as its
+        own layer, the image sequences flow through the normal
+        scan / picker.
         """
         path_list = [paths] if isinstance(paths, Path) else list(paths)
         if not path_list:
@@ -2338,11 +2370,54 @@ class ImgPlayerApp:
                 "viewer to load the project."
             )
             return
-        from img_player.scan_handler import add_layer, add_layers
-        if len(path_list) == 1:
-            add_layer(self, path_list[0])
-        else:
-            add_layers(self, path_list)
+        # Split video files out — they take the dedicated
+        # Layer.from_video path; everything else goes through the
+        # OIIO scan / picker as before.
+        from img_player.media import is_video_file
+        video_paths = [
+            p for p in path_list if p.is_file() and is_video_file(p)
+        ]
+        other_paths = [p for p in path_list if p not in video_paths]
+        added = 0
+        for vp in video_paths:
+            if self._add_video_layer(vp):
+                added += 1
+        if other_paths:
+            from img_player.scan_handler import add_layer, add_layers
+            if len(other_paths) == 1:
+                add_layer(self, other_paths[0])
+            else:
+                add_layers(self, other_paths)
+        if video_paths and not other_paths:
+            self._window.set_status(
+                f"Added {added} video layer{'s' if added != 1 else ''}."
+            )
+
+    def _add_video_layer(self, path: Path) -> bool:
+        """Probe ``path`` and append a :class:`Layer.from_video` at the
+        top of the stack. Returns ``True`` on success, ``False`` when
+        the probe failed (unsupported / corrupt / no video stream).
+
+        Used both by ``_on_add_layer_requested`` (drop on layer panel,
+        no replace) and by ``_open_path`` when a multi-source drop
+        contains a mix of video and image sequences.
+        """
+        from img_player.layers.models import Layer
+        from img_player.media import probe_video
+        try:
+            metadata = probe_video(path)
+        except Exception as exc:
+            log.exception("video probe failed for %s", path)
+            self._window.set_status(f"Cannot add video {path.name}: {exc}")
+            return False
+        if not metadata.has_video:
+            self._window.set_status(
+                f"Cannot add {path.name}: no video stream."
+            )
+            return False
+        layer = Layer.from_video(metadata)
+        self._layer_stack.add(layer, position=0)
+        return True
 
     def _on_save_session_requested(self, path: Path) -> None:
         """File → Save session… — write the full LayerStack to a
