@@ -1767,6 +1767,25 @@ class ImgPlayerApp:
         self._controller.seek(frame)
 
     def _show_best_available(self, frame: int) -> None:
+        # Video layer? Decode synchronously so scrub gives the user
+        # frame-accurate feedback under the cursor instead of the
+        # MISSING-FRAME placeholder (the cache never has anything for
+        # video). Same code path as ``_on_frame_changed``'s video
+        # branch — VideoSource caches the last frame internally so
+        # repeated calls within the same display interval are free.
+        displayed = (
+            self._layer_stack.topmost_visible_at(frame)
+            if self._layer_stack else None
+        )
+        if displayed is not None and displayed.is_video:
+            try:
+                arr_v = self._decode_video_layer(displayed, frame)
+                if arr_v is not None:
+                    self._last_displayed = frame
+                    self._display_array(arr_v)
+                    return
+            except Exception:
+                log.exception("video scrub decode failed at frame %d", frame)
         arr = self._cache.get(frame)
         if arr is not None:
             self._last_displayed = frame
