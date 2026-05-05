@@ -99,6 +99,7 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
     # their path in a one-element list.
     open_requested = Signal(list)
     export_requested = Signal()  # File → Export… (v0.5.0)
+    save_frame_requested = Signal()  # File → Save Frame As… (v1.2)
     new_sequence_requested = Signal()      # File → New (Ctrl+N) — clear the loaded sequence
     add_layer_requested = Signal(list)     # File → Add layer… (v1.0)
                                            #   carries the picked paths
@@ -489,6 +490,8 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         # the 💾 transport bar button + Reload.
         if hasattr(self, "_export_act"):
             self._export_act.setEnabled(True)
+        if hasattr(self, "_save_frame_act"):
+            self._save_frame_act.setEnabled(True)
         if hasattr(self, "_reload_act"):
             self._reload_act.setEnabled(True)
         if hasattr(self, "_add_layer_act"):
@@ -626,6 +629,18 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         self._export_act.setEnabled(False)
         self._export_act.triggered.connect(self.export_requested.emit)
         file_menu.addAction(self._export_act)
+
+        # Save Frame As… (v1.2) — quick WYSIWYG snapshot of the
+        # current viewer with optional annotations / overlay. Lives
+        # next to Export so the two related "produce a file" actions
+        # are visually grouped.  Ctrl+Alt+S keeps the muscle memory
+        # close to Save (Ctrl+S) without colliding with Save Session
+        # As (Ctrl+Shift+S).
+        self._save_frame_act = QAction("Save &Frame As…", self)
+        self._save_frame_act.setShortcut(QKeySequence("Ctrl+Alt+S"))
+        self._save_frame_act.setEnabled(False)
+        self._save_frame_act.triggered.connect(self.save_frame_requested.emit)
+        file_menu.addAction(self._save_frame_act)
 
         # NB: explicit Quit action removed — the OS-default close
         # button (X) and Alt+F4 / Cmd+Q already cover the gesture, and

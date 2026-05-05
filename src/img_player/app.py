@@ -749,6 +749,10 @@ class ImgPlayerApp:
         # Export (v0.5.0) — both menu and transport button route here.
         w.export_requested.connect(self._open_export_dialog)
         w.transport.export_clicked.connect(self._open_export_dialog)
+        # Save Frame As… (v1.2) — quick WYSIWYG snapshot. Menu only —
+        # no transport button, the keyboard shortcut (Ctrl+Alt+S) is
+        # the primary entry for power users.
+        w.save_frame_requested.connect(self._open_save_frame_dialog)
         # New / Reload (v0.5.1) — same shape, two routes each.
         w.new_sequence_requested.connect(self._on_new_sequence)
         w.reload_sequence_requested.connect(self._on_reload_sequence)
@@ -2111,6 +2115,8 @@ class ImgPlayerApp:
         # Re-disable the actions that need a loaded sequence.
         if hasattr(self._window, "_export_act"):
             self._window._export_act.setEnabled(False)  # noqa: SLF001
+        if hasattr(self._window, "_save_frame_act"):
+            self._window._save_frame_act.setEnabled(False)  # noqa: SLF001
         if hasattr(self._window, "_reload_act"):
             self._window._reload_act.setEnabled(False)  # noqa: SLF001
         self._window.transport.set_export_enabled(False)
@@ -2211,6 +2217,13 @@ class ImgPlayerApp:
         kick off the worker on accept."""
         from img_player.export_handler import open_export_dialog
         open_export_dialog(self)
+
+    def _open_save_frame_dialog(self) -> None:
+        """File → Save Frame As… (Ctrl+Alt+S) — quick WYSIWYG
+        snapshot of the current viewer with optional
+        annotations / overlay toggles."""
+        from img_player.save_frame_handler import open_save_frame_dialog
+        open_save_frame_dialog(self)
 
     def _on_export_finished(self, output_path: str, frames: int, duration_s: float) -> None:
         self._window.set_status(

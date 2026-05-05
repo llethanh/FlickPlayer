@@ -505,3 +505,32 @@ class Preferences:
     def export_settings(self, data: dict[str, object]) -> None:
         for key, value in data.items():
             self._s.setValue(f"export/{key}", value)
+
+    # ------------------------------------------------------------------ Save Frame As (v1.2)
+
+    @property
+    def save_frame_settings(self) -> dict[str, object]:
+        """Round-trip the last-used "Save Frame As…" dialog state.
+
+        Stored under ``save_frame/...`` keys: ``output_dir`` (parent
+        directory the user last picked), ``format`` (file extension
+        without dot, e.g. ``"png"``), ``with_annotations`` (bool).
+        Defaults are picked by the dialog itself when a key is
+        missing so the source of truth stays in one place.
+
+        The HUD / brackets / decorative overlays are always excluded
+        from the capture (= UI chrome, not content) so there is no
+        ``with_overlay`` toggle to persist.
+        """
+        keys = ("output_dir", "format", "with_annotations")
+        out: dict[str, object] = {}
+        for key in keys:
+            raw = self._s.value(f"save_frame/{key}")
+            if raw is not None:
+                out[key] = raw
+        return out
+
+    @save_frame_settings.setter
+    def save_frame_settings(self, data: dict[str, object]) -> None:
+        for key, value in data.items():
+            self._s.setValue(f"save_frame/{key}", value)
