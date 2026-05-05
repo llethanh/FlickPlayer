@@ -997,16 +997,44 @@ class ImgPlayerApp:
 
     def _nearest_cached_fallback(self, frame: int) -> int | None:
         """Pick the closest cached frame behind (for forward play) or ahead
-        (for reverse play) of `frame`. Returns None if the cache is empty."""
+        (for reverse play) of ``frame``. Returns ``None`` if the cache
+        has no usable candidate.
+
+        **Layer-aware filter.** Multi-layer stacks place different
+        layers on different master-frame ranges. Without this filter
+        the fallback would grab whichever frame happens to be cached
+        nearest, even if its topmost-visible layer differs from the
+        target's — producing a visible flicker of "wrong layer pixels"
+        while the user scrubs backward into a region the cache hasn't
+        decoded yet (the typical case: forward play warms layer A's
+        cache, user scrubs back into layer B's territory, fallback
+        falls onto an A-frame). We restrict the candidate set to
+        frames whose topmost-visible layer matches the target's.
+        """
         cached = self._cache.cached_frames()
-        if not cached:
+        if not cached or self._layer_stack is None:
+            return None
+        target_layer = self._layer_stack.topmost_visible_at(frame)
+        if target_layer is None:
+            # ``frame`` is in a no-coverage void — caller paints the
+            # gap placeholder; no fallback applies.
+            return None
+        # Filter cached frames to those whose topmost-visible layer is
+        # the same as the target's. ``topmost_visible_at`` is cheap
+        # (linear walk of the stack), and ``cached_frames()`` typically
+        # holds a few hundred entries — total cost stays sub-ms.
+        cached_same_layer = [
+            f for f in cached
+            if self._layer_stack.topmost_visible_at(f) is target_layer
+        ]
+        if not cached_same_layer:
             return None
         direction = self._controller.state.direction
         if direction >= 0:
-            candidates = [f for f in cached if f <= frame]
-            return max(candidates) if candidates else min(cached)
-        candidates = [f for f in cached if f >= frame]
-        return min(candidates) if candidates else max(cached)
+            candidates = [f for f in cached_same_layer if f <= frame]
+            return max(candidates) if candidates else min(cached_same_layer)
+        candidates = [f for f in cached_same_layer if f >= frame]
+        return min(candidates) if candidates else max(cached_same_layer)
 
     def _close_orphan_video_sources(self) -> None:
         """Close video decoders whose layer is no longer in the stack.
