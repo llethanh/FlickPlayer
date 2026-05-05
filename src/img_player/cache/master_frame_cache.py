@@ -286,7 +286,8 @@ class MasterFrameCache:
         RGB(A) reader) or a list of names.
         """
         from img_player.sequence.channels import (
-            ChannelGroup, ChannelSelection,
+            ChannelGroup,
+            ChannelSelection,
         )
         focused = self._stack.focused() or (
             self._stack.layers()[0] if self._stack else None

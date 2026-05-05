@@ -58,7 +58,6 @@ from PySide6.QtWidgets import (
 from img_player.sequence.channels import ChannelGroup, ChannelSelection
 from img_player.ui.theme import G, S
 
-
 # Layout-mode tokens. Stored in QSettings exactly as listed here, so
 # external code (Preferences round-trip) can compare with a string
 # literal rather than importing this module.

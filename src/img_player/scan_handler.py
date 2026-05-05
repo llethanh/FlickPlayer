@@ -29,9 +29,9 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QMessageBox
 
-from img_player.comment import load_comments
 from img_player.annotate import load_annotations
 from img_player.annotate.persistence import sidecar_path
+from img_player.comment import load_comments
 from img_player.sequence.models import SequenceInfo
 from img_player.sequence.scanner import (
     FolderGroup,
@@ -130,7 +130,6 @@ def add_layer(app: ImgPlayerApp, path: Path) -> None:
 
     def on_done(result: object) -> None:
         from img_player.layers import Layer
-        from img_player.sequence.scanner import SequenceNotFoundError
         if isinstance(result, Exception):
             log.warning("[add-layer] scan failed for %s: %s", path, result)
             app._window.set_status(f"Add layer failed: {result}")

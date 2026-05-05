@@ -125,7 +125,7 @@ class RuntimeMonitor(QObject):  # type: ignore[misc]
     def __init__(
         self,
         controller: PlayerController,
-        cache: "FrameCache | MasterFrameCache",
+        cache: FrameCache | MasterFrameCache,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)

@@ -21,7 +21,6 @@ from typing import Any
 
 from img_player.bench.recorder import DecodeSample, PaintSample, TickSample
 
-
 # ----------------------------------------------------------------------- Helpers
 
 def _percentile(values: list[float], q: float) -> float:

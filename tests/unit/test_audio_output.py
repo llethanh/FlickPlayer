@@ -8,8 +8,6 @@ Real-device sanity-checking is part of the manual smoke pass.
 
 from __future__ import annotations
 
-import threading
-import time
 from pathlib import Path
 
 import numpy as np

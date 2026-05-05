@@ -20,7 +20,6 @@ from img_player.color.auto_detect import (
     detect_view,
 )
 
-
 # A representative OCIO config — the names mirror what the ACES studio
 # config exposes (close enough to the built-in ocio://default).
 OCIO_CONFIG = [

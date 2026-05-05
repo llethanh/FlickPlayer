@@ -41,7 +41,6 @@ from PySide6.QtCore import QObject, QTimer, Signal
 
 from img_player.annotate.stroke import Stroke
 
-
 # ============================================================================
 # Pure helper (module-level for testability)
 # ============================================================================

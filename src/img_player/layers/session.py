@@ -193,7 +193,7 @@ class LoadResult:
     # Color panel snapshot the session shipped with (v2+). ``None``
     # for v1 sessions / sessions saved without a color_state — the
     # caller leaves the panel state untouched in that case.
-    color_state: "ColorState | None" = None
+    color_state: ColorState | None = None
 
 
 def load_session(stack: LayerStack, path: Path) -> LoadResult:
@@ -333,6 +333,7 @@ def _enrich_with_header(seq):  # type: ignore[no-untyped-def]
     """
     try:
         from dataclasses import replace
+
         from img_player.io.reader import read_header
 
         spec = read_header(seq.frames[0].path)

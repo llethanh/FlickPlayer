@@ -755,7 +755,6 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
         bench_enabled = recorder.is_enabled()
         paint_t0 = time.monotonic() if bench_enabled else 0.0
         upload_us = 0.0
-        displayed_frame = -1  # filled in below if we actually upload this paint
 
         GL.glClear(GL.GL_COLOR_BUFFER_BIT)
 

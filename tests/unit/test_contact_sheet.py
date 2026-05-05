@@ -16,7 +16,6 @@ from img_player.render.contact_sheet import (
 )
 from img_player.sequence.channels import ChannelGroup, ChannelSelection
 
-
 # ----------------------------------------------------------------- helpers
 
 def _g(label: str, *channels: str) -> ChannelGroup:

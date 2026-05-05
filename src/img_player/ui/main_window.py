@@ -11,19 +11,15 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QEvent, QSize, QTimer, Qt, Signal
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
-    QDragEnterEvent,
-    QDropEvent,
     QIcon,
     QKeySequence,
-    QMouseEvent,
     QShortcut,
 )
 from PySide6.QtWidgets import (
-    QDockWidget,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -330,8 +326,8 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         # a child of ``self`` so it can absolute-position over
         # everything including the menu bar.
         from img_player.ui.drop_zone import (
-            DropOverlay,
             SESSION_ACCENT,
+            DropOverlay,
             get_default_coordinator,
         )
         self._session_drop_overlay = DropOverlay(
@@ -407,7 +403,7 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         return self._color_panel
 
     @property
-    def annotation_dock(self) -> "_SidePanelDock":
+    def annotation_dock(self) -> _SidePanelDock:
         """Placeholder host the AnnotationToolbar reparents into when
         the user picks dock mode. Provides a ``setWidget`` /
         ``widget`` shim compatible with the QDockWidget API the

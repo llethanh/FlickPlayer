@@ -29,7 +29,7 @@ import getpass
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 log = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ def _now() -> str:
     the panel formats local time for display, but the persisted
     value is always universal.
     """
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _detect_author() -> str:

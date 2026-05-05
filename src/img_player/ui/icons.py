@@ -36,7 +36,6 @@ from PySide6.QtWidgets import QApplication
 
 from img_player.ui.theme import H
 
-
 # ----------------------------------------------------------------------- Templates
 
 # Each template uses a 16×16 viewBox so they all line up on the same grid.

@@ -323,7 +323,7 @@ class ExportSettings:
     # Default = ABORT to match the legacy behaviour: an incomplete
     # sequence shouldn't silently produce a corrupt-looking export
     # unless the user explicitly opts in.
-    missing_frame_policy: "MissingFramePolicy" = field(
+    missing_frame_policy: MissingFramePolicy = field(
         default_factory=lambda: MissingFramePolicy.ABORT,
     )
 

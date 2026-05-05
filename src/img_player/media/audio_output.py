@@ -20,8 +20,6 @@ from __future__ import annotations
 import logging
 import queue
 import threading
-from collections.abc import Callable
-from typing import Optional
 
 import numpy as np
 

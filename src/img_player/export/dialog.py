@@ -52,12 +52,11 @@ from img_player.export.settings import (
     PRORES_PROFILES,
     RESOLUTION_PRESETS,
     ExportFormat,
-    ExportFormatKind,
     ExportSettings,
     MissingFramePolicy,
     estimate_size_bytes,
-    format_bytes,
     format_by_key,
+    format_bytes,
 )
 
 log = logging.getLogger(__name__)

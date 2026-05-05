@@ -14,7 +14,6 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Deque
 
 # ----------------------------------------------------------------------- Sample dataclasses
 
@@ -79,9 +78,9 @@ class DecodeSample:
 _LOCK = threading.Lock()
 _ENABLED = False
 _T0 = 0.0
-_TICKS: Deque[TickSample] = deque()
-_PAINTS: Deque[PaintSample] = deque()
-_DECODES: Deque[DecodeSample] = deque()
+_TICKS: deque[TickSample] = deque()
+_PAINTS: deque[PaintSample] = deque()
+_DECODES: deque[DecodeSample] = deque()
 
 
 def is_enabled() -> bool:

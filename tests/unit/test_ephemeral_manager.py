@@ -22,7 +22,6 @@ import pytest
 from img_player.annotate.ephemeral import EphemeralStrokeManager
 from img_player.annotate.stroke import Stroke
 
-
 # ============================================================================
 # Fixtures
 # ============================================================================

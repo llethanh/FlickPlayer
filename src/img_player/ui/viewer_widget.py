@@ -9,16 +9,14 @@ into without touching GL code.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QLabel, QStackedLayout, QWidget
 
 from img_player.render.gl_viewport import GLViewport
 from img_player.ui.brackets_overlay import BracketsOverlay
 from img_player.ui.drop_zone import (
-    DropOverlay,
     REPLACE_ACCENT,
+    DropOverlay,
     install_file_drop_zone,
 )
 

@@ -32,7 +32,6 @@ from PySide6.QtWidgets import (
 
 from img_player.ui.theme import F, S
 
-
 DropAction = Literal["add", "replace", "cancel"]
 
 

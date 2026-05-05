@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from PySide6.QtGui import QColor, QFont
 
-
 # ---------------------------------------------------------------------------
 # Colors — QColor instances
 # ---------------------------------------------------------------------------

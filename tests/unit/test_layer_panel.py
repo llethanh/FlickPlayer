@@ -9,8 +9,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from img_player.layers import Layer, LayerStack
 from img_player.sequence.models import FrameInfo, SequenceInfo
 from img_player.ui.layer_panel import LayerPanel

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import argparse
-import logging
 import gc
+import logging
 import sys
 from pathlib import Path
 
@@ -20,9 +20,9 @@ from img_player.annotate import (
     ToolKind,
     save_annotations,
 )
-from img_player.comment import CommentStore, save_comments
 from img_player.color.gpu_processor import build_shader_bundle
 from img_player.color.ocio_manager import OCIOManager
+from img_player.comment import CommentStore, save_comments
 from img_player.io.reader import configure_oiio
 from img_player.perf import (
     HardwareProfile,
@@ -46,7 +46,11 @@ from img_player.player.state import PlaybackState
 from img_player.preferences import Preferences
 from img_player.render.contact_sheet import (
     CompositeGeometry,
+)
+from img_player.render.contact_sheet import (
     bake_labels as bake_contact_sheet_labels,
+)
+from img_player.render.contact_sheet import (
     compose as compose_contact_sheet,
 )
 from img_player.sequence.channels import ChannelSelection
@@ -2366,7 +2370,8 @@ class ImgPlayerApp:
         if ceiling is None:
             return
         from img_player.perf.runtime_state import (
-            RuntimeState, apply_runtime_constraints,
+            RuntimeState,
+            apply_runtime_constraints,
         )
         state = RuntimeState.snapshot()
         retuned = apply_runtime_constraints(ceiling, state)
@@ -2897,6 +2902,7 @@ class ImgPlayerApp:
             return seq
         try:
             from dataclasses import replace
+
             from img_player.io.reader import read_header
 
             spec = read_header(seq.frames[0].path)
@@ -2984,10 +2990,6 @@ class ImgPlayerApp:
         else:
             self._window.set_status(
                 f"Source colorspace: not detected — {source_result.reason}. "
-                f"Pick one in the Color panel."
-            )
-            self._window.set_status(
-                f"Source colorspace: not detected — {result.reason}. "
                 f"Pick one in the Color panel."
             )
 

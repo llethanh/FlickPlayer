@@ -22,7 +22,6 @@ from img_player.annotate import (
     ToolKind,
 )
 
-
 # ============================================================================
 # Fixture: build a toolbar with stand-in viewport + dock so we don't
 # have to spin up a full GLViewport (which would need a GL context).

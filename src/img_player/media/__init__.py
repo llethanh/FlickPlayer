@@ -15,14 +15,14 @@ axis, with each layer mapping master-time → its own native frame /
 PTS.
 """
 
+from img_player.media.audio_output import AudioOutput
+from img_player.media.audio_source import AudioSource
 from img_player.media.video_probe import (
     VIDEO_EXTENSIONS,
     VideoMetadata,
     is_video_file,
     probe_video,
 )
-from img_player.media.audio_output import AudioOutput
-from img_player.media.audio_source import AudioSource
 from img_player.media.video_renderer import VideoSourceManager
 from img_player.media.video_source import VideoSource
 

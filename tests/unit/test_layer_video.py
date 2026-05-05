@@ -6,7 +6,6 @@ suite stays fixture-free.
 
 from __future__ import annotations
 
-from fractions import Fraction
 from pathlib import Path
 
 import numpy as np

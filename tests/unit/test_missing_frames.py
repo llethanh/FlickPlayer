@@ -14,13 +14,10 @@ from pathlib import Path
 
 import numpy as np
 import OpenImageIO as oiio
-import pytest
 
 from img_player.cache.frame_cache import FrameCache
 from img_player.cache.missing_placeholder import get_missing_placeholder, reset_cache
-from img_player.sequence.models import FrameInfo, SequenceInfo
 from img_player.sequence.scanner import rescan, scan
-
 
 # ============================================================================
 # Placeholder generator

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections import deque
 from pathlib import Path
-from typing import Deque
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -40,7 +39,7 @@ class ExportProgressDialog(QDialog):  # type: ignore[misc]
         self._total = max(1, int(total_frames))
         self._output_path = output_path
         self._cancel_requested = False
-        self._fps_history: Deque[float] = deque(maxlen=20)
+        self._fps_history: deque[float] = deque(maxlen=20)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(8)

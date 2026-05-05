@@ -32,7 +32,6 @@ from PySide6.QtGui import (
     QRadialGradient,
 )
 
-
 # ------------------------------------------------------------
 # Font handling — auto-load bundled .ttf if present
 # ------------------------------------------------------------

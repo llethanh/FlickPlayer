@@ -37,7 +37,6 @@ from typing import Literal
 from PySide6.QtCore import QPoint, QRectF, Qt, Signal
 from PySide6.QtGui import (
     QColor,
-    QFont,
     QFontMetrics,
     QMouseEvent,
     QPainter,
@@ -48,7 +47,6 @@ from PySide6.QtWidgets import QApplication, QSizePolicy, QWidget
 
 from img_player.layers import Layer
 from img_player.ui.theme import F, H
-
 
 # ---------------------------------------------------------------- Constants
 

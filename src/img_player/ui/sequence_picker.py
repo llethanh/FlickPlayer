@@ -27,8 +27,6 @@ Default check state
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
@@ -46,7 +44,6 @@ from PySide6.QtWidgets import (
 from img_player.sequence.models import SequenceInfo
 from img_player.sequence.scanner import FolderGroup
 from img_player.ui.theme import F, H, S
-
 
 # Custom item-data role to track which list rows hold a sequence
 # (carries the SequenceInfo) versus a header / placeholder (carries

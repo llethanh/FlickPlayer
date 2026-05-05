@@ -182,7 +182,7 @@ class VideoSource:
                     return self._last_frame
                 raise RuntimeError(
                     f"No decodable frame found at t={t} in {self._path}"
-                )
+                ) from None
             except Exception as exc:  # PyAV EOFError, codec hiccups
                 # PyAV occasionally raises av.error.EOFError on the
                 # final packet of a short clip — treat as end of

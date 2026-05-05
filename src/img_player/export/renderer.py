@@ -30,6 +30,8 @@ from img_player.export.writers.image_seq import output_dtype_for
 from img_player.io.reader import read_frame
 from img_player.render.contact_sheet import (
     bake_labels as bake_contact_sheet_labels,
+)
+from img_player.render.contact_sheet import (
     compose as compose_contact_sheet,
 )
 from img_player.sequence.channels import ChannelSelection

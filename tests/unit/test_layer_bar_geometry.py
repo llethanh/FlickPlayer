@@ -7,10 +7,7 @@ be pinned here with no Qt at all.
 
 from __future__ import annotations
 
-import pytest
-
-from img_player.ui.layer_bar import BarGeometry, PADDING_X, snap_master_frame
-
+from img_player.ui.layer_bar import PADDING_X, BarGeometry, snap_master_frame
 
 # ============================================================================
 # BarGeometry — frame ↔ pixel conversion

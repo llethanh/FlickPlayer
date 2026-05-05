@@ -8,7 +8,6 @@ from img_player.sequence.channels import (
     auto_grid,
 )
 
-
 # ----------------------------------------------------------------- helpers
 
 def _g(label: str, *channels: str) -> ChannelGroup:

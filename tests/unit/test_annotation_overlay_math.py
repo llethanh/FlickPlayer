@@ -20,7 +20,6 @@ from img_player.annotate.overlay import (
 )
 from img_player.annotate.stroke import Stroke
 
-
 # ============================================================================
 # widget_to_image / image_to_widget — coordinate transform
 # ============================================================================

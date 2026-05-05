@@ -10,10 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from img_player.annotate.persistence import (
-    SCHEMA_VERSION,
     save_annotations,
     sidecar_path,
 )

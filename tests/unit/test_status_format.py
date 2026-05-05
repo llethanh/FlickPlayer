@@ -11,7 +11,6 @@ from img_player.ui.status_format import (
 )
 from img_player.ui.theme import H
 
-
 # ---------------------------------------------------------------------- fps dot
 
 class TestFpsDotColor:

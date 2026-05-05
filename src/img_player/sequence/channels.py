@@ -28,7 +28,7 @@ The output is ordered to match the user's mental model:
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 # RGB-like sub-channel names recognised when grouping. Some renderers

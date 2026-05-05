@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from img_player import __version__ as IMG_PLAYER_VERSION
@@ -95,7 +95,7 @@ def save_annotations(
 
         payload = {
             "schema_version": SCHEMA_VERSION,
-            "saved_at": datetime.now(timezone.utc).isoformat(),
+            "saved_at": datetime.now(UTC).isoformat(),
             "img_player_version": IMG_PLAYER_VERSION,
             "sequences": existing_sequences,
         }

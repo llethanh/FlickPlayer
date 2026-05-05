@@ -8,12 +8,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
-import pytest
 
 from img_player.cache.master_frame_cache import MasterFrameCache
 from img_player.layers import Layer, LayerStack
 from img_player.sequence.models import FrameInfo, SequenceInfo
-
 
 # ============================================================================
 # Helpers

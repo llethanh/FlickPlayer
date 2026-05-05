@@ -8,7 +8,7 @@ immutability, the edited() copy, and JSON round-trip.
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -64,7 +64,7 @@ class TestNew:
         assert dt.tzinfo is not None
         # Within ~5 seconds of "now" — sanity, not a tight bound.
         delta = abs(
-            (datetime.now(timezone.utc) - dt).total_seconds()
+            (datetime.now(UTC) - dt).total_seconds()
         )
         assert delta < 5.0
 

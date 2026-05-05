@@ -65,6 +65,24 @@ select = [
 ]
 ignore = [
     "E501",     # line-too-long (ruff format handles it)
+    # Intentional VFX-domain unicode in comments / docstrings / strings:
+    # × in grid layout names ("2×2", "3×3"), α in alpha-mode mnemonics
+    # ("αS"), em-dashes in prose. The "did you mean ASCII" hints are
+    # noise here — these characters carry meaning.
+    "RUF001",   # ambiguous-unicode-character-string
+    "RUF002",   # ambiguous-unicode-character-docstring
+    "RUF003",   # ambiguous-unicode-character-comment
+    # ``# noqa: SLF001`` is sprinkled across tests + a few app bridge
+    # points to acknowledge private-attribute access. SLF001 isn't in
+    # our enabled rule set so ruff flags every ``noqa`` as unused;
+    # turning it off keeps the noqa comments as living documentation
+    # without forcing us to enable SLF001 globally (the warnings
+    # would dwarf the few legit cases).
+    "RUF100",   # unused-noqa
+    # E741 (ambiguous variable name like ``l``) is style-policy noise
+    # in compute-heavy code where short names map to math conventions
+    # (e.g. layer ``l`` in a layer iteration).
+    "E741",
 ]
 
 [tool.ruff.format]

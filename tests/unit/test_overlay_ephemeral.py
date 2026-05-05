@@ -20,14 +20,13 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 import pytest
-from PySide6.QtCore import QPoint, QPointF, QRect, Qt, Signal
+from PySide6.QtCore import QPointF, Qt, Signal
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QWidget
 
 from img_player.annotate.ephemeral import EphemeralStrokeManager
 from img_player.annotate.overlay import AnnotationOverlay, ToolKind
 from img_player.annotate.store import AnnotationStore
-
 
 # ============================================================================
 # Fake viewport — minimal QWidget with the API the overlay reads

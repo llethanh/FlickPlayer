@@ -16,11 +16,8 @@ test plan. What IS unit-testable:
 
 from __future__ import annotations
 
-import pytest
-
 from img_player.ui.timeline import Timeline
 from img_player.ui.transport import TransportBar
-
 
 # ============================================================================
 # Timeline annotation markers

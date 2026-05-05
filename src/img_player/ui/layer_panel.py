@@ -17,8 +17,6 @@ drag handles) lands in phase 4.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from PySide6.QtCore import QMimeData, QPoint, Qt, Signal
 from PySide6.QtGui import QColor, QDrag, QKeyEvent, QMouseEvent, QPainter, QPixmap
 from PySide6.QtWidgets import (
@@ -27,8 +25,6 @@ from PySide6.QtWidgets import (
     QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
-    QPushButton,
-    QSizePolicy,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -36,8 +32,7 @@ from PySide6.QtWidgets import (
 
 from img_player.layers import Layer, LayerStack
 from img_player.ui.layer_bar import LayerBar
-from img_player.ui.theme import C, F, G, H, S
-
+from img_player.ui.theme import F, H, S
 
 # ---------------------------------------------------------------- LayerRow
 
@@ -715,7 +710,7 @@ class LayerRow(QFrame):  # type: ignore[misc]
             return pixmap, self._press_pos
         return pixmap, QPoint(pixmap.width() // 4, pixmap.height() // 2)
 
-    def _find_panel(self) -> "LayerPanel | None":
+    def _find_panel(self) -> LayerPanel | None:
         """Walk up the parent chain to locate the owning panel.
 
         Cleaner than passing the panel reference through the
@@ -747,7 +742,7 @@ class _RowsHost(QWidget):  # type: ignore[misc]
     panel's API stays the canonical entry point for stack mutations.
     """
 
-    def __init__(self, panel: "LayerPanel") -> None:
+    def __init__(self, panel: LayerPanel) -> None:
         super().__init__(panel)
         self._panel = panel
         self.setAcceptDrops(True)
@@ -1651,7 +1646,7 @@ class MasterTimelinePanel(QFrame):  # type: ignore[misc]
     def __init__(
         self,
         timeline: QWidget,
-        layer_panel: "LayerPanel",
+        layer_panel: LayerPanel,
         frame_display: QWidget | None = None,
         parent: QWidget | None = None,
     ) -> None:
@@ -1708,7 +1703,9 @@ class MasterTimelinePanel(QFrame):  # type: ignore[misc]
         # reorder — those drops get ``hasUrls() == False`` and bubble
         # past our handler back into the row's existing logic.
         from img_player.ui.drop_zone import (
-            ADD_LAYER_ACCENT, DropOverlay, install_file_drop_zone,
+            ADD_LAYER_ACCENT,
+            DropOverlay,
+            install_file_drop_zone,
         )
         self._drop_overlay = DropOverlay(
             "ADD TO LAYERS", ADD_LAYER_ACCENT, self,
@@ -1723,7 +1720,7 @@ class MasterTimelinePanel(QFrame):  # type: ignore[misc]
         return self._timeline
 
     @property
-    def layer_panel(self) -> "LayerPanel":
+    def layer_panel(self) -> LayerPanel:
         return self._layer_panel
 
     def resizeEvent(self, event) -> None:  # type: ignore[no-untyped-def]

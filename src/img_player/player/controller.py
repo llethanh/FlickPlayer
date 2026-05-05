@@ -11,6 +11,7 @@ import gc
 import logging
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
 
@@ -66,7 +67,7 @@ class PlayerController(QObject):  # type: ignore[misc]  # mypy: QObject is Any
         cache: CacheLike,
         parent: QObject | None = None,
         *,
-        clock: "callable" | None = None,
+        clock: Callable[[], float] | None = None,
     ) -> None:
         super().__init__(parent)
         self._cache = cache
@@ -85,7 +86,7 @@ class PlayerController(QObject):  # type: ignore[misc]  # mypy: QObject is Any
         # the playhead targets the frame the wall clock says we
         # should be on, and the audio (which plays at wall clock
         # natively via PortAudio) stays aligned by construction.
-        self._clock: "callable" = clock if clock is not None else time.monotonic
+        self._clock: Callable[[], float] = clock if clock is not None else time.monotonic
         # Anchor for the current play burst. ``None`` when paused or
         # not yet anchored. ``play()`` and every range-/rate-changing
         # call (seek, set_fps, set_direction) reset it so subsequent

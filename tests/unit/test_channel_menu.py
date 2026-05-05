@@ -18,7 +18,6 @@ from img_player.ui.channel_menu import (
     ChannelMenu,
 )
 
-
 # ============================================================================
 # Fixture: a ChannelMenu primed with the four canonical groups.
 # ============================================================================

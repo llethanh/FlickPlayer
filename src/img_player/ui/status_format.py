@@ -23,7 +23,6 @@ from __future__ import annotations
 
 from img_player.ui.theme import H
 
-
 # ----------------------------------------------------------------------- Thresholds
 
 # Effective FPS / target FPS thresholds:

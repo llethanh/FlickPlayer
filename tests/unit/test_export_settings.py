@@ -16,10 +16,9 @@ from img_player.export.settings import (
     ExportSettings,
     ExportSettingsError,
     estimate_size_bytes,
-    format_bytes,
     format_by_key,
+    format_bytes,
 )
-
 
 # ============================================================================
 # Catalog sanity

@@ -7,11 +7,10 @@ A ``MagicMock`` stands in for the cache, and we inspect the calls.
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-
-from pathlib import Path
 
 from img_player.cache.frame_cache import FrameCache
 from img_player.player.controller import PlayerController

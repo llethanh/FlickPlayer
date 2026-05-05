@@ -25,9 +25,9 @@ from __future__ import annotations
 
 import copy
 import logging
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Iterator
 
 from PySide6.QtCore import QObject, Signal
 

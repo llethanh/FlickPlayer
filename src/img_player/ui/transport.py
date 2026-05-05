@@ -474,7 +474,7 @@ class TransportBar(QWidget):  # type: ignore[misc]
     # ------------------------------------------------------------------ Public
 
     @property
-    def frame_display(self) -> "FrameDisplay":
+    def frame_display(self) -> FrameDisplay:
         """Public accessor for the frame readout widget. Used by
         :class:`MainWindow` to reparent it into the master timeline
         panel's left gutter (and back to a floating fullscreen bar
