@@ -455,6 +455,17 @@ class LayerBar(QWidget):  # type: ignore[misc]
             click_kind = "ctrl"
         else:
             click_kind = "single"
+        # Remember the modifier at press time so the release handler
+        # can skip the unconditional ``focus_requested`` for Ctrl /
+        # Shift clicks. Without this, a Ctrl-click that toggles a
+        # layer OFF would be followed at release by a focus_requested
+        # on the same layer — the panel's selection-consistency
+        # invariant ("focus must be in the selection") then re-adds
+        # it. End result: nothing happens visually. The panel's
+        # ``_on_row_clicked`` already sets focus correctly for the
+        # ctrl / shift cases, so the release-time focus push is
+        # redundant there anyway.
+        self._press_kind = click_kind
         self._pending_single_click = False
         if click_kind == "single" and self._in_selection:
             # Defer: a press on an already-grouped bar might still
@@ -627,7 +638,17 @@ class LayerBar(QWidget):  # type: ignore[misc]
             # this one layer" intent the deferred logic exists for.
             if self._pending_single_click:
                 self.row_clicked.emit(self._layer.id, "single")
-            self.focus_requested.emit(self._layer.id)
+            # Ctrl / Shift presses already routed their focus through
+            # the panel's ``_on_row_clicked`` selection state machine
+            # at press time — emitting ``focus_requested`` again here
+            # would re-set focus on the just-clicked layer and
+            # ``_validate_selection_consistency`` would re-add it to
+            # the selection. That's the bug the user reported as
+            # "Ctrl-click un-selects then re-selects". Plain clicks
+            # still need the focus push (toolbar / sidebar listeners
+            # live off ``focus_requested``).
+            if getattr(self, "_press_kind", "single") == "single":
+                self.focus_requested.emit(self._layer.id)
         else:
             if kind == "body" and self._drag_preview_offset is not None:
                 self.offset_changed.emit(
