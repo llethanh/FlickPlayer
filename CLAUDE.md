@@ -78,12 +78,13 @@ Pour wrap en installer Inno Setup voir `installer/README.md`.
 
 ## État courant (mai 2026)
 
-- v1.0.2 sur main, version multi-layer + vidéo + audio livrée
+- **v1.1.0** sur main — release "Video & audio playback"
 - Lecture vidéo (mp4/mov/mkv/m4v/avi) + audio sounddevice opérationnels
 - Toggles M/S par layer pour mute/solo audio
 - PlayerController en mode wall-clock (anti-drift A/V)
 - PyAV + FFmpeg DLLs bundlés via `img_player.spec`
 - Inno Setup template prêt dans `installer/`
+- Site `docs/website/index.html` à jour avec hero / features / changelog
 
 ## Mémoire transverse (~/.claude/MEMORY.md)
 

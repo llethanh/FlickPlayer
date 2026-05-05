@@ -997,7 +997,8 @@ footer a:hover { color: var(--accent); }
 <section class="hero">
   <h1>Flick Player</h1>
   <p class="tag">
-    A <em>VFX-grade image sequence viewer</em>. Open EXR / DPX / TIFF / PNG dailies,
+    A <em>VFX-grade image sequence &amp; video viewer</em>. Open EXR / DPX / TIFF / PNG
+    dailies <em>or</em> mp4 / mov / ProRes / DNxHR clips with synced audio,
     stack <em>multiple layers</em>, trim them on the master timeline, review in real
     OCIO color, annotate with the pen — ship the result as a video or a baked
     sequence. All from one fast desktop app.
@@ -1056,7 +1057,14 @@ footer a:hover { color: var(--accent); }
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"/><rect x="6" y="9" width="6" height="6"/><line x1="14" y1="9" x2="18" y2="9"/><line x1="14" y1="12" x2="18" y2="12"/><line x1="14" y1="15" x2="18" y2="15"/></svg>
       </div>
       <h3>Multichannel EXR</h3>
-      <p>Channel selector for AOVs, depth, normals, cryptomattes — per layer. Per-channel R/G/B/A mute toggles.</p>
+      <p>Channel selector for AOVs, depth, normals, cryptomattes — per layer. Per-channel R/G/B/A mute toggles. Multi-tile contact sheet for side-by-side AOV review.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 4 20 12 6 20 6 4"/><path d="M2 8 v8"/><path d="M2 12 h2"/></svg>
+      </div>
+      <h3>Video &amp; audio</h3>
+      <p>Drop mp4 / mov / mkv / ProRes / DNxHR clips alongside your EXR layers — PyAV-decoded video with synced audio output. Per-layer mute / solo and wall-clock-driven playback so A/V never drifts.</p>
     </div>
     <div class="feature-card">
       <div class="icon">
@@ -1682,6 +1690,37 @@ footer a:hover { color: var(--accent); }
   </p>
 
   <div class="changelog">
+
+    <article class="release">
+      <div class="release-meta">
+        <span class="ver">
+          <a href="https://github.com/llethanh/img_player/releases/tag/v1.1.0" style="color: inherit; text-decoration: none;">v1.1.0</a>
+        </span>
+        <span class="date">2026-05-05</span>
+        <span class="tagline">Video &amp; audio playback.</span>
+      </div>
+      <div class="release-body">
+        <h4>New</h4>
+        <ul>
+          <li><strong>Video playback</strong> — drop <code>.mp4</code> / <code>.mov</code> / <code>.mkv</code> / <code>.m4v</code> / <code>.avi</code> files alongside your image sequences. PyAV-backed decoder, threaded with a 2-frame-ahead prefetch so play and scrub stay smooth on H.264 / H.265 / ProRes / DNxHR.</li>
+          <li><strong>Synced audio</strong> — sounddevice <code>OutputStream</code> open from boot to shutdown (zero play-time latency). Per-layer <strong>M</strong>ute / <strong>S</strong>olo toggles on every <code>LayerRow</code>, exclusive solo (DAW idiom), per-layer gain. Speed ≠ 1.0× mutes (no pitch shift).</li>
+          <li><strong>Wall-clock-driven tick</strong> — the <code>PlayerController</code> now anchors playback on <code>time.monotonic</code> instead of "+1 per QTimer firing". Audio (which plays at PortAudio wall rate by construction) and video stay aligned long-term, even when the GUI thread hiccups.</li>
+          <li><strong>Multi-source drag-and-drop</strong> — drop a folder of EXRs <em>and</em> several <code>.mp4</code> in the same gesture, the picker shows a hierarchical tree per folder; tick exactly the sequences you want as layers.</li>
+          <li><strong>Drop a <code>.session</code> on the viewer</strong> — full-window OPEN SESSION overlay (purple) instead of the per-zone REPLACE / ADD overlays, so the gesture's intent is unambiguous.</li>
+          <li><strong>Per-layer audio fields</strong> in <code>.session</code> files — <code>audio_solo</code>, <code>audio_mute</code>, <code>audio_gain</code> persist with the rest of the layer state.</li>
+          <li><strong>Inno Setup installer template</strong> in <code>installer/flick.iss</code> — wrap the PyInstaller bundle into a per-user Windows installer with Start menu shortcut, <code>.session</code> file association and a clean uninstaller.</li>
+        </ul>
+        <h4>Fixes</h4>
+        <ul>
+          <li class="fix">Channel-menu radio &amp; checkbox indicators now visible against the dark theme — the global <code>QWidget {{ border: none }}</code> rule was hiding them. Multi-tile contact sheet was unreachable as a result.</li>
+          <li class="fix">Multi-tile contact sheet works again — single-layer selections with a tile-set now bypass the multi-layer composite path that was rejecting buffers wider than RGBA (<code>Unsupported channel count: 7</code>).</li>
+          <li class="fix">Fresh layer load no longer auto-checks tile groups from the previous session's prefs — tile sets are session-bound now (the active group + layout mode + label visibility are still preference-restored).</li>
+          <li class="fix">Scrub during play auto-pauses for the duration of the drag — used to thrash the threaded video decoder with backward seeks every tick.</li>
+          <li class="fix">Audio re-seeks correctly when the active layer's offset changes; coverage transitions during play (entering / exiting a clip) silence the feeder so the buffer doesn't drift ahead of the playhead.</li>
+          <li class="fix">Audio pitched down one octave on stereo decode — PyAV resampler was configured for interleaved <code>flt</code> when the consumer expected planar; switched to <code>fltp</code>.</li>
+        </ul>
+      </div>
+    </article>
 
     <article class="release">
       <div class="release-meta">
