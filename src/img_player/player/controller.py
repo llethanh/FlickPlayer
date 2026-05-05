@@ -773,9 +773,6 @@ class PlayerController(QObject):  # type: ignore[misc]  # mypy: QObject is Any
             bounds[1] if bounds is not None else self._sequence.last_frame
         )
 
-    def _clamp(self, frame: int) -> int:
-        return max(self._effective_in_frame(), min(self._effective_out_frame(), frame))
-
     def set_navigable_range(self, first: int, last: int) -> None:
         """Override the navigable master-frame range.
 

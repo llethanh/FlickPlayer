@@ -353,21 +353,12 @@ class LayerRow(QFrame):  # type: ignore[misc]
     def layer_id(self) -> str:
         return self._layer_id
 
-    def set_index(self, index: int) -> None:
-        """Update the leftmost layer number after a reorder."""
-        self._number_label.setText(str(index + 1))
-
     def set_visible_state(self, visible: bool) -> None:
         """Sync the eye button without retriggering the signal."""
         self._eye_btn.blockSignals(True)
         self._eye_btn.setChecked(bool(visible))
         self._eye_btn.setText("👁" if visible else "·")
         self._eye_btn.blockSignals(False)
-
-    def set_name(self, name: str) -> None:
-        # Layer.name is consulted by the bar's paintEvent; we just
-        # poke it to repaint via set_layer.
-        self._bar.set_layer(self._bar._layer)  # type: ignore[attr-defined]
 
     def update_layer(self, layer: Layer) -> None:
         """Push a fresh Layer reference into the bar — call after the
