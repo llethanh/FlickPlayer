@@ -53,7 +53,10 @@ class VideoSource:
         # in ``video_probe`` for headless / non-video code paths.
         import av  # type: ignore[import-untyped]
 
-        self._container = av.open(str(self._path))
+        # ``metadata_errors='replace'`` mirrors the probe path —
+        # QuickTime files with latin1-encoded tags would otherwise
+        # raise UnicodeDecodeError on open.
+        self._container = av.open(str(self._path), metadata_errors="replace")
         # Pick the first (= primary) video stream. Multi-track files
         # are rare in VFX delivery; if needed later, expose a stream
         # index parameter.

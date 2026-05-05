@@ -48,7 +48,9 @@ class AudioSource:
         # Lazy import — pairs with how video_source.py loads PyAV.
         import av  # type: ignore[import-untyped]
 
-        self._container = av.open(str(self._path))
+        # See video_source.py — same UnicodeDecodeError fix for
+        # tagged QuickTime / .mov / .m4a files with latin1 metadata.
+        self._container = av.open(str(self._path), metadata_errors="replace")
         audio_streams = [s for s in self._container.streams if s.type == "audio"]
         if not audio_streams:
             self._container.close()

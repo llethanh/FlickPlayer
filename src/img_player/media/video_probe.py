@@ -102,7 +102,14 @@ def probe_video(path: Path | str) -> VideoMetadata:
     import av  # type: ignore[import-untyped]
 
     try:
-        container = av.open(str(p))
+        # ``metadata_errors='replace'`` keeps QuickTime ``.mov`` files
+        # readable when they carry non-ASCII bytes (e.g. ``é``) in
+        # tags that PyAV would otherwise UnicodeDecodeError on with
+        # the default UTF-8-strict mode. The replacement char ends up
+        # in the tag string but we never display tags so the loss is
+        # invisible to the user — and the alternative is the file
+        # refusing to open at all.
+        container = av.open(str(p), metadata_errors="replace")
     except av.error.InvalidDataError as exc:  # type: ignore[attr-defined]
         raise ValueError(f"Cannot open video: {p}") from exc
 
