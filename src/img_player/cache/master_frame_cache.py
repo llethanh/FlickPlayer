@@ -48,6 +48,15 @@ log = logging.getLogger(__name__)
 _DEFAULT_BUDGET_BYTES = 8 * 1024**3
 _DEFAULT_NUM_WORKERS = 4
 _BEHIND_PLAYHEAD_PENALTY = 3.0
+# Frames within this many slots BEHIND the playhead are treated as
+# "near-rear" by the eviction scoring: small absolute-distance score
+# regardless of loop / play direction. Mirrors the controller's
+# ``PlayerController.PREFETCH_BEHIND`` so the cache preserves what
+# the prefetcher just queued. Without this, LOOP mode (which scores
+# by ring forward distance) flags frames at ``cur - 1`` with the
+# *maximum* score and evicts them instantly — turning every quick
+# scrub-back into a wait-timer poll.
+_NEAR_REAR_WINDOW = 8
 
 
 def _ensure_rgba(arr: np.ndarray) -> np.ndarray:
@@ -1285,6 +1294,17 @@ class MasterFrameCache:
         ring_size = (loop_hi - loop_lo + 1) if loop_on else 0
 
         def score(f: int) -> float:
+            # Near-rear protection: any frame within the rear-view
+            # prefetch window of the playhead gets a score equal to
+            # its small absolute distance, regardless of loop / play
+            # direction. The controller queues up ``PREFETCH_BEHIND``
+            # frames just behind the playhead each tick so a quick
+            # scrub-back is instant; without this exemption LOOP mode
+            # (the default) would score those frames as ``ring_size -
+            # 1`` (= maximum) and evict them the moment they land.
+            delta_signed = (f - cur) * d
+            if -_NEAR_REAR_WINDOW <= delta_signed < 0:
+                return -delta_signed  # 1, 2, 3, ... 8
             if loop_on and loop_lo <= f <= loop_hi:
                 # Ring forward distance — frames "ahead" along the
                 # loop direction are cheap to keep, frames already
@@ -1294,10 +1314,9 @@ class MasterFrameCache:
                 if d >= 0:
                     return float((f - cur) % ring_size)
                 return float((cur - f) % ring_size)
-            delta = (f - cur) * d
-            if delta < 0:
-                return -delta * penalty
-            return float(delta)
+            if delta_signed < 0:
+                return -delta_signed * penalty
+            return float(delta_signed)
 
         by_priority = sorted(self._frames.keys(), key=score, reverse=True)
         for f in by_priority:
