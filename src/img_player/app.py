@@ -439,6 +439,7 @@ class ImgPlayerApp:
         # checked QAction aren't covered by Qt's dock-state blob.
         self._prefs.side_tab_index = self._window.side_tab_index()
         self._prefs.display_timecode = self._window.display_timecode()
+        self._prefs.info_band_segments = self._window.info_band_segments()
         # Side panel (Color / Comments) visibility — saveState no
         # longer covers it since the panel was lifted out of the
         # dock system.
@@ -1032,8 +1033,10 @@ class ImgPlayerApp:
                 layer.source_frame_at(master_frame),
                 layer.layer_out,
             )
+            band.set_layer_name(layer.name)
         else:
             band.set_local_frame(None, None)
+            band.set_layer_name(None)
         # Global: absolute master frame.
         panel = getattr(self._window, "_layer_panel", None)
         if panel is not None:
@@ -2844,6 +2847,10 @@ def _apply_preferences_to_window(app: ImgPlayerApp) -> None:
     # routes through the same slot the user click triggers, so the
     # timeline + transport's frame display update accordingly.
     app._window.set_display_timecode(prefs.display_timecode)
+
+    # Info-band visible-segments — restored from prefs so the user's
+    # right-click toggles persist across runs.
+    app._window.set_info_band_segments(prefs.info_band_segments)
 
     # Side panel (Color / Comments) visibility — explicit pref now
     # that the panel was lifted out of the dock system.

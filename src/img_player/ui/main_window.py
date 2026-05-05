@@ -302,11 +302,10 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         side_layout.setContentsMargins(0, 0, 0, 0)
         side_layout.setSpacing(0)
         side_layout.addWidget(self._side_tabs)
-        # NB: image-dimensions readout used to live here, but it
-        # disappeared whenever the user hid the side panel. Moved to
-        # a top-right overlay on the viewer (see
-        # ``ViewerWidget.set_info_text``) so it stays visible
-        # regardless of the side panel's state.
+        # NB: image-dimensions readout used to live here, then
+        # migrated to a top-right corner overlay on the viewer, then
+        # finally to the bottom info band where it now sits along
+        # with fps, layer frame and timeline frame readouts.
 
         # Central: top row [viewer | side panel] (only the display
         # area gets the side panel beside it), then master-timeline
@@ -686,6 +685,16 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
                         ib_btn.blockSignals(False)
 
             self._show_info_band_act.toggled.connect(_sync_ib_btn)
+            # Right-click on the ⓘ pill → per-segment visibility menu
+            # (layer name / image size / fps / layer frame / timeline
+            # frame). Settings persist via :meth:`info_band_segments`
+            # round-tripped through ``Preferences``.
+            ib_btn.setContextMenuPolicy(
+                Qt.ContextMenuPolicy.CustomContextMenu,
+            )
+            ib_btn.customContextMenuRequested.connect(
+                self._on_info_band_btn_context_menu
+            )
 
         # The "TC" pill next to the frame readout (built earlier in
         # ``__init__``) drives the same action. Click → trigger the
@@ -814,15 +823,43 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         help_menu.addAction(about_act)
 
     def _refresh_image_size_label(self) -> None:
-        """Update the viewer's corner-overlay dimensions readout."""
+        """Push image dimensions to the bottom info band."""
         w, h = self._viewer.gl.image_size()
-        if w <= 0 or h <= 0:
-            self._viewer.set_info_text("")
-        else:
-            self._viewer.set_info_text(f"{w} × {h}")
-        # The bottom info band shares the same dimensions readout —
-        # keep it in sync from the same trigger.
         self._viewer.info_band.set_image_size(w, h)
+
+    def _on_info_band_btn_context_menu(self, pos) -> None:  # type: ignore[no-untyped-def]
+        """Right-click on the ⓘ pill — per-segment visibility menu.
+
+        Each segment of the bottom info band can be toggled
+        independently. The menu's checked state is sourced from the
+        band itself so external mutations (session restore, etc.)
+        stay reflected.
+        """
+        from PySide6.QtWidgets import QMenu
+        from img_player.ui.info_band import SEGMENT_KEYS, SEGMENT_LABELS
+        ib_btn = self._info_band_btn
+        band = self._viewer.info_band
+        menu = QMenu(self)
+        for key in SEGMENT_KEYS:
+            act = menu.addAction(SEGMENT_LABELS[key])
+            act.setCheckable(True)
+            act.setChecked(band.is_segment_visible(key))
+            # Default-arg trick captures ``key`` per-iteration; without
+            # it the lambda closes over the loop variable and every
+            # entry toggles the LAST key.
+            act.toggled.connect(
+                lambda on, k=key: band.set_segment_visible(k, on),
+            )
+        menu.exec(ib_btn.mapToGlobal(pos))
+
+    def info_band_segments(self) -> tuple[str, ...]:
+        """Snapshot the band's visible-segments tuple for prefs save."""
+        return self._viewer.info_band.visible_segments()
+
+    def set_info_band_segments(self, keys) -> None:  # type: ignore[no-untyped-def]
+        """Apply a previously-saved segments tuple. Called from app
+        prefs restore."""
+        self._viewer.info_band.set_visible_segments(keys)
 
     def _on_toggle_timecode(self, checked: bool) -> None:
         mode = "tc" if checked else "frames"
