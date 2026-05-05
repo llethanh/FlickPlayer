@@ -906,6 +906,14 @@ class ImgPlayerApp:
     # ------------------------------------------------------------------ Handlers
 
     def _on_frame_changed(self, frame: int) -> None:
+        # Bottom info band first — fast text updates and we want its
+        # paint event queued before the heavyweight decode/display
+        # work below. Without this, the band's "Layer xxx" / "Frame xxx"
+        # readouts visibly trail the timeline cursor by a frame during
+        # fast scrub & playback because Qt processes paints in queue
+        # order, and the GL viewport's paint hogs the slot ahead of
+        # the QLabels' if they were enqueued last.
+        self._refresh_info_band_frames(frame)
         # Re-evaluate the active audio layer first — the playhead may
         # have crossed a coverage boundary (entered / exited a clip)
         # which changes whether any layer should be feeding samples.
@@ -998,6 +1006,48 @@ class ImgPlayerApp:
             # it lands so the display snaps to the exact requested frame.
             if not self._wait_timer.isActive():
                 self._wait_timer.start()
+
+    def _refresh_info_band_frames(self, master_frame: int) -> None:
+        """Push local-layer / global-timeline frame readouts to the
+        bottom info band. Called from :meth:`_on_frame_changed`.
+
+        Conventions:
+        * **Layer** uses the source-frame numbering the user sees on
+          disk — for ``shot.0220.png`` the readout shows ``220``,
+          not "20th frame of the layer". Upper bound is the layer's
+          trimmed source-range last frame (``layer_out``).
+        * **Frame** uses the absolute master timeline number — same
+          values the timeline ticks and the transport's frame readout
+          show. Upper bound is ``last`` (the broad master range's
+          last frame, also the rightmost timeline tick).
+        """
+        band = self._window.viewer.info_band
+        # Local: source frame on the topmost visible layer.
+        layer = (
+            self._layer_stack.topmost_visible_at(master_frame)
+            if self._layer_stack else None
+        )
+        if layer is not None and layer.covers(master_frame):
+            band.set_local_frame(
+                layer.source_frame_at(master_frame),
+                layer.layer_out,
+            )
+        else:
+            band.set_local_frame(None, None)
+        # Global: absolute master frame.
+        panel = getattr(self._window, "_layer_panel", None)
+        if panel is not None:
+            _first, last = panel.broad_master_range()
+        elif self._layer_stack:
+            _first, last = self._layer_stack.master_range()
+        elif self._controller.sequence is not None:
+            last = self._controller.sequence.last_frame
+        else:
+            last = 0
+        if last > 0:
+            band.set_global_frame(master_frame, last)
+        else:
+            band.set_global_frame(None, None)
 
     def _nearest_cached_fallback(self, frame: int) -> int | None:
         """Pick the closest cached frame behind (for forward play) or ahead
@@ -1328,6 +1378,8 @@ class ImgPlayerApp:
         # Timeline needs in/out markers and the fps for its timecode labels.
         self._window.timeline.set_in_out(state.in_frame, state.out_frame)
         self._window.timeline.set_fps(state.fps)
+        # Bottom info band fps readout follows the controller fps.
+        self._window.viewer.info_band.set_fps(state.fps)
         # The layer-panel bars need the master in/out so their drag
         # snap targets reflect the playback range.
         panel = getattr(self._window, "_layer_panel", None)
@@ -1876,6 +1928,10 @@ class ImgPlayerApp:
         # And the comment panel — same reason; the thread should
         # follow the cursor in real time.
         self._window.comment_panel.set_current_frame(frame)
+        # The bottom info band's Layer / Frame readouts also follow
+        # the scrub — without this they only refresh after the
+        # debounced seek lands and ``frame_changed`` finally fires.
+        self._refresh_info_band_frames(frame)
         # Defer the expensive part.
         self._pending_seek = frame
         self._scrub_debounce.start()

@@ -227,14 +227,10 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
             # ``_build_menu`` since the action doesn't exist yet at
             # this point in __init__.
             from PySide6.QtWidgets import QToolButton
-            self._tc_toggle_btn = QToolButton(self)
-            self._tc_toggle_btn.setText("TC")
-            self._tc_toggle_btn.setCheckable(True)
-            self._tc_toggle_btn.setToolTip(
-                "Toggle timecode / frame number display (Ctrl+T)"
-            )
-            self._tc_toggle_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            self._tc_toggle_btn.setStyleSheet(
+            # Shared QSS for the small "pill" toggles in the timeline
+            # gutter. Two buttons use it (TC + info-band) so factor
+            # the style string once.
+            _pill_qss = (
                 "QToolButton {"
                 "  font-size: 9pt;"
                 "  font-weight: 600;"
@@ -250,13 +246,34 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
                 f"  border: 1px solid {H.ACCENT};"
                 "}"
             )
-            # Compose [TC button] + [frame readout] into a single
-            # widget so the gutter centres them as one unit.
+            self._tc_toggle_btn = QToolButton(self)
+            self._tc_toggle_btn.setText("TC")
+            self._tc_toggle_btn.setCheckable(True)
+            self._tc_toggle_btn.setToolTip(
+                "Toggle timecode / frame number display (Ctrl+T)"
+            )
+            self._tc_toggle_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            self._tc_toggle_btn.setStyleSheet(_pill_qss)
+
+            # Info-band pill — wired to the same QAction created later
+            # in ``_build_menu`` so menu / shortcut / pill stay in sync.
+            self._info_band_btn = QToolButton(self)
+            self._info_band_btn.setText("ⓘ")
+            self._info_band_btn.setCheckable(True)
+            self._info_band_btn.setChecked(True)
+            self._info_band_btn.setToolTip(
+                "Toggle bottom info band (Ctrl+I)"
+            )
+            self._info_band_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            self._info_band_btn.setStyleSheet(_pill_qss)
+            # Compose [TC] [ⓘ] + [frame readout] into a single widget
+            # so the gutter centres them as one unit.
             fd_wrapper = QWidget(self)
             fd_lay = QHBoxLayout(fd_wrapper)
             fd_lay.setContentsMargins(0, 0, 0, 0)
             fd_lay.setSpacing(4)
             fd_lay.addWidget(self._tc_toggle_btn)
+            fd_lay.addWidget(self._info_band_btn)
             fd_lay.addWidget(self._transport.frame_display)
             self._master_timeline_panel = MasterTimelinePanel(
                 self._timeline,
@@ -643,6 +660,33 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         self._show_tc_act.triggered.connect(self._on_toggle_timecode)
         view_menu.addAction(self._show_tc_act)
 
+        # Bottom info band — orange HUD with image size / fps / local
+        # & global frame numbers. On by default; user toggles with
+        # Ctrl+I, the View menu entry, or the ⓘ pill in the timeline
+        # gutter. Same triple-bind pattern as the TC pill below.
+        self._show_info_band_act = QAction(
+            "Show &info band", self, checkable=True,
+        )
+        self._show_info_band_act.setShortcut(QKeySequence("Ctrl+I"))
+        self._show_info_band_act.setChecked(True)
+        self._show_info_band_act.toggled.connect(
+            self._viewer.info_band.setVisible,
+        )
+        view_menu.addAction(self._show_info_band_act)
+        ib_btn = getattr(self, "_info_band_btn", None)
+        if ib_btn is not None:
+            ib_btn.clicked.connect(self._show_info_band_act.trigger)
+
+            def _sync_ib_btn(on: bool) -> None:
+                if ib_btn.isChecked() != on:
+                    ib_btn.blockSignals(True)
+                    try:
+                        ib_btn.setChecked(on)
+                    finally:
+                        ib_btn.blockSignals(False)
+
+            self._show_info_band_act.toggled.connect(_sync_ib_btn)
+
         # The "TC" pill next to the frame readout (built earlier in
         # ``__init__``) drives the same action. Click → trigger the
         # action; the action's toggled signal then mirrors back to
@@ -776,6 +820,9 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
             self._viewer.set_info_text("")
         else:
             self._viewer.set_info_text(f"{w} × {h}")
+        # The bottom info band shares the same dimensions readout —
+        # keep it in sync from the same trigger.
+        self._viewer.info_band.set_image_size(w, h)
 
     def _on_toggle_timecode(self, checked: bool) -> None:
         mode = "tc" if checked else "frames"
@@ -784,6 +831,9 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         # up with mismatched units between the two readouts.
         self._timeline.set_display_mode(mode)
         self._transport.set_display_mode(mode)
+        # The bottom info band's Layer / Frame readouts mirror the
+        # same toggle.
+        self._viewer.info_band.set_display_mode(mode)
 
     def _toggle_side_dock(self) -> None:
         """Show / hide the right-hand Color/Channels dock.

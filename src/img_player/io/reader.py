@@ -7,6 +7,23 @@ import os
 from collections.abc import Sequence
 from pathlib import Path
 
+# Disable OIIO's PATH-based DLL search before importing it. Without
+# this OIIO's __init__.py iterates every PATH entry and registers
+# them via os.add_dll_directory — which on machines with other VFX
+# tools installed (mrViewer, Nuke runtime, RV, etc.) means OIIO's
+# transitive deps (libheif, OpenEXR, libavif…) get satisfied from
+# whichever bundled copy lands first in PATH order. The version
+# mismatch then surfaces as "DLL load failed: La procédure spécifiée
+# est introuvable" at import time.
+#
+# With this flag at "0" OIIO uses Python's standard DLL resolution,
+# which conda's python launcher has already pointed at the env's
+# Library/bin via os.add_dll_directory — exactly the directory that
+# holds the matching DLLs. Setting it here (before the import) keeps
+# the fix in tree, so users don't have to remember to "set OIIO_…"
+# in every shell.
+os.environ.setdefault("OIIO_LOAD_DLLS_FROM_PATH", "0")
+
 import numpy as np
 import OpenImageIO as oiio
 

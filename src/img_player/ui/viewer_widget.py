@@ -19,6 +19,7 @@ from img_player.ui.drop_zone import (
     DropOverlay,
     install_file_drop_zone,
 )
+from img_player.ui.info_band import InfoBand
 
 
 class ViewerWidget(QWidget):  # type: ignore[misc]
@@ -78,6 +79,14 @@ class ViewerWidget(QWidget):  # type: ignore[misc]
         self._info_label.hide()
         self._info_label.raise_()
 
+        # Bottom HUD — image dims / fps / local layer frame / global
+        # timeline frame. Child of ``self`` (not in the stacked
+        # layout) so we can position it absolutely flush with the
+        # bottom edge of the viewer (= just above the timeline panel
+        # in the main layout).
+        self._info_band = InfoBand(self)
+        self._info_band.raise_()
+
     @property
     def gl(self) -> GLViewport:
         return self._gl
@@ -85,6 +94,10 @@ class ViewerWidget(QWidget):  # type: ignore[misc]
     @property
     def overlay(self) -> BracketsOverlay:
         return self._overlay
+
+    @property
+    def info_band(self) -> InfoBand:
+        return self._info_band
 
     def set_info_text(self, text: str) -> None:
         """Display ``text`` in the corner overlay just outside the
@@ -149,6 +162,13 @@ class ViewerWidget(QWidget):  # type: ignore[misc]
         self._info_label.move(int(x), int(y))
         return True
 
+    def _reposition_info_band(self) -> None:
+        """Pin the info band to the bottom edge of the viewer, full
+        width. Visible / hidden state isn't touched here — the
+        caller controls it."""
+        h = self._info_band.height()
+        self._info_band.setGeometry(0, self.height() - h, self.width(), h)
+
     def resizeEvent(self, event) -> None:  # type: ignore[no-untyped-def]
         super().resizeEvent(event)
         # Keep the drop-overlay sized with the widget while it's
@@ -158,3 +178,4 @@ class ViewerWidget(QWidget):  # type: ignore[misc]
             self._drop_overlay.setGeometry(self.rect())
         if self._info_label.isVisible():
             self._reposition_info_label()
+        self._reposition_info_band()
