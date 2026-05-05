@@ -145,7 +145,7 @@ def render_master(size: int = MASTER) -> Image.Image:
     """
     canvas = _rounded_square(size, radius_pct=0.18, fill=GROUND)
 
-    perfs = _film_perforations(size, fill=ACCENT, count=4, opacity=55)
+    perfs = _film_perforations(size, fill=ACCENT, count=4, opacity=200)
     canvas = Image.alpha_composite(canvas, perfs)
 
     f_size = int(size * 0.52)
