@@ -41,6 +41,18 @@ font_datas = [
     for f in fonts_dir.glob("*") if f.is_file()
 ]
 
+# App icon — same .ico the EXE() block embeds as the executable's
+# resource, also shipped as a data file so the runtime
+# ``setWindowIcon`` call (in ``ImgPlayerApp._build_qt_runtime``) can
+# resolve it via Path arithmetic. Without this the bundled .exe shows
+# the embedded icon in Explorer / taskbar but Qt's window-frame icon
+# falls back to the default Qt logo.
+icons_dir = PROJECT_ROOT / "src" / "img_player" / "assets" / "icons"
+icon_datas = [
+    (str(icons_dir / f.name), "img_player/assets/icons")
+    for f in icons_dir.glob("*") if f.is_file()
+]
+
 # OCIO ships built-in configs *inside* the shared library (ocio://default
 # resolves to ACES 2.0 CG). No external files to bundle. But we still want
 # to grab any data files the PyOpenColorIO Python package may carry.
@@ -158,7 +170,7 @@ a = Analysis(  # noqa: F821 — Analysis is injected by PyInstaller
     ["src/img_player/__main__.py"],
     pathex=[str(PROJECT_ROOT / "src")],
     binaries=oiio_bins + ocio_bins + av_bins,
-    datas=shader_datas + font_datas + ocio_datas + oiio_datas + sd_datas,
+    datas=shader_datas + font_datas + icon_datas + ocio_datas + oiio_datas + sd_datas,
     hiddenimports=hidden,
     hookspath=[],
     hooksconfig={},
@@ -214,7 +226,8 @@ exe = EXE(  # noqa: F821
     a.scripts,
     [],
     exclude_binaries=True,
-    name="img_player",
+    name="FlickPlayer",
+    icon=str(PROJECT_ROOT / "src" / "img_player" / "assets" / "icons" / "flick.ico"),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -236,5 +249,5 @@ coll = COLLECT(  # noqa: F821
     strip=False,
     upx=False,
     upx_exclude=[],
-    name="img_player",
+    name="FlickPlayer",
 )

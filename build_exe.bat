@@ -1,5 +1,6 @@
 @echo off
-REM build_exe.bat — produces dist\img_player\img_player.exe (and friends).
+REM build_exe.bat — produces dist\FlickPlayer\FlickPlayer.exe (and friends).
+REM Folder name and exe name are set in img_player.spec.
 REM Double-click or run from a developer prompt. Activates the conda env
 REM and invokes PyInstaller via the spec file at the repo root.
 
@@ -89,12 +90,12 @@ set EXIT_CODE=%ERRORLEVEL%
 if %EXIT_CODE% EQU 0 (
     echo.
     echo [build_exe] Done. Bundle is in:
-    echo   %CD%\dist\img_player\
+    echo   %CD%\dist\FlickPlayer\
     echo.
     echo Test it with:
-    echo   dist\img_player\img_player.exe --version
+    echo   dist\FlickPlayer\FlickPlayer.exe --version
     echo.
-    echo To deploy: copy the entire dist\img_player\ folder to the target
+    echo To deploy: copy the entire dist\FlickPlayer\ folder to the target
     echo machine. The .exe finds its DLLs via the _internal subfolder.
 ) else (
     echo.

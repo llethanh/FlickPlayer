@@ -1,7 +1,7 @@
 ; ============================================================================
 ; Flick Player — Inno Setup script
 ; ============================================================================
-; Wraps the PyInstaller --onedir bundle (``dist/img_player/``) into a
+; Wraps the PyInstaller --onedir bundle (``dist/FlickPlayer/``) into a
 ; standard Windows installer:
 ;   - Start menu shortcut + optional desktop icon
 ;   - Add/Remove Programs entry
@@ -9,7 +9,7 @@
 ;   - Per-user install (no admin required)
 ;
 ; PREREQ: build the bundle first with ``build_exe.bat`` so
-; ``dist\img_player\img_player.exe`` exists.
+; ``dist\FlickPlayer\FlickPlayer.exe`` exists.
 ;
 ; HOW TO USE
 ; ----------
@@ -36,7 +36,7 @@
 #define MyAppVersion "1.1.0"
 #define MyAppPublisher "llethanh"
 #define MyAppURL "https://github.com/llethanh/img_player"
-#define MyAppExeName "img_player.exe"
+#define MyAppExeName "FlickPlayer.exe"
 #define MyAppId "{{F41C4FA1-2D7A-4E5B-9FEB-FL1CKPLAYER001}"
 
 [Setup]
@@ -53,7 +53,7 @@ DisableProgramGroupPage=yes
 LicenseFile=..\LICENSE
 OutputDir=Output
 OutputBaseFilename=flick-setup-{#MyAppVersion}
-SetupIconFile=
+SetupIconFile=..\src\img_player\assets\icons\flick.ico
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
@@ -83,7 +83,7 @@ Name: "associatesession"; Description: "Associate &.session files with {#MyAppNa
 ; Bundle the entire PyInstaller --onedir output. ``recursesubdirs`` walks
 ; the _internal/ tree (Qt6, OIIO, OCIO, FFmpeg, all the bundled DLLs +
 ; data); ``createallsubdirs`` mirrors the structure under {app}.
-Source: "..\dist\img_player\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\FlickPlayer\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

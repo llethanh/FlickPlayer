@@ -191,6 +191,20 @@ class ImgPlayerApp:
         self._qapp.setOrganizationName("img_player")
         self._qapp.setApplicationName("img_player")
 
+        # App-level icon — picked up by Qt for the title bar, the
+        # taskbar grouping, and any tray icon listeners. Same artwork
+        # as the ``flick.ico`` baked into the .exe by PyInstaller.
+        # Resolved by Path arithmetic from the package — same pattern
+        # ``cache.missing_frame`` uses for its bundled font.
+        from PySide6.QtGui import QIcon
+        from pathlib import Path as _Path
+        ico_path = (
+            _Path(__file__).resolve().parent
+            / "assets" / "icons" / "flick.ico"
+        )
+        if ico_path.is_file():
+            self._qapp.setWindowIcon(QIcon(str(ico_path)))
+
         from img_player.ui.theme import build_stylesheet
         self._qapp.setStyleSheet(build_stylesheet())
 
