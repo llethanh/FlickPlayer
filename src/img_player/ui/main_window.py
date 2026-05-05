@@ -100,6 +100,10 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
     open_requested = Signal(list)
     export_requested = Signal()  # File → Export… (v0.5.0)
     save_frame_requested = Signal()  # File → Save Frame As… (v1.2)
+    # Compare-mode shortcuts (v1.2). W toggles the overlay; Ctrl+W
+    # permutes A and B in the band's dropdowns.
+    compare_toggle_requested = Signal()
+    compare_swap_layers_requested = Signal()
     new_sequence_requested = Signal()      # File → New (Ctrl+N) — clear the loaded sequence
     add_layer_requested = Signal(list)     # File → Add layer… (v1.0)
                                            #   carries the picked paths
@@ -798,6 +802,7 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         # they're file-level commands, kin to File menu actions.
         wrap_layout.addWidget(self._transport.reload_button)
         wrap_layout.addWidget(self._transport.export_button)
+        wrap_layout.addWidget(self._transport.compare_button)
         # Channel selector + RGBA mute toggles, grouped tight.
         wrap_layout.addWidget(self._transport.channel_button)
         for letter in ("R", "G", "B", "A"):
@@ -1016,6 +1021,21 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         QShortcut(QKeySequence("Shift+Right"), self, activated=lambda: self.step_clicked.emit(10))
         QShortcut(QKeySequence(Qt.Key.Key_Home), self, activated=lambda: self.jump_to_ends.emit(-1))
         QShortcut(QKeySequence(Qt.Key.Key_End), self, activated=lambda: self.jump_to_ends.emit(1))
+
+        # Compare mode (v1.2). W toggles on/off; Ctrl+W swaps A↔B in
+        # the band's dropdowns. The arrow-key seam nudges live on
+        # the viewer's keyPressEvent so they only fire when the
+        # viewer area has focus (= avoid colliding with the
+        # frame-stepping arrows above when the user is using
+        # transport).
+        QShortcut(
+            QKeySequence(Qt.Key.Key_W), self,
+            activated=self.compare_toggle_requested.emit,
+        )
+        QShortcut(
+            QKeySequence("Ctrl+W"), self,
+            activated=self.compare_swap_layers_requested.emit,
+        )
 
         # In / out points
         QShortcut(QKeySequence(Qt.Key.Key_I), self, activated=self.mark_in_requested.emit)

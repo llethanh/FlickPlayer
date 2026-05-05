@@ -139,6 +139,7 @@ class ColorState:
 def save_session(
     stack: LayerStack, path: Path, *,
     color_state: ColorState | None = None,
+    compare_state: dict[str, Any] | None = None,
 ) -> None:
     """Serialise ``stack`` to ``path`` as JSON.
 
@@ -189,6 +190,11 @@ def save_session(
     }
     if color_state is not None:
         payload["color_state"] = asdict(color_state)
+    if compare_state is not None:
+        # Compare state is already a JSON-friendly dict (built by
+        # the caller via ``CompareState.to_dict``), so we just embed
+        # it. Older session readers ignore unknown top-level keys.
+        payload["compare_state"] = compare_state
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
@@ -209,6 +215,10 @@ class LoadResult:
     # for v1 sessions / sessions saved without a color_state — the
     # caller leaves the panel state untouched in that case.
     color_state: ColorState | None = None
+    # Compare-mode dict (v1.2+). ``None`` when the session predates
+    # the feature or compare-mode was off at save time. The caller
+    # passes this through ``CompareState.from_dict`` to rehydrate.
+    compare_state: dict[str, object] | None = None
 
 
 def load_session(stack: LayerStack, path: Path) -> LoadResult:
@@ -242,6 +252,12 @@ def load_session(stack: LayerStack, path: Path) -> LoadResult:
             exposure=float(color_payload.get("exposure", 0.0)),
             gamma=float(color_payload.get("gamma", 1.0)),
         )
+    # Compare-mode state (v1.2+). Stays as a plain dict here; the
+    # caller dispatches it through ``CompareState.from_dict`` so
+    # this module doesn't need to import the compare package.
+    compare_payload = payload.get("compare_state")
+    if isinstance(compare_payload, dict):
+        result.compare_state = compare_payload
     layer_entries = payload.get("layers", [])
     rebuilt_focused: str | None = None
     saved_focused = payload.get("focused_id", "")

@@ -369,6 +369,15 @@ class ImgPlayerApp:
         ``_set_channel_selection`` until the first layer focuses.
         """
         self._channel_selection: ChannelSelection | None = None
+        # Compare-mode (two-layer A/B overlay) state + decoder. The
+        # band itself lives on the viewer; this app-side state is the
+        # single source of truth that the band, keyboard shortcuts
+        # and session save all sync against.
+        from img_player.compare import CompareState
+        from img_player.compare.decode import CompareDecoder
+
+        self._compare_state: CompareState = CompareState()
+        self._compare_decoder = CompareDecoder(self._video_sources)
 
     # ------------------------------------------------------------------ Lifecycle
 
@@ -589,6 +598,7 @@ class ImgPlayerApp:
         self._wire_layer_stack()
         self._wire_main_window()
         self._wire_channel_menu()
+        self._wire_compare()
         self._wire_color_and_zoom()
         self._wire_annotations()
         self._wire_keyboard_shortcuts()
@@ -758,6 +768,38 @@ class ImgPlayerApp:
         w.channel_selection_changed.connect(self._on_channel_selection_changed)
         w.channel_mask_changed.connect(self._on_channel_mask_changed)
 
+    def _wire_compare(self) -> None:
+        """Compare-mode signals: transport button + band + shortcuts."""
+        from img_player.compare_handler import (
+            set_layer_a,
+            set_layer_b,
+            set_mode,
+            set_seam,
+            swap_layers,
+            toggle_compare,
+            toggle_swap,
+        )
+
+        # Transport button → toggle compare on/off.
+        self._window.transport.compare_toggled.connect(
+            lambda: toggle_compare(self),
+        )
+        band = self._window.viewer.compare_band
+        band.layer_a_picked.connect(lambda lid: set_layer_a(self, lid))
+        band.layer_b_picked.connect(lambda lid: set_layer_b(self, lid))
+        band.mode_picked.connect(lambda mode: set_mode(self, mode))
+        band.seam_changed.connect(lambda seam: set_seam(self, seam))
+        band.swap_toggled.connect(lambda: toggle_swap(self))
+        band.swap_layers_requested.connect(lambda: swap_layers(self))
+        band.close_requested.connect(lambda: toggle_compare(self))
+        # Keyboard shortcuts (W / Ctrl+W) routed through MainWindow.
+        self._window.compare_toggle_requested.connect(
+            lambda: toggle_compare(self),
+        )
+        self._window.compare_swap_layers_requested.connect(
+            lambda: swap_layers(self),
+        )
+
     def _wire_color_and_zoom(self) -> None:
         """ColorPanel + zoom combo → GL viewport."""
         # Zoom from the combo box → propagate to the GL viewport. The
@@ -905,6 +947,20 @@ class ImgPlayerApp:
         # Prev/next-annotation transport buttons depend on the
         # playhead position vs the annotated set — re-evaluate.
         self._refresh_annotation_nav_buttons()
+
+        # Compare-mode early-out: when the user is comparing two
+        # layers, hijack the upload entirely. The compare path
+        # decodes A and B independently and composes them via
+        # numpy — the cache + composite pipeline are bypassed.
+        if self._compare_state.is_active():
+            from img_player.compare_handler import render_compare
+            if render_compare(self, frame):
+                self._last_displayed = frame
+                self._wait_timer.stop()
+                return
+            # else: render_compare returned False (decode failed
+            # for both layers, or stale ids); fall through to the
+            # normal path so the user still sees something.
 
         # Video early-out: when the topmost-visible layer is video,
         # bypass the per-frame OIIO cache and decode through the
@@ -1082,6 +1138,16 @@ class ImgPlayerApp:
         3. The displayed-layer didn't change (= a non-visual layer
            tweak) → the redisplay is a cheap idempotent no-op.
         """
+        # Compare-mode bookkeeping: refresh the band's dropdown
+        # entries (layer added / removed) and gate the transport
+        # button on having ≥ 2 layers to compare against.
+        from img_player.compare_handler import refresh_band_layers
+        layer_count = len(list(self._layer_stack.layers()))
+        self._window.transport.set_compare_enabled(layer_count >= 2)
+        refresh_band_layers(self)
+        # Layer mutation may have invalidated decoder caches (offset
+        # change → different pixel for the same master frame).
+        self._compare_decoder.invalidate()
         # Sync the main timeline's range with the layer panel's broad
         # master range (= union of every layer's source-potential). Without
         # this the timeline keeps the loaded sequence's range, while the
@@ -1195,15 +1261,23 @@ class ImgPlayerApp:
             self._channel_selection = layer.channel_selection
 
     def _redisplay_current(self) -> None:
-        """Re-run ``_display_array`` on the cached current frame.
+        """Re-run the display path on the current frame.
 
-        Used by display-time-only changes (layout mode, labels
-        visibility): no cache invalidation, no decode work — we just
-        re-pipe whatever's already cached through the display path so
-        the new param takes effect immediately. No-op when nothing's
-        cached yet.
+        Used by display-time-only changes (compare-mode toggles,
+        per-layer alpha tweaks): no cache invalidation, no decode
+        work — just re-pipe whatever's already available through
+        the display path so the new param takes effect immediately.
+
+        Compare-mode hijacks the upload when active, so we route
+        through its render path first; otherwise fall back to the
+        cache lookup. No-op when nothing's cached / no compare A/B
+        decoded yet.
         """
         cur = self._controller.state.current_frame
+        if self._compare_state.is_active():
+            from img_player.compare_handler import render_compare
+            if render_compare(self, cur):
+                return
         arr = self._cache.get(cur)
         if arr is not None:
             self._display_array(arr)
@@ -2438,8 +2512,18 @@ class ImgPlayerApp:
             exposure=float(exposure),
             gamma=float(gamma),
         )
+        # Persist compare-mode state too so a Ctrl+S during an
+        # active compare round-trips back into the same overlay
+        # on next open.
+        compare_payload = (
+            self._compare_state.to_dict() if self._compare_state.enabled else None
+        )
         try:
-            save_session(self._layer_stack, path, color_state=color_state)
+            save_session(
+                self._layer_stack, path,
+                color_state=color_state,
+                compare_state=compare_payload,
+            )
         except Exception as err:
             log.exception("[session] save failed for %s", path)
             self._window.set_status(f"Save session failed: {err}")
@@ -2537,6 +2621,31 @@ class ImgPlayerApp:
         # block leave the panel as-is — same legacy behaviour.
         if result.color_state is not None:
             self._apply_session_color_state(result.color_state)
+        # Restore compare-mode if the session shipped one. Build the
+        # state from the dict, sync the band/transport to it, then
+        # call into the toggle path if it should be enabled. Setting
+        # ``enabled=False`` first ensures the toggle flips it on
+        # cleanly rather than racing the auto-pick.
+        if result.compare_state is not None:
+            from img_player.compare import CompareState
+            from img_player.compare_handler import (
+                refresh_band_layers,
+                toggle_compare,
+            )
+            restored = CompareState.from_dict(result.compare_state)
+            self._compare_state = restored
+            self._compare_decoder.invalidate()
+            refresh_band_layers(self)
+            band = self._window.viewer.compare_band
+            band.set_mode(restored.mode)
+            band.set_seam(restored.seam)
+            if restored.enabled:
+                # ``toggle_compare`` flips ``enabled`` from False to
+                # True — we just patched it above to the saved value
+                # before flipping; reset to False so the call enables
+                # it cleanly.
+                self._compare_state.enabled = False
+                toggle_compare(self)
         # Track in Open Recent Session — same trigger as a save: the
         # user just used the file, so it deserves a slot in the list.
         if result.loaded > 0:

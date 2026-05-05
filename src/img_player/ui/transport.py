@@ -97,6 +97,9 @@ class TransportBar(QWidget):  # type: ignore[misc]
     # until the app calls ``set_export_enabled(True)`` (which the
     # app does after a sequence loads).
     export_clicked = Signal()
+    # Compare-mode toggle (v1.2). Carries no payload — the receiver
+    # checks the button's ``isChecked()`` state via the public API.
+    compare_toggled = Signal()
     # Reload button (v0.5.1) — smart re-scan of the source folder,
     # keeping cached frames whose mtime hasn't changed.
     reload_clicked = Signal()
@@ -260,6 +263,18 @@ class TransportBar(QWidget):  # type: ignore[misc]
         )
         self._reload_btn.clicked.connect(self.reload_clicked.emit)
         self._reload_btn.setEnabled(False)
+
+        # --- Compare toggle (v1.2) ------------------------------------
+        # ⇄ shows the two-layer compare band on top of the viewer.
+        # Checkable: stays "down" while compare mode is active.
+        # Disabled until the stack has at least two layers — there's
+        # nothing meaningful to compare against otherwise.
+        self._compare_btn = _text_button(
+            "⇄", "Compare two layers (W)"
+        )
+        self._compare_btn.setCheckable(True)
+        self._compare_btn.clicked.connect(self.compare_toggled.emit)
+        self._compare_btn.setEnabled(False)
 
         # --- FPS ------------------------------------------------------------
         # Plain editable line — no dropdown of presets. The user
@@ -471,6 +486,23 @@ class TransportBar(QWidget):  # type: ignore[misc]
     @property
     def export_button(self) -> QPushButton:
         return self._export_btn
+
+    @property
+    def compare_button(self) -> QPushButton:
+        return self._compare_btn
+
+    def set_compare_enabled(self, enabled: bool) -> None:
+        """Enable / disable the compare-mode toggle. The button is
+        gated by the layer count (need ≥ 2 layers to compare)."""
+        self._compare_btn.setEnabled(bool(enabled))
+
+    def set_compare_checked(self, on: bool) -> None:
+        """Sync the compare button's checked state from outside —
+        used when the user enters / exits compare via keyboard
+        shortcut or from the band's ✕ button."""
+        self._compare_btn.blockSignals(True)
+        self._compare_btn.setChecked(bool(on))
+        self._compare_btn.blockSignals(False)
 
     @property
     def channel_button(self) -> QToolButton:
