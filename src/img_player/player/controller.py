@@ -649,16 +649,43 @@ class PlayerController(QObject):  # type: ignore[misc]  # mypy: QObject is Any
         self.frame_changed.emit(frame_n)
 
     def _prefetch_from(self, frame: int, direction: int) -> None:
-        """Tick-time prefetch: just the close window.
+        """Tick-time prefetch: close window in the play direction +
+        a small ``PREFETCH_BEHIND`` rear-view window in the opposite
+        direction so a quick scrub-back doesn't fall off the cache.
 
-        Called on every playback tick (24+ Hz). Keep it cheap — only
-        schedule what we need imminently. The full-sequence fill is
-        handled by :meth:`_prefetch_full_sequence` on seek and load.
+        Called on every playback tick (24+ Hz). The forward window
+        stays the dominant cost (``PREFETCH_AHEAD = 64`` vs
+        ``PREFETCH_BEHIND = 8``); the behind window is small enough
+        that it doesn't fight the forward fill for cache budget but
+        large enough to cover the typical "let me peek the last
+        couple of frames" scrub. Without this the user-reported
+        flicker on scrub-back showed up because the cache was empty
+        right behind the playhead — only the upstream prefetch kept
+        old frames around, and a tight cache budget evicted them as
+        playback advanced.
+
+        The full-sequence fill is still handled by
+        :meth:`_prefetch_full_sequence` on seek and load, prioritised
+        by distance from the playhead.
         """
+        ahead = self._prefetch_ahead
+        behind = type(self).PREFETCH_BEHIND
         if direction >= 0:
-            self._cache.request_range(frame, frame + self._prefetch_ahead, direction=1)
+            self._cache.request_range(frame, frame + ahead, direction=1)
+            # Rear-view: small set of recent frames, ranked low-priority
+            # so they only land when the forward queue is satisfied.
+            self._cache.request_range(
+                max(frame - behind, self._effective_in_frame()),
+                frame,
+                direction=1,
+            )
         else:
-            self._cache.request_range(frame - self._prefetch_ahead, frame, direction=-1)
+            self._cache.request_range(frame - ahead, frame, direction=-1)
+            self._cache.request_range(
+                frame,
+                min(frame + behind, self._effective_out_frame()),
+                direction=-1,
+            )
 
     # Frames *behind* the playhead in the current play direction are
     # only revisited on a loop wrap, so we treat them as significantly
