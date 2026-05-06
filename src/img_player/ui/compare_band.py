@@ -81,17 +81,30 @@ class SeamBar(QWidget):  # type: ignore[misc]
     seam_changed = Signal(float)
 
     BAR_W = 140
+    BAR_W_MIN = 60
     BAR_H = G.INPUT_H
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setFixedSize(self.BAR_W, self.BAR_H)
+        # Shrinkable horizontally so the band collapses gracefully when
+        # the menu-bar row gets narrow (otherwise the corner widget
+        # overlaps File/Edit/View). Height stays fixed.
+        self.setMinimumSize(self.BAR_W_MIN, self.BAR_H)
+        self.setMaximumHeight(self.BAR_H)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(
-            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed,
         )
         self._value = 0.5
         self._dragging = False
+
+    # ---- Sizing -------------------------------------------------------
+
+    def sizeHint(self) -> QSize:  # type: ignore[override]
+        return QSize(self.BAR_W, self.BAR_H)
+
+    def minimumSizeHint(self) -> QSize:  # type: ignore[override]
+        return QSize(self.BAR_W_MIN, self.BAR_H)
 
     # ---- Public API ---------------------------------------------------
 
@@ -249,7 +262,22 @@ class CompareBand(QFrame):  # type: ignore[misc]
         layout.addWidget(QLabel("A"))
         self._combo_a = QComboBox()
         self._combo_a.setFixedHeight(G.INPUT_H)
-        self._combo_a.setMinimumWidth(140)
+        # Without overrides, QComboBox.minimumSizeHint() factors in the
+        # widest dropdown item — long filenames blow the combo past any
+        # setMaximumWidth (Qt resolves a min > max conflict by giving
+        # min priority). Pin the contents-length-based size policy so
+        # the combo's minimum sizeHint is anchored to a small char
+        # count instead of the longest filename, then cap with
+        # min/max width for the band's shrink range.
+        self._combo_a.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon,
+        )
+        self._combo_a.setMinimumContentsLength(8)
+        self._combo_a.setMinimumWidth(60)
+        self._combo_a.setMaximumWidth(140)
+        self._combo_a.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed,
+        )
         self._combo_a.activated.connect(self._on_a_activated)
         layout.addWidget(self._combo_a)
 
@@ -264,7 +292,15 @@ class CompareBand(QFrame):  # type: ignore[misc]
         layout.addWidget(QLabel("B"))
         self._combo_b = QComboBox()
         self._combo_b.setFixedHeight(G.INPUT_H)
-        self._combo_b.setMinimumWidth(140)
+        self._combo_b.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon,
+        )
+        self._combo_b.setMinimumContentsLength(8)
+        self._combo_b.setMinimumWidth(60)
+        self._combo_b.setMaximumWidth(140)
+        self._combo_b.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed,
+        )
         self._combo_b.activated.connect(self._on_b_activated)
         layout.addWidget(self._combo_b)
 

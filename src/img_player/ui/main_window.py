@@ -431,6 +431,69 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         self._menu_corner.adjustSize()
         self.menuBar().adjustSize()
         self.menuBar().updateGeometry()
+        self._adjust_compare_band_width()
+
+    def _adjust_compare_band_width(self) -> None:
+        """Clamp the compare band so the corner widget never overlaps
+        the File/Edit/View menus on narrow windows.
+
+        QMenuBar gives the corner widget its full sizeHint width
+        unconditionally — Qt doesn't compress the corner on resize, so
+        size policies inside it have no effect on its outer footprint.
+        We compute the space left over after the menus on the left and
+        the rest of the corner items on the right, then ``setFixedWidth``
+        on the band to ``min(available, natural)``. Inner Preferred-policy
+        children (combos, seam bar) absorb the squeeze when the band is
+        narrowed; on a wide window the cap at ``natural`` prevents extra
+        space from stretching the seam bar / A↔B button.
+        """
+        band = getattr(self, "_compare_band", None)
+        if band is None or not band.isVisible():
+            return
+        bar = self.menuBar()
+        # Width consumed by the menu actions on the left (File/Edit/...).
+        # ``actionGeometry`` is reliable after the first paint; on the
+        # very first call it may report 0, which is harmless — the
+        # estimate just collapses to the safety floor and the next
+        # resize gets the real value.
+        menus_w = 0
+        for act in bar.actions():
+            if act.menu() is not None:
+                menus_w += bar.actionGeometry(act).width()
+        # Width consumed by the other corner items (right of the band).
+        layout = self._menu_corner.layout()
+        other_w = 0
+        margins = layout.contentsMargins()
+        other_w += margins.left() + margins.right()
+        visible_n = 0
+        for i in range(layout.count()):
+            w = layout.itemAt(i).widget()
+            if w is None or w is band:
+                continue
+            if not w.isVisible():
+                continue
+            other_w += w.sizeHint().width()
+            visible_n += 1
+        # Spacing between visible items, including one before the band.
+        other_w += layout.spacing() * max(0, visible_n)
+        safety = 16
+        available = bar.width() - menus_w - other_w - safety
+        # The band's natural width = its inner layout's sizeHint, which
+        # is independent of any setFixedWidth we previously applied
+        # (layout sizeHints sum the children's sizeHints, not the
+        # parent's geometry). Clamping ``target`` to this prevents the
+        # band from stretching past its content on wide windows.
+        natural = band.layout().sizeHint().width()
+        # Floor: don't collapse below ~200 (roughly the band's hard
+        # minimum given fixed-size mode buttons + min combos).
+        target = max(200, min(available, natural))
+        if (
+            band.maximumWidth() == target
+            and band.minimumWidth() == target
+        ):
+            return
+        band.setFixedWidth(target)
+        bar.adjustSize()
 
     @property
     def color_panel(self) -> ColorPanel:
@@ -1471,6 +1534,10 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
             and self._session_drop_overlay.isVisible()
         ):
             self._session_drop_overlay.setGeometry(self.rect())
+        # Reflow the compare band so the menu-bar corner widget never
+        # spills over the File/Edit/View menus when the window is
+        # narrow.
+        self._adjust_compare_band_width()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         # The app can register a callback that runs before the window
