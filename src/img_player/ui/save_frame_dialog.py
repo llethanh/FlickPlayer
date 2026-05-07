@@ -58,13 +58,15 @@ class SaveFrameSettings:
 
     The HUD / brackets / decorative overlays are always excluded
     from the capture — they're UI chrome, not content. Only
-    annotations have a user-visible toggle (= reviewer-authored
-    content the user may or may not want baked in).
+    annotations and the A/B compare overlay have user-visible
+    toggles (reviewer-authored / live-blend content the user may or
+    may not want baked in).
     """
 
     path: Path
     fmt: str  # extension without dot, e.g. "png"
     with_annotations: bool
+    bake_compare: bool
 
 
 class SaveFrameDialog(QDialog):
@@ -77,6 +79,8 @@ class SaveFrameDialog(QDialog):
         suggested_dir: Path,
         last_format: str = _DEFAULT_FORMAT,
         last_with_annotations: bool = True,
+        last_bake_compare: bool = True,
+        compare_active: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -129,7 +133,7 @@ class SaveFrameDialog(QDialog):
             idx = self._format_combo.findData(_DEFAULT_FORMAT)
         self._format_combo.setCurrentIndex(max(0, idx))
 
-        # ---- Toggle ----
+        # ---- Toggles ----
         # Annotations are content the reviewer may want to bake in;
         # the bottom HUD / brackets / channel labels are UI chrome
         # and always excluded from the capture (= never useful in a
@@ -139,6 +143,20 @@ class SaveFrameDialog(QDialog):
         self._annotations_check.setToolTip(
             "Bake the on-screen freehand strokes into the saved image.",
         )
+        # A/B compare overlay — only meaningful (and only surfaced)
+        # when the live wipe is active. With the box checked, the
+        # capture keeps whatever blend / wipe / opacity is on screen.
+        # Unchecked, the handler temporarily disables compare and
+        # snapshots the underlying composite — useful for delivering
+        # a clean plate even though the user is mid-review.
+        self._bake_compare_check = QCheckBox("Bake compare overlay")
+        self._bake_compare_check.setChecked(bool(last_bake_compare))
+        self._bake_compare_check.setToolTip(
+            "Save the active A/B wipe / blend. Untick to capture the "
+            "active sequence's composite without the overlay.",
+        )
+        self._bake_compare_check.setVisible(bool(compare_active))
+        self._compare_active = bool(compare_active)
 
         # ---- Buttons ----
         buttons = QDialogButtonBox(
@@ -156,6 +174,8 @@ class SaveFrameDialog(QDialog):
         form.addRow("Folder:", dir_row_widget)
         form.addRow("Format:", self._format_combo)
         form.addRow("", self._annotations_check)
+        if self._compare_active:
+            form.addRow("", self._bake_compare_check)
 
         root = QVBoxLayout(self)
         root.addLayout(form)
@@ -204,4 +224,12 @@ class SaveFrameDialog(QDialog):
             path=path,
             fmt=ext,
             with_annotations=self._annotations_check.isChecked(),
+            # ``bake_compare`` only carries meaning when the row is
+            # surfaced; with compare inactive, force-true so the
+            # field stays a stable "no special handling" default in
+            # the persisted prefs.
+            bake_compare=(
+                self._bake_compare_check.isChecked()
+                if self._compare_active else True
+            ),
         )

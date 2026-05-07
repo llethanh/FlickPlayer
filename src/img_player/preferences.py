@@ -464,6 +464,7 @@ class Preferences:
         keys = (
             "output_dir",
             "start_frame",
+            "basename",
             "format_key",
             "width",
             "height",
@@ -499,15 +500,17 @@ class Preferences:
 
         Stored under ``save_frame/...`` keys: ``output_dir`` (parent
         directory the user last picked), ``format`` (file extension
-        without dot, e.g. ``"png"``), ``with_annotations`` (bool).
-        Defaults are picked by the dialog itself when a key is
-        missing so the source of truth stays in one place.
+        without dot, e.g. ``"png"``), ``with_annotations`` (bool),
+        ``bake_compare`` (bool — whether to keep the A/B wipe in the
+        capture when compare is active). Defaults are picked by the
+        dialog itself when a key is missing so the source of truth
+        stays in one place.
 
         The HUD / brackets / decorative overlays are always excluded
         from the capture (= UI chrome, not content) so there is no
         ``with_overlay`` toggle to persist.
         """
-        keys = ("output_dir", "format", "with_annotations")
+        keys = ("output_dir", "format", "with_annotations", "bake_compare")
         out: dict[str, object] = {}
         for key in keys:
             raw = self._s.value(f"save_frame/{key}")

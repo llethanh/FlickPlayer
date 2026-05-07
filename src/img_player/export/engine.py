@@ -137,7 +137,15 @@ class ExportEngine:
         out_w, out_h = self._resolve_output_size()
         out_fps = self._resolve_output_fps()
 
-        basename = self._sequence.base_name.rstrip("._-") or "export"
+        # User-overridden basename wins; otherwise fall back to the
+        # source sequence's base_name (legacy behaviour). Strips
+        # trailing separators / spaces so a stem like ``render._``
+        # produces ``render.0001.png`` rather than ``render.._0001.png``.
+        custom = (settings.basename or "").strip()
+        if custom:
+            basename = custom.rstrip("._- ") or "export"
+        else:
+            basename = self._sequence.base_name.rstrip("._-") or "export"
         self._writer = build_writer(settings, basename=basename)
         self._writer.open(settings, out_w, out_h, out_fps)
 

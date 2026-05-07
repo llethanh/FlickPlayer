@@ -287,6 +287,13 @@ class ExportSettings:
     # sequences. Lets you renumber a 1001-1500 source down to
     # 0001-0500 (or up). Ignored for video.
     start_frame: int = 1
+    # Custom filename stem (no extension, no padding, no path). When
+    # ``None`` or empty the engine falls back to the source sequence's
+    # ``base_name`` (= legacy behaviour). For image sequences the
+    # writer appends ``.NNNN.<ext>``; for video the writer appends
+    # ``.<ext>``. The user can rename a 1001-1500 source export to
+    # ``shot042_v003`` without renaming files post-hoc.
+    basename: str | None = None
 
     # ---- Format ----------------------------------------------------
     format_key: str = "png"  # one of ``ALL_FORMATS[i].key``
@@ -423,6 +430,7 @@ class ExportSettings:
         return {
             "output_dir": str(self.output_dir),
             "start_frame": self.start_frame,
+            "basename": self.basename or "",
             "format_key": self.format_key,
             "width": self.width if self.width is not None else 0,
             "height": self.height if self.height is not None else 0,
@@ -504,9 +512,19 @@ class ExportSettings:
                     return False
             return default
 
+        # Normalise basename: empty string → None so the engine falls
+        # back to the source sequence's base_name (= legacy behaviour
+        # for users who never touched the field).
+        raw_basename = data.get("basename", "")
+        basename_str = (
+            str(raw_basename).strip() if raw_basename is not None else ""
+        )
+        basename_value: str | None = basename_str or None
+
         return cls(
             output_dir=Path(str(data.get("output_dir", ""))),
             start_frame=_safe_int(data.get("start_frame", 1), 1),
+            basename=basename_value,
             format_key=_safe_str(data.get("format_key", "png"), "png"),
             in_frame=in_frame,
             out_frame=out_frame,

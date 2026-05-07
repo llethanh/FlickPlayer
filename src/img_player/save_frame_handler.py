@@ -75,25 +75,46 @@ def open_save_frame_dialog(app: ImgPlayerApp) -> None:
     suggested_dir = Path(str(last.get("output_dir") or seq.directory))
     last_format = str(last.get("format") or "png").lower()
     last_with_annotations = _coerce_bool(last.get("with_annotations"), True)
+    last_bake_compare = _coerce_bool(last.get("bake_compare"), True)
+
+    # Whether the live A/B compare overlay is actually active right
+    # now. Drives the visibility of the "Bake compare overlay" row in
+    # the dialog: without an active wipe there's nothing to bake, so
+    # the toggle would be confusing.
+    compare_state = getattr(app, "_compare_state", None)
+    compare_active = bool(
+        compare_state is not None and compare_state.is_active(),
+    )
 
     dialog = SaveFrameDialog(
         suggested_filename=suggested_filename,
         suggested_dir=suggested_dir,
         last_format=last_format,
         last_with_annotations=last_with_annotations,
+        last_bake_compare=last_bake_compare,
+        compare_active=compare_active,
         parent=app._window,
     )
     if dialog.exec() != dialog.DialogCode.Accepted:
         return
     settings = dialog.settings()
 
-    # Capture + write.
+    # Capture + write. When the user wants the snapshot WITHOUT the
+    # compare overlay even though it's currently on screen, we
+    # temporarily flip the compare state off, force a re-render so
+    # the GL widget paints the underlying composite, capture, then
+    # restore — see :func:`_capture_with_compare_off`.
     try:
-        image = capture_viewer(
-            app._window.viewer,
-            annotation_overlay=app._annotation_overlay,
-            with_annotations=settings.with_annotations,
-        )
+        if compare_active and not settings.bake_compare:
+            image = _capture_with_compare_off(
+                app, master_frame, settings.with_annotations,
+            )
+        else:
+            image = capture_viewer(
+                app._window.viewer,
+                annotation_overlay=app._annotation_overlay,
+                with_annotations=settings.with_annotations,
+            )
     except Exception:
         log.exception("[save-frame] capture failed")
         app._window.set_status("Save Frame failed: capture error (see log).")
@@ -111,11 +132,56 @@ def open_save_frame_dialog(app: ImgPlayerApp) -> None:
             "output_dir": str(settings.path.parent),
             "format": settings.fmt,
             "with_annotations": settings.with_annotations,
+            "bake_compare": settings.bake_compare,
         }
     except Exception:
         log.exception("[save-frame] failed to persist last-used settings")
 
     app._window.set_status(f"Saved frame to {settings.path}")
+
+
+def _capture_with_compare_off(
+    app: ImgPlayerApp, master_frame: int, with_annotations: bool,
+) -> QImage:
+    """Snapshot the viewer with the live A/B compare overlay
+    temporarily disabled, then restore it.
+
+    Useful when the reviewer wants a clean plate at the current
+    frame even though they've got a wipe on screen. We flip
+    ``compare_state.enabled`` off, force the frame-changed handler
+    to re-render via the regular cache path so the GL widget shows
+    the underlying composite, capture, then restore the compare
+    state and re-render once more so the user sees their wipe back.
+
+    The QApplication.processEvents() pumps in between are necessary
+    so Qt actually paints the new GL contents before ``viewer.grab``
+    samples the framebuffer — without them, the grab would catch the
+    *old* frame (the compare composite that was last uploaded).
+    """
+    from PySide6.QtWidgets import QApplication
+
+    compare_state = app._compare_state
+    was_enabled = compare_state.enabled
+    compare_state.enabled = False
+    try:
+        # Force a redraw via the regular path. Internally this
+        # routes through the master cache, which decodes / hits and
+        # uploads the result to the GL widget. Process pending paint
+        # events so the GL framebuffer reflects the new frame
+        # before we grab it.
+        app._on_frame_changed(master_frame)
+        QApplication.processEvents()
+        return capture_viewer(
+            app._window.viewer,
+            annotation_overlay=app._annotation_overlay,
+            with_annotations=with_annotations,
+        )
+    finally:
+        # Restore the wipe so the live viewer matches what the
+        # user expected to keep seeing after the dialog closed.
+        compare_state.enabled = was_enabled
+        app._on_frame_changed(master_frame)
+        QApplication.processEvents()
 
 
 def capture_viewer(

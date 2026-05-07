@@ -166,6 +166,17 @@ class ExportDialog(QDialog):  # type: ignore[misc]
         out_row.addWidget(self._out_dir_edit, 1)
         out_row.addWidget(out_btn)
         out_form.addRow("Folder:", out_row)
+        # Filename stem (no extension, no padding). Empty falls back
+        # to the source sequence's base_name. Image-sequence writer
+        # appends ``.NNNN.<ext>``; video writer appends ``.<ext>``.
+        # Hint label below the field tells the user which form their
+        # output will take based on the active format pick.
+        self._basename_edit = QLineEdit()
+        self._basename_edit.setPlaceholderText(
+            "(source basename — leave empty to keep)"
+        )
+        self._basename_edit.textChanged.connect(self._refresh_estimate)
+        out_form.addRow("File name:", self._basename_edit)
         self._start_frame_spin = QSpinBox()
         self._start_frame_spin.setRange(0, 9_999_999)
         out_form.addRow("Start frame:", self._start_frame_spin)
@@ -434,6 +445,7 @@ class ExportDialog(QDialog):  # type: ignore[misc]
         s = self._settings
         # Output
         self._out_dir_edit.setText(str(s.output_dir))
+        self._basename_edit.setText(s.basename or "")
         self._start_frame_spin.setValue(int(s.start_frame))
         # Format radio + dropdown
         is_video = s.is_video
@@ -563,9 +575,14 @@ class ExportDialog(QDialog):  # type: ignore[misc]
         else:
             missing_policy = MissingFramePolicy.ABORT
 
+        # Empty filename → None so the engine falls back to the
+        # source sequence's base_name; otherwise propagate the
+        # user-typed stem.
+        basename_text = self._basename_edit.text().strip()
         return ExportSettings(
             output_dir=Path(self._out_dir_edit.text().strip() or "."),
             start_frame=int(self._start_frame_spin.value()),
+            basename=basename_text or None,
             format_key=str(format_key),
             in_frame=int(self._in_spin.value()),
             out_frame=int(self._out_spin.value()),
