@@ -3009,14 +3009,26 @@ def _qt_screen_colorspace_hint(qapp: QApplication) -> str | None:
     Returns ``None`` when the screen has a custom ICC profile that
     Qt couldn't classify into a named colorspace; the detector then
     falls back to sRGB.
+
+    ``QScreen.colorSpace()`` isn't exposed on every PySide6 build /
+    platform combo (notably absent from PySide6 6.11 on Windows even
+    though the C++ API exists), so we ``getattr`` it and gracefully
+    bail to ``None`` when missing — same outcome as a screen with no
+    classifiable profile.
     """
     from PySide6.QtGui import QColorSpace
 
     screen = qapp.primaryScreen() if qapp is not None else None
     if screen is None:
         return None
-    qcs = screen.colorSpace()
-    if not qcs.isValid():
+    color_space_fn = getattr(screen, "colorSpace", None)
+    if color_space_fn is None:
+        return None
+    try:
+        qcs = color_space_fn()
+    except Exception:
+        return None
+    if qcs is None or not qcs.isValid():
         return None
 
     # Qt 6 enum → canonical lowercase string. Anything not listed
