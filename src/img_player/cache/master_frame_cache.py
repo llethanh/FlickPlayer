@@ -136,8 +136,24 @@ class MasterFrameCache:
         self._stack = stack
         self._budget = budget_bytes
         self._lock = threading.RLock()
-        self._frames: dict[int, np.ndarray] = {}
-        self._missing: set[int] = set()
+        # Cache keys are ``(master_frame, chain_signature)`` tuples
+        # where the signature captures the visible chain at that
+        # master frame *plus* each contributor layer's channel
+        # selection. Two consequences:
+        #
+        # 1. Channel switch / visibility toggle / reorder no longer
+        #    invalidates anything: the new state has a different
+        #    signature, so lookups under it miss and trigger fresh
+        #    decodes, while the old entries linger under their
+        #    captured signature. Switching back becomes an instant
+        #    cache hit.
+        # 2. Eviction (``_evict_if_over_budget``) prefers entries
+        #    whose signature no longer matches the *current* state at
+        #    that frame — those are "alternative views" the user
+        #    isn't currently looking at. When budget pressure forces
+        #    drops, we drop snapshots before live frames.
+        self._frames: dict[tuple[int, str], np.ndarray] = {}
+        self._missing: set[tuple[int, str]] = set()
         self._bytes_used = 0
         self._current_frame = 0
         self._direction = 1
@@ -180,17 +196,15 @@ class MasterFrameCache:
         # decoding is the expensive part, and the pixel data is
         # identical between the two offsets.
         self._last_known_state: dict[str, tuple] = {}
-        # Per-frame contributor chain snapshot — captures which layers
-        # produced each cached frame's pixels (top→bottom in stack
-        # order, walking until an opaque floor). Used by
-        # ``_on_layers_changed`` to detect which frames are still
-        # valid after a reorder / add / remove: when the chain at a
-        # given master frame is unchanged, the cached pixels stay
-        # accurate and we can skip the re-decode. Without this,
-        # every reorder triggered a nuclear ``clear()`` and the user
-        # saw a noticeable freeze + grey cache bar while every frame
-        # came back from disk.
-        self._chain_snapshot: dict[int, tuple[str, ...]] = {}
+        # Memoised per-master-frame current signature, invalidated on
+        # any stack mutation that could shift the chain (layers_changed
+        # / visibility_changed / layer_modified). Without this,
+        # ``cached_frames()`` / ``missing_frames()`` (called every
+        # 200 ms by the cache-bar timer) would recompute the chain
+        # signature for every cached entry — O(n_frames × n_layers)
+        # of attribute reads. The memo collapses that to one walk per
+        # frame per stack mutation.
+        self._signature_cache: dict[int, str] = {}
         # Bumped on every invalidation so workers in flight drop
         # their results when the world has moved on (channel change,
         # visibility flip, layer reorder, …).
@@ -234,7 +248,7 @@ class MasterFrameCache:
         with self._lock:
             self._frames.clear()
             self._missing.clear()
-            self._chain_snapshot.clear()
+            self._signature_cache.clear()
             self._path_index.clear()
             self._mtime_index.clear()
             self._last_known_range.clear()
@@ -248,7 +262,7 @@ class MasterFrameCache:
         with self._lock:
             self._frames.clear()
             self._missing.clear()
-            self._chain_snapshot.clear()
+            self._signature_cache.clear()
             self._bytes_used = 0
             self._epoch += 1
 
@@ -301,10 +315,12 @@ class MasterFrameCache:
         """Drop-in replacement for :meth:`FrameCache.set_channels`.
 
         Updates the focused layer's ``channel_selection`` (or the
-        first layer if none is focused). Triggers
-        ``layer_modified`` → cache invalidation for that layer's
-        master range. ``channels`` is either ``None`` (default
-        RGB(A) reader) or a list of names.
+        first layer if none is focused). Triggers ``layer_modified``,
+        which the cache handles passively now (multi-version key) —
+        the existing entries become stale snapshots accessible via
+        their captured signature, and lookups under the new selection
+        miss + queue fresh decodes. ``channels`` is either ``None``
+        (reader default) or a list of names.
         """
         from img_player.sequence.channels import (
             ChannelGroup,
@@ -367,26 +383,36 @@ class MasterFrameCache:
         new_mtimes = {fi.frame_number: fi.mtime for fi in new_sequence.frames}
         new_paths = {fi.frame_number: fi.path for fi in new_sequence.frames}
         # Diff per source frame: same mtime → keep; different / now-missing → drop.
+        # With multi-version keys we drop EVERY signature variant
+        # for the affected master frame — a disk-mtime change
+        # invalidates every cached snapshot of that frame, regardless
+        # of which channels they captured.
         with self._lock:
             for source_frame in set(old_mtimes) | set(new_mtimes):
                 master_frame = target.offset + (source_frame - target.layer_in)
                 old_mt = old_mtimes.get(source_frame, 0.0)
                 new_mt = new_mtimes.get(source_frame, 0.0)
+                # Find every signature variant cached for this master frame.
+                variants = [
+                    k for k in self._frames if k[0] == master_frame
+                ]
                 if old_mt == new_mt and source_frame in new_paths:
-                    if master_frame in self._frames \
-                            and master_frame not in self._missing:
+                    # File unchanged on disk: keep all variants.
+                    if any(k not in self._missing for k in variants):
                         kept += 1
                     continue
-                # Drop the cached buffer (if any) so the next
-                # request decodes fresh.
-                arr = self._frames.pop(master_frame, None)
-                if arr is not None:
-                    if master_frame not in self._missing:
+                # File changed / disappeared: drop all variants.
+                for k in variants:
+                    arr = self._frames.pop(k, None)
+                    if arr is not None and k not in self._missing:
                         self._bytes_used -= arr.nbytes
                         dropped += 1
-                self._missing.discard(master_frame)
-                self._chain_snapshot.pop(master_frame, None)
+                    self._missing.discard(k)
             self._epoch += 1
+            # Mtime delta means coverage / signature relevance might
+            # have shifted (e.g. a new file appeared where a missing
+            # placeholder lived); reset the memo.
+            self._invalidate_signature_cache()
         # Rebuild the index against the refreshed sequence. Mutate
         # the layer dataclass directly (no stack.update call) so the
         # ``layer_modified`` signal doesn't fire — that signal would
@@ -415,8 +441,8 @@ class MasterFrameCache:
         self._path_index[target.id] = new_paths
         self._mtime_index[target.id] = new_mtimes
         missing = sum(
-            1 for f in self._missing
-            if target.master_start <= f <= target.master_end
+            1 for k in self._missing
+            if target.master_start <= k[0] <= target.master_end
         )
         return (kept, dropped, missing)
 
@@ -425,12 +451,17 @@ class MasterFrameCache:
     def get(self, master_frame: int) -> np.ndarray | None:
         """Non-blocking fetch. ``None`` when the frame is not cached.
 
-        Updates the playhead position so the next eviction round
-        scores frames against this center.
+        Looks up under the current chain × channel signature so a
+        stale snapshot (different channels, hidden layer that's now
+        back, …) is treated as a miss even though its bytes still
+        live in ``_frames`` under another signature key. Updates the
+        playhead position so the next eviction round scores frames
+        against this center.
         """
         with self._lock:
             self._current_frame = master_frame
-            arr = self._frames.get(master_frame)
+            sig = self._signature_at(master_frame)
+            arr = self._frames.get((master_frame, sig))
             if arr is not None:
                 self._hits += 1
                 return arr
@@ -439,7 +470,8 @@ class MasterFrameCache:
 
     def contains(self, master_frame: int) -> bool:
         with self._lock:
-            return master_frame in self._frames
+            sig = self._signature_at(master_frame)
+            return (master_frame, sig) in self._frames
 
     def is_gap_frame(self, master_frame: int) -> bool:
         """True when this cache will never decode for this master frame.
@@ -471,16 +503,37 @@ class MasterFrameCache:
         return False
 
     def cached_frames(self) -> frozenset[int]:
-        """Snapshot of currently cached master-frame indices."""
+        """Master frames cached *under the current signature* — i.e.
+        what the timeline cache bar should paint as ready for the
+        currently-displayed view. Stale snapshots (different channels
+        / visibility) live in ``_frames`` too but aren't surfaced
+        here: the cache bar reflects the live view, not memory
+        accounting."""
         with self._lock:
-            return frozenset(self._frames.keys())
+            keys = list(self._frames.keys())
+        result: set[int] = set()
+        # Compute under the lock-released path: signatures use only
+        # immutable layer attrs. Re-acquire the lock only for the
+        # signature memo's read+write, which is a tight critical
+        # section already.
+        for mf, sig in keys:
+            with self._lock:
+                if self._signature_at(mf) == sig:
+                    result.add(mf)
+        return frozenset(result)
 
     def missing_frames(self) -> frozenset[int]:
         """Master frames whose decode failed (file missing /
-        unreadable). They hold a checkerboard placeholder so
-        playback doesn't stall."""
+        unreadable) under the current signature. Same filter rule
+        as :meth:`cached_frames`."""
         with self._lock:
-            return frozenset(self._missing)
+            keys = list(self._missing)
+        result: set[int] = set()
+        for mf, sig in keys:
+            with self._lock:
+                if self._signature_at(mf) == sig:
+                    result.add(mf)
+        return frozenset(result)
 
     def stats(self) -> CacheStats:
         with self._lock:
@@ -498,9 +551,15 @@ class MasterFrameCache:
 
     def request(self, master_frame: int, priority: int = 0) -> bool:
         """Enqueue an async decode. ``False`` when the frame is
-        already cached or no layer covers this master frame."""
+        already cached or no layer covers this master frame.
+
+        Dedups against the ``(master_frame, current_signature)`` key
+        — a frame cached under a stale signature (e.g. previous
+        channel selection) doesn't block a fresh decode under the
+        new state."""
         with self._lock:
-            if master_frame in self._frames:
+            sig = self._signature_at(master_frame)
+            if (master_frame, sig) in self._frames:
                 return False
         # Per-layer compositing: collect visible layers covering this
         # master frame top→bottom, take them until we hit one with
@@ -533,12 +592,13 @@ class MasterFrameCache:
         if getattr(topmost, "is_still", False):
             anchor = topmost.master_start
             with self._lock:
-                anchor_arr = self._frames.get(anchor)
+                anchor_sig = self._signature_at(anchor)
+                anchor_arr = self._frames.get((anchor, anchor_sig))
             if anchor_arr is not None:
                 if master_frame != anchor:
                     with self._lock:
-                        self._frames[master_frame] = anchor_arr
-                        self._record_frame_chain(master_frame)
+                        cur_sig = self._signature_at(master_frame)
+                        self._frames[(master_frame, cur_sig)] = anchor_arr
                 return False
             if master_frame != anchor:
                 # Anchor not decoded yet — drive the decode toward
@@ -576,9 +636,9 @@ class MasterFrameCache:
                     layer.sequence.width or 512,
                     layer.sequence.height or 512,
                 )
-                self._frames[master_frame] = placeholder
-                self._missing.add(master_frame)
-                self._record_frame_chain(master_frame)
+                key = (master_frame, self._signature_at(master_frame))
+                self._frames[key] = placeholder
+                self._missing.add(key)
             return False
         # Capture the layer + channels at submit time so the worker
         # decodes against a stable selection even if the user toggles
@@ -593,11 +653,19 @@ class MasterFrameCache:
         # checker behind transparent regions even though they
         # explicitly disabled the layer's transparency mode.
         strip_alpha = not layer.alpha_composite
+        # Capture the signature *now* so the worker stores its
+        # result under the state that motivated the submit. If the
+        # user toggles channels between submit and store, the in-
+        # flight buffer lands under the original signature (still
+        # accessible if they switch back) and a fresh request fires
+        # under the new signature.
+        with self._lock:
+            sig = self._signature_at(master_frame)
         return self._pool.submit(
             priority,
-            master_frame,
+            (master_frame, sig),
             lambda: self._decode_and_store(
-                master_frame, path, channels, ph_w, ph_h,
+                master_frame, sig, path, channels, ph_w, ph_h,
                 strip_alpha=strip_alpha,
             ),
         )
@@ -702,101 +770,103 @@ class MasterFrameCache:
             time.sleep(0.005)
         return False
 
-    def _record_frame_chain(self, master_frame: int) -> None:
-        """Store the current contributor chain for ``master_frame``.
-
-        Called next to every ``self._frames[mf] = ...`` insertion
-        point so ``_on_layers_changed`` always has an accurate "old
-        chain" to compare against. Cheap (a list walk + dict write
-        under the existing lock); a no-op overhead per decode.
-        """
-        self._chain_snapshot[master_frame] = self._compute_chain_at(master_frame)
-
-    def _compute_chain_at(self, master_frame: int) -> tuple[str, ...]:
-        """Return the ordered tuple of contributor layer ids that
-        would produce the pixels at ``master_frame`` under the
+    def _signature_at(self, master_frame: int) -> str:
+        """Stable string id for the chain × channel-selection tuple
+        that would produce the pixels at ``master_frame`` under the
         current stack state.
 
-        Walks visible layers top→bottom, collecting ids until the
-        first ``alpha_composite=False`` (opaque floor) or the bottom
-        of the stack. Empty tuple when no layer covers the frame —
-        that's a "no coverage" gap, the viewer paints black.
+        Cache entries are keyed by ``(master_frame, signature)`` so
+        a channel switch / visibility toggle / reorder leaves the
+        old decoded buffer accessible under its captured signature
+        — switching back becomes a hit instead of a full re-decode.
 
-        Used by ``_on_layers_changed`` to compare per-frame chains
-        before / after a stack mutation. Cheap to call: a few
-        attribute reads + a list walk per layer in the stack.
+        Memoised in ``_signature_cache``; invalidated by every
+        stack-mutation handler.
         """
-        chain: list[str] = []
+        cached = self._signature_cache.get(master_frame)
+        if cached is not None:
+            return cached
+        parts: list[str] = []
         for layer in self._stack.layers():
             if not layer.visible or not layer.covers(master_frame):
                 continue
-            chain.append(layer.id)
+            sel = layer.channel_selection
+            sel_label = sel.active.label if sel is not None else "_"
+            # Include alpha-composite + straight flags in the per-
+            # contributor token: toggling the T (transparency) button
+            # changes the decoded pixels (strip-A path) and the
+            # composite math (premult vs. straight), so each combo
+            # warrants its own cached snapshot.
+            ac = "1" if layer.alpha_composite else "0"
+            pm = "1" if layer.alpha_is_straight else "0"
+            parts.append(f"{layer.id}@{sel_label}#{ac}{pm}")
             if not layer.alpha_composite:
-                # Opaque floor — anything below is masked, the chain
-                # ends here.
                 break
-        return tuple(chain)
+        sig = "|".join(parts)
+        self._signature_cache[master_frame] = sig
+        return sig
+
+    def _invalidate_signature_cache(self) -> None:
+        """Clear the per-frame signature memo — call from any path
+        that mutates the layer stack (visibility, channels, reorder,
+        add / remove, trim)."""
+        self._signature_cache.clear()
 
     # ------------------------------------------------------------------ Stack signals → invalidation
 
     def _on_layers_changed(self) -> None:
-        """Composition mutated → invalidate selectively.
+        """Stack composition mutated (add / remove / reorder).
 
-        For each cached master frame, recompute the contributor
-        chain under the new stack state and compare with the chain
-        recorded at decode time. Drop only frames whose chain
-        actually changed; the rest stay cached and the user sees no
-        freeze on reorders that don't affect their pixels (e.g.
-        swapping two layers below an opaque-floor topmost, or
-        moving an invisible layer).
+        With the multi-version cache key, most "this changed the
+        chain at frame F" cases are handled passively: lookups under
+        the new signature miss → fresh decode; the old entries
+        linger as alternative-view snapshots until eviction reaps
+        them. So we no longer drop frames here.
 
-        Add / remove are uniformly handled by the same comparison:
-        adding a top layer changes the chain at every frame it
-        covers; removing a layer that was contributing changes the
-        chain at every frame in its old reach. Frames untouched by
-        the mutation keep their pixels.
+        Two remaining concerns:
 
-        We still ``pool.clear()`` and bump the epoch to discard any
-        in-flight decode whose result might no longer match the
-        new state (cheap correctness over salvaging a few hundred
-        ms of in-flight work). The dropped pending re-fires through
-        the controller's ``replan_prefetch`` immediately after.
+        * Layers that have been **removed** from the stack leave
+          their ids in stale signatures forever — those entries are
+          unreachable via ``_signature_at`` (which only walks live
+          layers), so they'd just consume budget until evicted. Drop
+          them eagerly.
+        * In-flight decodes captured a signature against the *old*
+          stack — they're not necessarily wrong (their key still
+          encodes the world they decoded), but ``pool.clear()``
+          opens the dedup slots so the controller's follow-up
+          ``replan_prefetch`` can re-submit under the new active
+          signature.
         """
-        # Compute new chains for every currently-cached frame and
-        # gather the set to drop.
-        with self._lock:
-            cached_frames = list(self._frames.keys())
-        frames_to_drop: list[int] = []
-        new_chains: dict[int, tuple[str, ...]] = {}
-        for f in cached_frames:
-            new_chain = self._compute_chain_at(f)
-            old_chain = self._chain_snapshot.get(f)
-            new_chains[f] = new_chain
-            if old_chain != new_chain:
-                frames_to_drop.append(f)
+        live_ids = {layer.id for layer in self._stack.layers()}
+        self._invalidate_signature_cache()
 
-        # Drop pending decodes (their target chain may also have
-        # changed) and bump the epoch so in-flight workers' results
-        # land in the bin instead of polluting the cache.
+        with self._lock:
+            cached_keys = list(self._frames.keys())
+
+        def sig_refs_dead_layer(sig: str) -> bool:
+            if not sig:
+                return False
+            for token in sig.split("|"):
+                lid = token.split("@", 1)[0]
+                if lid and lid not in live_ids:
+                    return True
+            return False
+
+        keys_to_drop = [
+            k for k in cached_keys if sig_refs_dead_layer(k[1])
+        ]
+
         self._pool.clear()
         with self._lock:
-            for f in frames_to_drop:
-                arr = self._frames.pop(f, None)
-                if arr is not None and f not in self._missing:
+            for k in keys_to_drop:
+                arr = self._frames.pop(k, None)
+                if arr is not None and k not in self._missing:
                     self._bytes_used -= arr.nbytes
-                self._missing.discard(f)
-                self._chain_snapshot.pop(f, None)
+                self._missing.discard(k)
             self._epoch += 1
-            # Refresh chain snapshot for kept frames so the next
-            # ``_on_layers_changed`` compares against the current
-            # state, not a stale one.
-            for f, chain in new_chains.items():
-                if f in self._frames:
-                    self._chain_snapshot[f] = chain
 
         # Drop indexes for layers that no longer exist; rebuild for
-        # layers that do. Cheap relative to a per-frame eviction.
-        live_ids = {layer.id for layer in self._stack.layers()}
+        # layers that do.
         for stale_id in list(self._path_index.keys()):
             if stale_id not in live_ids:
                 self._path_index.pop(stale_id, None)
@@ -837,7 +907,10 @@ class MasterFrameCache:
             ph_h = layer.sequence.height or 512
             placeholder = get_missing_placeholder(ph_w, ph_h)
             for master_frame in range(layer.master_start, layer.master_end + 1):
-                if master_frame in self._frames:
+                with self._lock:
+                    sig = self._signature_at(master_frame)
+                key = (master_frame, sig)
+                if key in self._frames:
                     continue  # already populated (shouldn't happen post-clear)
                 source_frame = layer.source_frame_at(master_frame)
                 if paths.get(source_frame) is None:
@@ -848,38 +921,44 @@ class MasterFrameCache:
                     topmost = self._stack.topmost_visible_at(master_frame)
                     if topmost is None or topmost.id == layer.id:
                         with self._lock:
-                            self._frames[master_frame] = placeholder
-                            self._missing.add(master_frame)
-                            self._record_frame_chain(master_frame)
+                            self._frames[key] = placeholder
+                            self._missing.add(key)
 
     def _on_visibility_changed(self, layer_id: str) -> None:
-        """The toggled layer's master-frame region needs re-decode
-        (different topmost-visible)."""
-        layer = self._stack.find(layer_id)
-        if layer is None:
-            return
-        self._invalidate_master_range(layer.master_start, layer.master_end)
+        """Toggling a layer's eye changes the chain at every frame it
+        covers. With the multi-version cache, the resulting different
+        signature naturally turns the existing entries into stale
+        snapshots — lookups under the new signature miss and queue
+        fresh decodes. We just invalidate the per-frame signature
+        memo so subsequent reads recompute against the new visible
+        set."""
+        del layer_id  # signature memo doesn't track per-layer
+        self._invalidate_signature_cache()
 
     def _on_layer_modified(self, layer_id: str) -> None:
         """Trim / offset / channel change on a layer.
 
-        Two paths:
+        Three paths:
 
-        * **Pure offset shift** (single-layer stack, no trim/channel
-          change). The decoded pixels are identical between the old
-          and new offsets — only their master-frame keys change. We
-          re-index the cache by ``Δ = new_offset - old_offset``
-          rather than dropping and re-decoding. Big win when the
-          user nudges a layer left/right on the timeline: dragging
-          across hundreds of frames used to invalidate the entire
-          range and trigger a full re-decode wave.
+        * **Pure offset shift** (single-layer stack, no trim /
+          channel / alpha-flag change): re-index the cached frames
+          by ``Δ = new_offset - old_offset`` instead of dropping
+          them. Decoded pixels are identical between the two
+          offsets, only their master-frame keys move.
 
-        * **Anything else** (trim, channel selection, multi-layer
-          offset shift) — invalidate the union of old and new master
-          ranges, same as before. The previous range matters when
-          the layer shrunk: the now-uncovered tail / head holds
-          stale pixels that must come from whatever's underneath in
-          the stack.
+        * **Channel selection or alpha-flag change**: the multi-
+          version cache key handles this passively — the new state
+          has a different signature, so lookups miss and queue fresh
+          decodes; the old entries become stale snapshots, accessible
+          if the user reverts (e.g. switches A → B → A). We just
+          invalidate the signature memo and bump the epoch so any
+          in-flight decode against the OLD signature still lands
+          under its OLD key (= still-useful snapshot).
+
+        * **Trim** (layer_in / layer_out): coverage shrunk on one
+          end means frames the layer no longer reaches must surface
+          whatever's underneath. Drop the now-uncovered slots from
+          ``[prev_start, prev_end] \\ [new_start, new_end]``.
         """
         layer = self._stack.find(layer_id)
         if layer is None:
@@ -896,12 +975,12 @@ class MasterFrameCache:
             layer.alpha_composite, layer.alpha_is_straight,
         )
 
-        # Detect pure-offset shift. Only safe when:
-        #   * trim (in/out) and channel selection are unchanged
-        #   * a single layer is loaded — otherwise the cached pixels
-        #     at old master frames may have come from a different
-        #     layer (whichever was topmost-visible at decode time)
-        #     and shifting them would scramble the composition.
+        # Stack mutation always invalidates the per-frame signature
+        # memo: the next ``_signature_at`` for any frame this layer
+        # touches must reflect the new state.
+        self._invalidate_signature_cache()
+
+        # Pure-offset shift fast path.
         is_offset_only = (
             prev_state is not None
             and prev_state[0] != new_state[0]            # offset differs
@@ -915,25 +994,37 @@ class MasterFrameCache:
             self._last_known_state[layer_id] = new_state
             return
 
-        # Cover the union so any frame the layer USED to or NOW does
-        # cover gets re-decoded.
-        invalidate_first = min(prev_start, new_start)
-        invalidate_last = max(prev_end, new_end)
-        self._invalidate_master_range(invalidate_first, invalidate_last)
-        # Drop the worker pool's pending decodes too — same reason
-        # ``_on_layers_changed`` does it. Pending tasks captured the
-        # OLD layer state at submit time (e.g. ``is_opaque_floor``
-        # baked into the composite plan, ``strip_alpha`` baked into
-        # the single-decode lambda); even though the epoch bump in
-        # ``_invalidate_master_range`` makes the workers DISCARD their
-        # results at store time, the pool's per-key dedup set still
-        # holds those frames as "pending" — so the controller's
-        # follow-up ``replan_prefetch`` is silently rejected for
-        # every still-pending frame and the cache never gets a
-        # fresh decode with the new state. End result: gaps that
-        # only fill once playback rolls past them. Toggling alpha
-        # while playing was the user-visible symptom — wave of "old
-        # alpha" frames in the middle of the cached range.
+        # Trim detection: layer_in / layer_out changed. The slots
+        # the layer no longer covers may need re-decode (different
+        # topmost-visible underneath). Channel selection /
+        # alpha-flag changes alone don't reach this branch — they're
+        # handled passively by the signature key.
+        trim_changed = (
+            prev_state is None
+            or prev_state[1] != new_state[1]   # layer_in
+            or prev_state[2] != new_state[2]   # layer_out
+        )
+        if trim_changed:
+            # Frames in the symmetric difference between old and new
+            # coverage hold stale pixels.
+            old_set = (
+                set(range(prev_start, prev_end + 1))
+                if prev_start <= prev_end else set()
+            )
+            new_set = (
+                set(range(new_start, new_end + 1))
+                if new_start <= new_end else set()
+            )
+            now_uncovered = sorted(old_set - new_set)
+            if now_uncovered:
+                self._invalidate_master_range(
+                    now_uncovered[0], now_uncovered[-1],
+                )
+
+        # Always reopen pool dedup slots so the controller's follow-
+        # up ``replan_prefetch`` can submit fresh decodes against
+        # the new signature without being rejected by stale pending
+        # entries.
         self._pool.clear()
         self._last_known_range[layer_id] = (new_start, new_end)
         self._last_known_state[layer_id] = new_state
@@ -949,11 +1040,15 @@ class MasterFrameCache:
         to F + shift. The decoded pixel buffer is unchanged — only
         the timeline coordinate it answers to.
 
+        Each entry's signature is recomputed at the new master frame
+        (a layer offset shift moves the chain coverage with it, so
+        ``layer.id`` may now appear at a different mf — its tokens
+        in the signature stay logically the same since ids and
+        channel selections didn't change).
+
         Bumps the epoch so any in-flight decode (which captured the
         OLD master_frame at submit time) gets dropped at store time
-        rather than landing under a now-stale key. The lost in-flight
-        work is much smaller than what we'd otherwise re-decode, so
-        the trade-off is favourable.
+        rather than landing under a now-stale key.
         """
         if shift == 0 or old_first > old_last:
             return
@@ -961,30 +1056,30 @@ class MasterFrameCache:
             # Snapshot the entries to move; iterate later to avoid
             # mutating the dict while iterating it.
             to_move: list[tuple[int, np.ndarray, bool]] = []
-            for f in list(self._frames.keys()):
-                if old_first <= f <= old_last:
-                    arr = self._frames.pop(f)
-                    is_missing = f in self._missing
-                    self._missing.discard(f)
-                    # Drop the old chain snapshot too — re-recorded
-                    # at the new key below.
-                    self._chain_snapshot.pop(f, None)
-                    to_move.append((f, arr, is_missing))
+            for k in list(self._frames.keys()):
+                mf, _sig = k
+                if old_first <= mf <= old_last:
+                    arr = self._frames.pop(k)
+                    is_missing = k in self._missing
+                    self._missing.discard(k)
+                    to_move.append((mf, arr, is_missing))
+            # Recompute signatures against the post-shift state.
+            self._invalidate_signature_cache()
             # Apply the shift. If a destination key is already
             # occupied (shouldn't happen with a single-layer stack,
             # but be defensive) the existing entry wins and the
             # shifted one is dropped — that frame will simply be
             # re-decoded by the next prefetch wave.
-            for old_f, arr, is_missing in to_move:
-                new_f = old_f + shift
-                if new_f in self._frames:
+            for old_mf, arr, is_missing in to_move:
+                new_mf = old_mf + shift
+                new_key = (new_mf, self._signature_at(new_mf))
+                if new_key in self._frames:
                     if not is_missing:
                         self._bytes_used -= arr.nbytes
                     continue
-                self._frames[new_f] = arr
-                self._record_frame_chain(new_f)
+                self._frames[new_key] = arr
                 if is_missing:
-                    self._missing.add(new_f)
+                    self._missing.add(new_key)
             self._epoch += 1
 
     def _invalidate_master_range(self, first: int, last: int) -> None:
@@ -1031,15 +1126,14 @@ class MasterFrameCache:
             # from the cache forever (= viewer black at startup with
             # sparse-source sequences).
             to_drop = [
-                f for f in self._frames
-                if first <= f <= last and f not in self._missing
+                k for k in self._frames
+                if first <= k[0] <= last and k not in self._missing
             ]
             if not to_drop:
                 return
-            for f in to_drop:
-                arr = self._frames.pop(f)
+            for k in to_drop:
+                arr = self._frames.pop(k)
                 self._bytes_used -= arr.nbytes
-                self._chain_snapshot.pop(f, None)
             self._epoch += 1
 
     def _broadest_layer_size(self) -> tuple[int, int]:
@@ -1200,18 +1294,26 @@ class MasterFrameCache:
             ph_w, ph_h = self._broadest_layer_size()
             with self._lock:
                 placeholder = get_missing_placeholder(ph_w, ph_h)
-                self._frames[master_frame] = placeholder
-                self._missing.add(master_frame)
-                self._record_frame_chain(master_frame)
+                key = (master_frame, self._signature_at(master_frame))
+                self._frames[key] = placeholder
+                self._missing.add(key)
             return False
+        # Capture the signature at submit time — the worker will store
+        # under the same key even if the stack mutates mid-decode, so
+        # the in-flight buffer lands as a "stale" snapshot accessible
+        # if the user reverts.
+        with self._lock:
+            sig = self._signature_at(master_frame)
         return self._pool.submit(
             priority,
-            master_frame,
-            lambda: self._decode_composited_and_store(master_frame, plan),
+            (master_frame, sig),
+            lambda: self._decode_composited_and_store(
+                master_frame, sig, plan,
+            ),
         )
 
     def _decode_composited_and_store(
-        self, master_frame: int, plan: list[dict],
+        self, master_frame: int, signature: str, plan: list[dict],
     ) -> None:
         """Worker entry: decode each layer's contribution + over-blend
         front-to-back. The first plan entry is the topmost.
@@ -1261,25 +1363,25 @@ class MasterFrameCache:
             placeholder = get_missing_placeholder(
                 plan[0]["ph_w"], plan[0]["ph_h"],
             )
+            key = (master_frame, signature)
             with self._lock:
                 self._decode_errors += 1
                 if epoch != self._epoch:
                     return
-                if master_frame in self._frames:
+                if key in self._frames:
                     return
-                self._frames[master_frame] = placeholder
-                self._missing.add(master_frame)
-                self._record_frame_chain(master_frame)
+                self._frames[key] = placeholder
+                self._missing.add(key)
             return
 
+        key = (master_frame, signature)
         with self._lock:
             if epoch != self._epoch:
                 return
-            if master_frame in self._frames:
+            if key in self._frames:
                 return
-            self._frames[master_frame] = accum
+            self._frames[key] = accum
             self._bytes_used += accum.nbytes
-            self._record_frame_chain(master_frame)
             # Same still-fan-out as ``_decode_and_store`` — covers the
             # case where a user explicitly toggles ``alpha_composite``
             # on a still (uncommon, but supported via the T button).
@@ -1289,15 +1391,19 @@ class MasterFrameCache:
                     still_layer.master_start,
                     still_layer.master_end + 1,
                 ):
-                    if f == master_frame or f in self._frames:
+                    if f == master_frame:
                         continue
-                    self._frames[f] = accum
-                    self._record_frame_chain(f)
+                    f_sig = self._signature_at(f)
+                    f_key = (f, f_sig)
+                    if f_key in self._frames:
+                        continue
+                    self._frames[f_key] = accum
             self._evict_if_over_budget()
 
     def _decode_and_store(
         self,
         master_frame: int,
+        signature: str,
         path,
         channels: list[str] | None,
         placeholder_w: int,
@@ -1322,6 +1428,7 @@ class MasterFrameCache:
         """
         with self._lock:
             epoch = self._epoch
+        key = (master_frame, signature)
         try:
             arr = read_frame(path, channels=channels)
         except FrameReadError as err:
@@ -1334,11 +1441,10 @@ class MasterFrameCache:
                 self._decode_errors += 1
                 if epoch != self._epoch:
                     return
-                if master_frame in self._frames:
+                if key in self._frames:
                     return
-                self._frames[master_frame] = placeholder
-                self._missing.add(master_frame)
-                self._record_frame_chain(master_frame)
+                self._frames[key] = placeholder
+                self._missing.add(key)
             return
 
         if strip_alpha and arr.ndim == 3 and arr.shape[2] == 4:
@@ -1350,20 +1456,19 @@ class MasterFrameCache:
         with self._lock:
             if epoch != self._epoch:
                 return  # invalidated mid-decode — drop
-            if master_frame in self._frames:
+            if key in self._frames:
                 return  # raced — keep existing
-            self._frames[master_frame] = arr
+            self._frames[key] = arr
             self._bytes_used += arr.nbytes
-            self._record_frame_chain(master_frame)
             # Still-image fan-out: when the just-decoded frame is the
             # anchor (master_start) of a still layer, alias the same
             # ndarray into every other master frame in the still's
-            # hold range. The prefetch loop already called
-            # ``request(N)`` for each of those, but they got dedup-
-            # rejected before the anchor was decoded. Without this
-            # fan-out, the cache bar would show only one decoded
-            # frame for a 100-frame still and the controller would
-            # stall on play (every non-anchor get() returns None).
+            # hold range — under each frame's *own* signature so
+            # they survive the same eviction rules. The prefetch
+            # loop already called ``request(N)`` for each of those,
+            # but they got dedup-rejected before the anchor was
+            # decoded. Without the fan-out, the cache bar would show
+            # only one decoded frame for a 100-frame still.
             # Aliases share the buffer (zero extra memory) and are
             # exempt from byte accounting (no double-count).
             still_layer = self._still_layer_anchored_at(master_frame)
@@ -1372,10 +1477,13 @@ class MasterFrameCache:
                     still_layer.master_start,
                     still_layer.master_end + 1,
                 ):
-                    if f == master_frame or f in self._frames:
+                    if f == master_frame:
                         continue
-                    self._frames[f] = arr  # ref-share, no nbytes bump
-                    self._record_frame_chain(f)
+                    f_sig = self._signature_at(f)
+                    f_key = (f, f_sig)
+                    if f_key in self._frames:
+                        continue
+                    self._frames[f_key] = arr  # ref-share, no nbytes bump
             self._evict_if_over_budget()
 
     def _still_layer_anchored_at(self, master_frame: int):  # type: ignore[no-untyped-def]
@@ -1397,19 +1505,30 @@ class MasterFrameCache:
         return None
 
     def _evict_if_over_budget(self) -> None:
-        """Distance-from-playhead eviction with a behind-the-playhead
-        penalty (= we evict frames the user just played first).
+        """Multi-tier eviction prioritising live frames over stale
+        snapshots. Tiers, evicted in order:
 
-        In LOOP mode (``set_loop_range(enabled=True)``), scoring uses
-        **ring distance** instead: ``f``'s score is its forward
-        wrap-around distance from the playhead within ``[lo, hi]``.
-        This keeps the wrap target (``lo``) cheap to retain when the
-        playhead approaches ``hi`` — without it, ``lo`` has the
-        highest signed-distance score and gets evicted the instant a
-        worker finishes decoding it, locking playback at ``hi``
-        forever (the loop never visibly fires). Frames outside the
-        loop range fall back to signed-distance scoring (effectively
-        evicted first since they're not part of the active ring)."""
+        1. **Stale-signature** entries — frames whose stored
+           signature no longer matches the chain × channel state at
+           that master frame. Generated by channel switches /
+           visibility toggles / reorders; the user can re-hit them
+           by reverting, but they're not the current view.
+        2. **Invisible-layer-only** entries — frames whose stored
+           signature references at least one layer that's currently
+           invisible. Same idea but stricter: the user has actively
+           hidden some contributor of the snapshot, so the snapshot
+           is unreachable until they unhide.
+        3. **Live distance-based** — what the original eviction did:
+           score by signed distance from the playhead (with
+           behind-penalty + loop-ring awareness), evict farthest
+           first.
+
+        Tier ordering means a budget-pressure event drops "alternative
+        view" pixels first; only when the alt-pool is empty do we
+        start touching live frames. That's exactly what the user
+        asked for: keep channel snapshots, surrender them under
+        memory pressure.
+        """
         if self._bytes_used <= self._budget:
             return
         cur = self._current_frame
@@ -1424,24 +1543,18 @@ class MasterFrameCache:
         )
         ring_size = (loop_hi - loop_lo + 1) if loop_on else 0
 
-        def score(f: int) -> float:
-            # Near-rear protection: any frame within the rear-view
-            # prefetch window of the playhead gets a score equal to
-            # its small absolute distance, regardless of loop / play
-            # direction. The controller queues up ``PREFETCH_BEHIND``
-            # frames just behind the playhead each tick so a quick
-            # scrub-back is instant; without this exemption LOOP mode
-            # (the default) would score those frames as ``ring_size -
-            # 1`` (= maximum) and evict them the moment they land.
+        # Snapshot the set of currently-visible layer ids once —
+        # cheap, and avoids repeated attribute reads during the
+        # per-key tier classification below.
+        visible_ids = {
+            layer.id for layer in self._stack.layers() if layer.visible
+        }
+
+        def distance_score(f: int) -> float:
             delta_signed = (f - cur) * d
             if -_NEAR_REAR_WINDOW <= delta_signed < 0:
                 return -delta_signed  # 1, 2, 3, ... 8
             if loop_on and loop_lo <= f <= loop_hi:
-                # Ring forward distance — frames "ahead" along the
-                # loop direction are cheap to keep, frames already
-                # passed (which will only be revisited after a full
-                # wrap) sit at distance ``ring_size - 1`` and are
-                # evicted first. Reverse direction mirrors the wrap.
                 if d >= 0:
                     return float((f - cur) % ring_size)
                 return float((cur - f) % ring_size)
@@ -1449,13 +1562,50 @@ class MasterFrameCache:
                 return -delta_signed * penalty
             return float(delta_signed)
 
-        by_priority = sorted(self._frames.keys(), key=score, reverse=True)
-        for f in by_priority:
+        def signature_refs_invisible(sig: str) -> bool:
+            """True when the signature mentions at least one
+            currently-hidden layer id. Empty signatures (= no layer
+            covered the frame) don't count."""
+            if not sig:
+                return False
+            for token in sig.split("|"):
+                # ``layer_id@selection_label#flags`` — peel the id off.
+                lid = token.split("@", 1)[0]
+                if lid and lid not in visible_ids:
+                    return True
+            return False
+
+        # Tier each cached entry. Tier 0 = stale-sig (drop first),
+        # Tier 1 = sig refs an invisible layer, Tier 2 = live frame.
+        # Within a tier we sort by distance_score descending (worst
+        # first) so the "farthest live frame" gets evicted before
+        # we ever touch a closer one.
+        def key_tier(item: tuple[int, str]) -> tuple[int, float]:
+            mf, sig = item
+            current_sig = self._signature_at(mf)
+            if sig != current_sig:
+                # Stale — score by distance just to give a stable
+                # sort within the tier (doesn't really matter; all
+                # tier-0 entries go before any tier-1).
+                tier = 0
+            elif signature_refs_invisible(sig):
+                tier = 1
+            else:
+                tier = 2
+            return (-tier, distance_score(mf))
+
+        # Sort: tier 0 first (smallest -tier), then tier 1, then
+        # tier 2. Within a tier, highest distance_score first.
+        by_priority = sorted(
+            self._frames.keys(),
+            key=key_tier,
+            reverse=True,
+        )
+        for k in by_priority:
             if self._bytes_used <= self._budget:
                 break
-            arr = self._frames.pop(f)
-            if f not in self._missing:
+            arr = self._frames.pop(k)
+            if k not in self._missing:
                 self._bytes_used -= arr.nbytes
-            self._missing.discard(f)
-            self._chain_snapshot.pop(f, None)
+            self._missing.discard(k)
             self._evictions += 1

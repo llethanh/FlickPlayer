@@ -2184,14 +2184,15 @@ class ImgPlayerApp:
         # Re-prime the prefetch ring around the current playhead —
         # in master coords, so a moved layer prefetches its OWN
         # range rather than the (now mismatched) source range.
+        # ``replan_prefetch`` issues priority-by-distance from the
+        # playhead (same path as ``seek`` / stack-change). The
+        # earlier ``request_range(first, last)`` walked frames in
+        # iteration order, anchoring decoding at ``first`` instead
+        # of the cursor — visible to the user as "the cache bar
+        # fills from the middle, not from where I'm parked".
         cur = self._controller.state.current_frame
         self._cache.set_current_frame(cur)
-        if last > first:
-            self._cache.request_range(first, last, direction=1)
-        else:
-            self._cache.request_range(
-                new_seq.first_frame, new_seq.last_frame, direction=1,
-            )
+        self._controller.replan_prefetch()
         # Refresh the on-screen image: the user expects the viewport
         # to update right after reload — either the old missing
         # placeholder is replaced with freshly decoded data, or a
@@ -2888,6 +2889,19 @@ class ImgPlayerApp:
         cache_total = max(1, seq.frame_count)
         cache_ratio = stats.bytes_used / max(1, stats.bytes_budget)
         ram_gb = stats.bytes_used / 1024**3
+        ram_budget_gb = stats.bytes_budget / 1024**3
+        # Current free system RAM — reported alongside cache RAM so
+        # the user can tell whether the headroom they see is the cache
+        # being well below its budget, or the OS itself running tight.
+        # ``psutil.virtual_memory().available`` is the canonical
+        # cross-platform "RAM the OS could hand out without swapping"
+        # number; cheap to call (one syscall).
+        sys_avail_gb: float | None
+        try:
+            import psutil
+            sys_avail_gb = psutil.virtual_memory().available / 1024**3
+        except Exception:
+            sys_avail_gb = None
 
         self._window.status_right.setText(
             format_perf_html(
@@ -2897,6 +2911,8 @@ class ImgPlayerApp:
                 fps_effective=eff,
                 fps_target=state.fps,
                 ram_gb=ram_gb,
+                ram_budget_gb=ram_budget_gb,
+                sys_avail_gb=sys_avail_gb,
             )
         )
 

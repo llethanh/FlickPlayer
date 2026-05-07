@@ -240,8 +240,19 @@ class PlayerController(QObject):  # type: ignore[misc]  # mypy: QObject is Any
     def load_sequence(self, sequence: SequenceInfo) -> None:
         self._timer.stop()
         self._sequence = sequence
-        self._cache.attach(sequence)
         first = sequence.first_frame
+        # Update the playhead state BEFORE attaching the cache. Attach
+        # mutates the LayerStack which fires ``layers_changed``
+        # synchronously, and the app-side handler runs a
+        # ``replan_prefetch`` that reads ``state.current_frame`` to
+        # anchor priorities. If we attach first, that handler sees the
+        # *previous* playhead (= 0 on first boot, or the old sequence's
+        # cursor on a replace) and the prefetch wave queues frames
+        # in priority order from the wrong anchor — visible to the
+        # user as "the cache fills from the middle of the timeline,
+        # not from the cursor". Subsequent requests anchored on the
+        # new ``first`` are dedup-rejected because the stale-anchor
+        # frames are already pending.
         self._update(
             current_frame=first,
             is_playing=False,
@@ -250,6 +261,7 @@ class PlayerController(QObject):  # type: ignore[misc]  # mypy: QObject is Any
             out_frame=None,
             dropped_frames=0,
         )
+        self._cache.attach(sequence)
         self._cache.set_current_frame(first)
         # Tell the cache about the loop range BEFORE the first
         # prefetch pass — without this the wave-1 ring-distance

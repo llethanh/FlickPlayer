@@ -92,19 +92,30 @@ def format_perf_html(
     fps_effective: float | None,
     fps_target: float,
     ram_gb: float,
+    ram_budget_gb: float | None = None,
+    sys_avail_gb: float | None = None,
 ) -> str:
     """Build the rich-text HTML rendered in the right status label.
 
-    The output has three space-separated chunks; each chunk starts with
-    a coloured dot (or an invisible placeholder when there's nothing to
-    flag) so the spacing stays consistent regardless of dot presence.
+    Shape: ``● cache N/T   ● XX.X fps   RAM used/budget GB · sys free``.
+    The "RAM" segment surfaces how much budget the cache has left to
+    grow into and how much physical RAM is still available to the OS,
+    so the user can spot pressure (cache approaching budget OR system
+    running out of free memory) without opening Task Manager.
     """
     cache_dot = _dot_span(cache_dot_color(cache_ratio))
     fps_dot = _dot_span(fps_dot_color(fps_effective, fps_target))
     fps_text = f"{fps_effective:.1f} fps" if fps_effective is not None else "— fps"
 
+    if ram_budget_gb is not None and ram_budget_gb > 0:
+        ram_text = f"RAM {ram_gb:.1f}/{ram_budget_gb:.1f} GB"
+    else:
+        ram_text = f"RAM {ram_gb:.1f} GB"
+    if sys_avail_gb is not None:
+        ram_text = f"{ram_text} · {sys_avail_gb:.1f} free"
+
     return (
         f"{cache_dot} cache {cache_n}/{cache_total}"
         f" &nbsp;&nbsp; {fps_dot} {fps_text}"
-        f" &nbsp;&nbsp; RAM {ram_gb:.1f} GB"
+        f" &nbsp;&nbsp; {ram_text}"
     )
