@@ -953,16 +953,31 @@ class MasterFrameCache:
         active one*, ordered by ``group_channels`` (RGB first, then
         AOVs in their natural order).
 
-        Each entry = ``(label, channels_tuple)`` — directly feedable
-        to :meth:`request_alt_channel`. Works for both single- and
-        multi-layer stacks (multi-layer alt decodes go through the
-        composite path with the override on the focused layer).
-        Empty when there's no focused layer or when it has no alt
-        groups (= just RGB).
+        Used by the channel-menu UI to show per-group cache fill
+        for the layer the menu is currently configuring (= the
+        focused layer). Alt prefetch itself iterates every visible
+        layer (see :meth:`visible_alt_layer_ids`).
         """
         layer = self._focused_alt_layer()
         if layer is None:
             return ()
+        return self._alt_groups_for_layer(layer)
+
+    def alt_channel_groups_for_layer_id(
+        self, layer_id: str,
+    ) -> tuple[tuple[str, tuple[str, ...]], ...]:
+        """Like :meth:`alt_channel_groups_for_focused` but for an
+        arbitrary layer in the stack. Used by the controller when
+        queueing alt prefetch for every visible layer (top-down).
+        Empty when the layer isn't found / has no alt groups."""
+        layer = self._stack.find(layer_id)
+        if layer is None:
+            return ()
+        return self._alt_groups_for_layer(layer)
+
+    def _alt_groups_for_layer(
+        self, layer: Layer,
+    ) -> tuple[tuple[str, tuple[str, ...]], ...]:
         from img_player.sequence.channels import group_channels
         groups = group_channels(layer.sequence.channel_names)
         if len(groups) <= 1:
@@ -977,6 +992,38 @@ class MasterFrameCache:
                 continue
             out.append((grp.label, grp.channels))
         return tuple(out)
+
+    def visible_alt_layer_ids(self) -> tuple[str, ...]:
+        """Layer ids the alt-channel prefetch should target, ordered
+        top-down (= stack order, which the user reads as priority).
+
+        Filters out hidden / video / still layers because none of
+        them benefit from alt-channel pre-decode (hidden = invisible
+        to the user; video = not OIIO; still = a single anchor frame
+        already covers the whole hold range via fan-out).
+
+        When the result is a single id the original "focused layer
+        only" behaviour is preserved (= caching for the layer that
+        actually drives the viewport, even if it's at the bottom of
+        the stack)."""
+        out: list[str] = []
+        for layer in self._stack.layers():
+            if not layer.visible:
+                continue
+            if getattr(layer, "is_video", False):
+                continue
+            if getattr(layer, "is_still", False):
+                continue
+            out.append(layer.id)
+        return tuple(out)
+
+    def layer_master_range(self, layer_id: str) -> tuple[int, int] | None:
+        """``(first, last)`` master-frame range covered by the
+        layer, or ``None`` when the layer isn't in the stack."""
+        layer = self._stack.find(layer_id)
+        if layer is None:
+            return None
+        return (layer.master_start, layer.master_end)
 
     def focused_layer_master_range(self) -> tuple[int, int] | None:
         """``(first, last)`` master-frame range covered by the
@@ -1306,9 +1353,22 @@ class MasterFrameCache:
         snapshots — lookups under the new signature miss and queue
         fresh decodes. We just invalidate the per-frame signature
         memo so subsequent reads recompute against the new visible
-        set."""
+        set.
+
+        Also drops the worker pool's pending queue: alt-channel
+        prefetch priorities are computed from
+        ``visible_alt_layer_ids`` ordering (= top-down through the
+        currently-visible layers). Hiding / un-hiding a layer changes
+        that ordering, but the previously-queued entries stay in the
+        pool with their old priorities + old dedup keys —
+        ``replan_prefetch`` afterwards would dedup-reject the
+        re-submissions and the new ordering would never take effect
+        until the old queue drains. Clearing here lets the next
+        ``replan_prefetch`` queue fresh.
+        """
         del layer_id  # signature memo doesn't track per-layer
         self._invalidate_signature_cache()
+        self._pool.clear()
 
     def _on_layer_modified(self, layer_id: str) -> None:
         """Trim / offset / channel change on a layer.
