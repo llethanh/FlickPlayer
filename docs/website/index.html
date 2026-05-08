@@ -1053,7 +1053,12 @@ footer a:hover { color: var(--accent); }
     Background <em>channel pre-cache</em> means switching AOVs is instant.
   </p>
   <div class="ctas">
-    <a class="btn btn-primary" href="#download">Download for Windows</a>
+    <span
+      class="btn btn-primary"
+      aria-disabled="true"
+      title="A signed Windows build is in active development — bookmark this page or watch the GitHub repo to be notified."
+      style="opacity: 0.55; cursor: not-allowed; pointer-events: auto;"
+    >Download for Windows — coming soon</span>
     <a class="btn btn-ghost" href="#features">See features →</a>
   </div>
 
@@ -1744,7 +1749,7 @@ footer a:hover { color: var(--accent); }
 <!-- ============================================================ Footer -->
 <footer id="download">
   <p>
-    <strong>Flick Player</strong> · open-source VFX sequence viewer · <a href="#">Download</a> · <a href="#">GitHub</a> · <a href="#">Docs</a>
+    <strong>Flick Player</strong> · open-source VFX sequence viewer · <span style="opacity: 0.55;">Download — coming soon</span> · <a href="#">GitHub</a> · <a href="#">Docs</a>
   </p>
   <p style="margin-top: var(--s-sm);">
     Built with PySide6, OpenColorIO, OpenImageIO and PyAV. Designed for Windows.
