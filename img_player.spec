@@ -4,11 +4,13 @@
 Build with:
     pyinstaller img_player.spec --noconfirm
 
-Output goes to ``dist/img_player/``. Copy that whole folder to the target
-machine — it ships its own Python, OpenImageIO, OpenColorIO and Qt6, so
-nothing needs to be installed.
+Output goes to ``dist/FlickPlayer_v<version>/`` where ``<version>`` is
+read from ``src/img_player/__init__.py``. Copy that whole folder to
+the target machine — it ships its own Python, OpenImageIO,
+OpenColorIO and Qt6, so nothing needs to be installed.
 """
 
+import re
 from pathlib import Path
 
 from PyInstaller.utils.hooks import (
@@ -18,6 +20,26 @@ from PyInstaller.utils.hooks import (
 )
 
 PROJECT_ROOT = Path(SPECPATH)  # noqa: F821 — SPECPATH is injected by PyInstaller
+
+
+def _read_version() -> str:
+    """Pull ``__version__`` from ``src/img_player/__init__.py`` via a
+    cheap regex (no real import — the source tree we're bundling
+    isn't on ``sys.path`` yet at spec-eval time).
+
+    Falls back to ``"unknown"`` so a version-stripping accident in
+    ``__init__.py`` doesn't fail the whole build.
+    """
+    init_path = PROJECT_ROOT / "src" / "img_player" / "__init__.py"
+    try:
+        text = init_path.read_text(encoding="utf-8")
+    except OSError:
+        return "unknown"
+    match = re.search(r'__version__\s*=\s*[\'"]([^\'"]+)[\'"]', text)
+    return match.group(1) if match else "unknown"
+
+
+VERSION = _read_version()
 
 
 # ----------------------------------------------------------------------- Datas
@@ -294,5 +316,12 @@ coll = COLLECT(  # noqa: F821
     strip=False,
     upx=False,
     upx_exclude=[],
-    name="FlickPlayer",
+    # Version-stamp the bundle directory so successive builds don't
+    # overwrite each other on the Drive (= the user can keep a
+    # ``FlickPlayer_v1.1.0`` next to a ``FlickPlayer_v1.2.0`` and
+    # diff regressions, hand the older one to a reviewer who needs
+    # it, etc.). The ``.exe`` inside keeps its bare ``FlickPlayer``
+    # name so existing Windows shortcuts / file associations don't
+    # break across versions.
+    name=f"FlickPlayer_v{VERSION}",
 )
