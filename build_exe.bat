@@ -87,20 +87,6 @@ echo.
 pyinstaller img_player.spec --noconfirm
 set EXIT_CODE=%ERRORLEVEL%
 
-REM ---- Drop the WPF splash launcher next to the .exe ------------------
-REM ``flick.bat`` + ``splash_launcher.ps1`` form the user-facing entry
-REM point: clicking ``flick.bat`` brings the splash up in ~200 ms,
-REM then spawns FlickPlayer.exe in the background. They have to sit
-REM at the bundle root (not under _internal/) so the .ps1's path
-REM arithmetic resolves to FlickPlayer.exe and the splash PNG.
-if %EXIT_CODE% EQU 0 (
-    for /d %%d in ("dist\FlickPlayer_v*") do (
-        copy /y "splash_launcher.ps1" "%%d\" >nul
-        copy /y "flick.bat" "%%d\" >nul
-        echo [build_exe] Copied splash_launcher.ps1 + flick.bat into %%d\
-    )
-)
-
 if %EXIT_CODE% EQU 0 (
     echo.
     echo [build_exe] Done. Bundle is in:
