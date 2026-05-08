@@ -155,6 +155,89 @@ class ColorPanel(QWidget):  # type: ignore[misc]
         """Force an emission of ``color_params_changed`` with current values."""
         self._notify()
 
+    def reload_from_manager(self, manager: OCIOManager) -> dict[str, object]:
+        """Repopulate combos against a freshly loaded OCIO config.
+
+        Called when the user changes the OCIO config source via
+        :class:`PreferencesDialog` and we hot-swap the manager. Tries
+        to preserve the user's current picks (source / display / view)
+        when they still exist in the new config; falls back to sensible
+        defaults otherwise.
+
+        Returns a small status dict the caller can surface in a status
+        message:
+          * ``source_preserved`` — was the previous source colorspace
+            still present in the new config?
+          * ``display_preserved`` — same question for display.
+          * ``view_preserved`` — same for view.
+
+        Signal emission is suppressed throughout the rebuild so callers
+        don't see a flurry of intermediate ``color_params_changed``
+        signals; one is fired at the very end with the final triple.
+        """
+        prev_source = self._src_combo.currentText()
+        prev_display = self._display_combo.currentText()
+        prev_view = self._view_combo.currentText()
+
+        self._manager = manager
+        self._emit_enabled = False
+        try:
+            new_colorspaces = manager.list_colorspaces()
+            new_displays = manager.list_displays()
+
+            self._src_combo.blockSignals(True)
+            self._src_combo.clear()
+            self._src_combo.addItems(new_colorspaces)
+            self._src_combo.blockSignals(False)
+
+            self._display_combo.blockSignals(True)
+            self._display_combo.clear()
+            self._display_combo.addItems(new_displays)
+            self._display_combo.blockSignals(False)
+
+            # Preserve source if still available; otherwise scene_linear
+            # role; otherwise first entry.
+            source_preserved = prev_source in new_colorspaces
+            if source_preserved:
+                self._src_combo.setCurrentText(prev_source)
+            else:
+                fallback_src = (
+                    manager.role("scene_linear")
+                    or (new_colorspaces[0] if new_colorspaces else "")
+                )
+                self._src_combo.setCurrentText(fallback_src)
+
+            # Same logic for display.
+            display_preserved = prev_display in new_displays
+            target_display = (
+                prev_display if display_preserved else manager.default_display()
+            )
+            self._display_combo.setCurrentText(target_display)
+
+            # _refresh_views uses the (already swapped) self._manager.
+            self._refresh_views(target_display)
+
+            # View preserved iff display was preserved AND the view name
+            # still exists for that display in the new config. Otherwise
+            # _refresh_views has already picked the default for us.
+            view_preserved = False
+            if display_preserved:
+                available_views = manager.list_views(target_display)
+                if prev_view in available_views:
+                    self._view_combo.setCurrentText(prev_view)
+                    view_preserved = True
+        finally:
+            self._emit_enabled = True
+
+        # Single emission with the final, validated triple.
+        self._notify()
+
+        return {
+            "source_preserved": source_preserved,
+            "display_preserved": display_preserved,
+            "view_preserved": view_preserved,
+        }
+
     def set_unmarked_exr_default(
         self, source: str | None, view: str | None,
     ) -> None:

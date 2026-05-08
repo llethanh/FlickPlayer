@@ -852,6 +852,11 @@ class ImgPlayerApp:
         self._window.zoom_requested.connect(self._on_zoom_requested)
         self._window.exposure_step.connect(self._window.color_panel.bump_exposure)
         self._window.color_panel.color_params_changed.connect(self._on_color_params)
+        # Register the OCIO hot-reload entry point for the
+        # Preferences dialog. Without this the dialog falls back to a
+        # "Restart required" banner — fine, but a restart is no longer
+        # actually needed.
+        self._window.set_ocio_reload_callback(self.reload_ocio_config)
         self._window.color_panel.unmarked_exr_save_requested.connect(
             self._on_unmarked_exr_save,
         )
@@ -2101,6 +2106,74 @@ class ImgPlayerApp:
         self._window.set_status(
             "EXR default cleared — using industry default (linear)",
         )
+
+    def reload_ocio_config(self) -> dict[str, object]:
+        """Hot-reload the OCIO configuration from current preferences.
+
+        Called by :class:`PreferencesDialog` when the user changes the
+        OCIO config source (Default / $OCIO env / Custom file). Builds
+        a fresh :class:`OCIOManager`, swaps it in, repopulates the
+        :class:`ColorPanel` combos, validates persisted colorspace
+        prefs against the new config, and triggers a shader rebuild.
+
+        Returns a status dict with:
+          * ``config_name``  — name string of the freshly loaded config
+          * ``origin``       — ``"file"`` / ``"env"`` / ``"builtin"``
+          * ``description``  — human-readable origin (path, $OCIO=…, …)
+          * ``source_preserved`` / ``display_preserved`` / ``view_preserved``
+            — whether the user's current panel picks survived the swap
+
+        Failure to load a custom config falls back to the built-in
+        (already handled inside :class:`OCIOManager`); the returned
+        ``description`` reflects that fallback so the dialog can
+        surface the warning.
+        """
+        new_manager = OCIOManager()
+
+        # Drop persisted prefs that no longer reference valid names
+        # in the new config. Without this the user would see the
+        # ColorPanel snap to a fallback while their on-disk prefs
+        # still pointed at a now-gone colorspace, leading to a
+        # confusing mismatch on next launch.
+        valid_colorspaces = set(new_manager.list_colorspaces())
+        valid_displays = set(new_manager.list_displays())
+        if self._prefs.source_colorspace and self._prefs.source_colorspace not in valid_colorspaces:
+            self._prefs.source_colorspace = None
+        if self._prefs.display and self._prefs.display not in valid_displays:
+            self._prefs.display = None
+            # View is keyed off the display, so it goes too if display does.
+            self._prefs.view = None
+        elif self._prefs.view and self._prefs.display:
+            valid_views = set(new_manager.list_views(self._prefs.display))
+            if self._prefs.view not in valid_views:
+                self._prefs.view = None
+
+        # Same sanity check for the unmarked-EXR override.
+        if self._prefs.unmarked_exr_source and self._prefs.unmarked_exr_source not in valid_colorspaces:
+            self._prefs.unmarked_exr_source = None
+            self._prefs.unmarked_exr_view = None
+
+        self._ocio = new_manager
+        # ColorPanel.reload_from_manager fires color_params_changed at
+        # the end with the final validated triple — that signal is
+        # already wired to _on_color_params, which rebuilds the GPU
+        # shader against the new manager. So no manual rebuild here:
+        # the wiring takes care of it.
+        result = self._window.color_panel.reload_from_manager(new_manager)
+
+        # Re-sync the unmarked-EXR status row since we may have
+        # cleared the underlying prefs above.
+        self._window.color_panel.set_unmarked_exr_default(
+            self._prefs.unmarked_exr_source,
+            self._prefs.unmarked_exr_view,
+        )
+
+        return {
+            "config_name": new_manager.config.getName() or "(unnamed)",
+            "origin": new_manager.source.origin,
+            "description": new_manager.source.description,
+            **result,
+        }
 
     def _on_color_params(
         self, src: str, display: str, view: str, exposure: float, gamma: float

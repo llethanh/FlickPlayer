@@ -957,20 +957,32 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         w, h = self._viewer.gl.image_size()
         self._viewer.info_band.set_image_size(w, h)
 
+    def set_ocio_reload_callback(self, cb) -> None:  # type: ignore[no-untyped-def]
+        """Register the App's hot-reload entry point.
+
+        Called by ``App`` after both ``App`` and ``MainWindow`` are
+        constructed. The callback is invoked by
+        :class:`PreferencesDialog` when the user applies a new OCIO
+        config, allowing a hot-swap with no restart. ``None`` falls
+        the dialog back to the legacy "Restart required" message.
+        """
+        self._ocio_reload_cb = cb
+
     def _open_preferences(self) -> None:
         """File → Open Preferences… — application-wide settings dialog.
 
         ``Preferences`` is a thin QSettings wrapper, so instantiating
         a fresh one here is essentially free and avoids threading the
         prefs object through MainWindow's already-long constructor.
-        OCIO config changes need a restart (the GPU shader, color
-        panel and cached processors all bind to the boot-time config),
-        which the dialog itself communicates via an in-page banner.
+        When :meth:`set_ocio_reload_callback` has been called, the
+        dialog hot-reloads OCIO without a restart; otherwise it falls
+        back to the "Restart required" banner.
         """
         from img_player.preferences import Preferences
         from img_player.ui.preferences_dialog import PreferencesDialog
 
-        dialog = PreferencesDialog(Preferences(), self)
+        on_reload = getattr(self, "_ocio_reload_cb", None)
+        dialog = PreferencesDialog(Preferences(), on_reload=on_reload, parent=self)
         dialog.exec()
 
     def _on_info_band_btn_context_menu(self, pos) -> None:  # type: ignore[no-untyped-def]

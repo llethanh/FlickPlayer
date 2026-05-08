@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Callable
 
 import PyOpenColorIO as ocio
 from PySide6.QtCore import Qt
@@ -52,15 +53,22 @@ class _ColorManagementPage(QWidget):
       * **Environment** — honour ``$OCIO`` (legacy / studio default).
       * **Custom** — load a ``.ocio`` file picked by the user.
 
-    Changes are flagged with a "Restart required" banner because the
-    GPU shader, color panel and cached processors all bind to the
-    config that was active at boot — hot-swapping would mean
-    invalidating every one of them.
+    When an ``on_reload`` callback is provided, applying changes
+    triggers a hot-reload (no restart needed) — the callback returns
+    a status dict the page summarises in a transient banner. Without
+    a callback the page falls back to the legacy "Restart required"
+    banner.
     """
 
-    def __init__(self, prefs: Preferences, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        prefs: Preferences,
+        on_reload: Callable[[], dict[str, object]] | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self._prefs = prefs
+        self._on_reload = on_reload
         self._initial_mode = prefs.ocio_config_mode
         self._initial_path = prefs.ocio_config_path or ""
 
@@ -113,15 +121,16 @@ class _ColorManagementPage(QWidget):
         self._status.setStyleSheet("color: #9aa0a6; font-size: 11px;")
         layout.addWidget(self._status)
 
-        # ---- Restart-required banner --------------------------------
-        self._restart_banner = QLabel(
-            "Restart Flick to apply changes to the OCIO configuration."
-        )
-        self._restart_banner.setStyleSheet(
-            "background: #4a3a1f; color: #f5c878; padding: 8px; border-radius: 4px;"
-        )
+        # ---- Pending-changes banner ---------------------------------
+        # Two flavours: amber "you have pending changes" before Apply,
+        # green "applied" after a successful hot-reload, red on
+        # failure. Stays hidden until the user actually edits the
+        # mode or path.
+        self._restart_banner = QLabel()
+        self._restart_banner.setWordWrap(True)
         self._restart_banner.setVisible(False)
         layout.addWidget(self._restart_banner)
+        self._set_banner_pending()
 
         layout.addStretch(1)
 
@@ -138,7 +147,12 @@ class _ColorManagementPage(QWidget):
     # ---------------------------------------------------------------- API
 
     def apply(self) -> bool:
-        """Persist values; return True if a restart is needed."""
+        """Persist values and trigger hot-reload if anything changed.
+
+        Returns ``True`` if the OCIO settings actually changed
+        (regardless of reload outcome) so the parent dialog can
+        decide whether to keep the dialog open or close it.
+        """
         new_mode = self._current_mode()
         new_path = self._path_edit.text().strip() or None
         dirty = (new_mode != self._initial_mode) or (
@@ -147,11 +161,89 @@ class _ColorManagementPage(QWidget):
         self._prefs.ocio_config_mode = new_mode
         self._prefs.ocio_config_path = new_path
         # Update baseline so a second Apply in the same session doesn't
-        # re-trigger the restart banner unnecessarily.
+        # re-trigger the banner unnecessarily.
         self._initial_mode = new_mode
         self._initial_path = new_path or ""
-        self._restart_banner.setVisible(False)
-        return dirty
+
+        if not dirty:
+            self._restart_banner.setVisible(False)
+            return False
+
+        if self._on_reload is None:
+            # No hot-reload wired — keep the legacy "Restart required"
+            # message so the user knows their pref was saved but won't
+            # take effect until next launch.
+            self._set_banner_legacy_restart()
+            return True
+
+        try:
+            status = self._on_reload()
+        except Exception as err:  # pragma: no cover — defensive
+            log.exception("OCIO hot-reload failed")
+            self._set_banner_failure(str(err))
+            return True
+
+        self._set_banner_success(status)
+        # Refresh the read-only "Active config" line so it reflects
+        # the just-loaded config (otherwise it still reads the
+        # boot-time one until the dialog is reopened).
+        self._status.setText(self._describe_active_config())
+        return True
+
+    # ---------------------------------------------------------------- Banner helpers
+
+    def _set_banner_pending(self) -> None:
+        self._restart_banner.setText(
+            "Pending changes — click Apply or OK to load the new OCIO config."
+        )
+        self._restart_banner.setStyleSheet(
+            "background: #4a3a1f; color: #f5c878; "
+            "padding: 8px; border-radius: 4px;"
+        )
+
+    def _set_banner_legacy_restart(self) -> None:
+        self._restart_banner.setText(
+            "Restart Flick to apply changes to the OCIO configuration."
+        )
+        self._restart_banner.setStyleSheet(
+            "background: #4a3a1f; color: #f5c878; "
+            "padding: 8px; border-radius: 4px;"
+        )
+        self._restart_banner.setVisible(True)
+
+    def _set_banner_success(self, status: dict[str, object]) -> None:
+        name = status.get("config_name", "?")
+        # Tally any picks that didn't survive the swap so we can be
+        # honest about what just changed under the user's feet.
+        invalidated = [
+            label for label, key in (
+                ("source", "source_preserved"),
+                ("display", "display_preserved"),
+                ("view", "view_preserved"),
+            )
+            if status.get(key) is False
+        ]
+        msg = f"Loaded: {name}"
+        if invalidated:
+            msg += f" — reset stale {' / '.join(invalidated)} pick(s)"
+        else:
+            msg += " — picks preserved"
+        self._restart_banner.setText(msg)
+        self._restart_banner.setStyleSheet(
+            "background: #1f3a26; color: #87d98b; "
+            "padding: 8px; border-radius: 4px;"
+        )
+        self._restart_banner.setVisible(True)
+
+    def _set_banner_failure(self, error: str) -> None:
+        self._restart_banner.setText(
+            f"Hot-reload failed: {error}. The previous config is still active."
+        )
+        self._restart_banner.setStyleSheet(
+            "background: #4a1f1f; color: #f58c8c; "
+            "padding: 8px; border-radius: 4px;"
+        )
+        self._restart_banner.setVisible(True)
 
     # ---------------------------------------------------------------- Internals
 
@@ -175,6 +267,11 @@ class _ColorManagementPage(QWidget):
         new_mode = self._current_mode()
         new_path = self._path_edit.text().strip()
         dirty = (new_mode != self._initial_mode) or (new_path != self._initial_path)
+        if dirty:
+            # Reset to the amber pending message; any prior success /
+            # failure banner is now stale because the user is editing
+            # again.
+            self._set_banner_pending()
         self._restart_banner.setVisible(dirty)
 
     def _on_browse(self) -> None:
@@ -237,13 +334,19 @@ class PreferencesDialog(QDialog):
       2. Calling ``self._add_section("Title", widget)`` in ``__init__``
     """
 
-    def __init__(self, prefs: Preferences, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        prefs: Preferences,
+        on_reload: Callable[[], dict[str, object]] | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Preferences")
         self.setModal(True)
         self.resize(720, 520)
 
         self._prefs = prefs
+        self._on_reload = on_reload
         self._pages: list[QWidget] = []
 
         root = QVBoxLayout(self)
@@ -283,7 +386,10 @@ class PreferencesDialog(QDialog):
         buttons.button(QDialogButtonBox.StandardButton.Apply).clicked.connect(self._on_apply)
 
         # Sections
-        self._add_section("Color Management", _ColorManagementPage(prefs, self))
+        self._add_section(
+            "Color Management",
+            _ColorManagementPage(prefs, on_reload=on_reload, parent=self),
+        )
 
         self._sidebar.currentRowChanged.connect(self._stack.setCurrentIndex)
         self._sidebar.setCurrentRow(0)

@@ -10,6 +10,7 @@ the target machine — it ships its own Python, OpenImageIO,
 OpenColorIO and Qt6, so nothing needs to be installed.
 """
 
+import os
 import re
 from pathlib import Path
 
@@ -246,8 +247,12 @@ a = Analysis(  # noqa: F821 — Analysis is injected by PyInstaller
     # tooling (mrViewer, Nuke, RV, etc. that put their bin/ on PATH).
     runtime_hooks=[str(PROJECT_ROOT / "pyi_rth_dll_priority.py")],
     # Trim Qt translations + tests we never load — saves ~80 MB.
+    # NB: ``tkinter`` is *not* excluded — PyInstaller's ``Splash``
+    # bootloader requires the Tcl/Tk shared libs at startup, even
+    # though no Python code in Flick uses tkinter directly. Excluding
+    # it makes PyInstaller 6.20+ fail with "Could not determine the
+    # path to Tcl and/or Tk shared library" during bundle build.
     excludes=[
-        "tkinter",
         "PySide6.Qt3DAnimation",
         "PySide6.Qt3DCore",
         "PySide6.Qt3DExtras",
@@ -371,33 +376,47 @@ def _build_splash_png() -> Path:
     return out_path
 
 
-splash_png_path = _build_splash_png()
-# ``text_pos`` is the top-left anchor of the dynamic status string.
-# The splash is 480 px wide; anchoring at x=40 leaves ~400 px of
-# usable width — fits "Initialising OpenColorIO…" and friends with
-# room to spare without needing centred-text gymnastics that
-# ``pyi_splash`` doesn't natively support. y=222 sits the status
-# clearly under the version with breathing room and clears the
-# bootloader's ~6 px baseline shift versus PIL.
-splash = Splash(  # noqa: F821
-    str(splash_png_path),
-    binaries=a.binaries,
-    datas=a.datas,
-    text_pos=(40, 240),
-    text_size=11,
-    text_color="white",
-    text_default="Loading…",
-    minify_script=True,
-    always_on_top=True,
-    rundir=None,
-)
+# PyInstaller's Splash uses Tcl/Tk shared libs; on miniforge Windows
+# the DLLs live under ``Library\bin\`` and PyInstaller 6.20+'s strict
+# Tcl/Tk compatibility check (TclTkInfo) can't always locate them,
+# bricking the build with "Could not determine the path to Tcl
+# and/or Tk shared library". Splash is opt-in via env var so the
+# default build always succeeds; ``src/img_player/splash.py`` makes
+# the runtime ``pyi_splash`` import a graceful no-op when the bundle
+# ships without one — every milestone helper degrades to silent.
+_BUILD_SPLASH = os.environ.get("FLICK_BUILD_SPLASH", "").lower() in ("1", "true", "yes")
+
+if _BUILD_SPLASH:
+    splash_png_path = _build_splash_png()
+    # ``text_pos`` is the top-left anchor of the dynamic status string.
+    # The splash is 480 px wide; anchoring at x=40 leaves ~400 px of
+    # usable width — fits "Initialising OpenColorIO…" and friends with
+    # room to spare without needing centred-text gymnastics that
+    # ``pyi_splash`` doesn't natively support. y=222 sits the status
+    # clearly under the version with breathing room and clears the
+    # bootloader's ~6 px baseline shift versus PIL.
+    splash = Splash(  # noqa: F821
+        str(splash_png_path),
+        binaries=a.binaries,
+        datas=a.datas,
+        text_pos=(40, 240),
+        text_size=11,
+        text_color="white",
+        text_default="Loading…",
+        minify_script=True,
+        always_on_top=True,
+        rundir=None,
+    )
+    _exe_extras = [splash, splash.binaries]
+else:
+    splash = None
+    _exe_extras = []
 
 
 exe = EXE(  # noqa: F821
     pyz,
     a.scripts,
-    splash,
-    splash.binaries,
+    *_exe_extras,
     [],
     exclude_binaries=True,
     name="FlickPlayer",
