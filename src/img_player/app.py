@@ -178,6 +178,24 @@ class ImgPlayerApp:
 
     def _build_qt_runtime(self, argv: list[str], oiio_threads: int | None) -> None:
         """QApplication + global stylesheet + OIIO thread pool."""
+        # Set the Windows AppUserModelID *before* the QApplication is
+        # created. Without this Windows attributes the taskbar entry
+        # to the .exe path or — worse, on a freshly-cloned dev env —
+        # to the Python interpreter, which means the taskbar shows a
+        # generic placeholder instead of the ``flick.ico`` artwork.
+        # Setting it explicitly lets Windows group all FlickPlayer
+        # instances under the same icon (= the one PyInstaller
+        # embedded in the .exe and Qt loads via ``setWindowIcon``
+        # below).
+        import sys as _sys
+        if _sys.platform == "win32":
+            try:
+                import ctypes as _ctypes
+                _ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                    "flickplayer.app",
+                )
+            except Exception:  # pragma: no cover — defensive
+                log.exception("failed to set AppUserModelID")
         self._qapp = QApplication.instance() or QApplication(argv)
         self._qapp.setOrganizationName("img_player")
         self._qapp.setApplicationName("img_player")
