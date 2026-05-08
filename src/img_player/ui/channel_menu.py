@@ -18,8 +18,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 
-from PySide6.QtCore import QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QBrush, QPainter, QPen
+from PySide6.QtCore import QRect, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QBrush, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -33,6 +33,51 @@ from PySide6.QtWidgets import (
 
 from img_player.sequence.channels import ChannelGroup, ChannelSelection
 from img_player.ui.theme import C, S
+
+
+# Same warm-cream tone used by the bottom info band's typography
+# (info_band.py: ``color: #FFE5C0``). Reusing it keeps the two
+# orange-on-orange readouts visually kin: cache-fill on a channel row
+# now reads with the same legibility as the HUD.
+_PROGRESS_TEXT_COLOR = QColor("#FFE5C0")
+
+
+class _ProgressLabel(QLabel):  # type: ignore[misc]
+    """QLabel that repaints its text in cream over the cache-fill area.
+
+    The parent ``_ChannelRow`` paints a translucent orange bar behind
+    this label up to ``fraction``. Default theme text colour reads
+    poorly through that orange wash, so we overpaint the same text in
+    cream (matching the ``InfoBand`` HUD) clipped to the filled region.
+    Outside that region the standard QLabel rendering shows through —
+    typography colour stays untouched until loading actually begins.
+    """
+
+    def __init__(self, text: str, parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self._fraction: float = -1.0
+
+    def set_fraction(self, fraction: float) -> None:
+        if fraction != self._fraction:
+            self._fraction = fraction
+            self.update()
+
+    def paintEvent(self, event) -> None:  # type: ignore[no-untyped-def]
+        super().paintEvent(event)
+        if self._fraction <= 0:
+            return
+        rect = self.rect()
+        fill_w = int(round(rect.width() * self._fraction))
+        if fill_w <= 0:
+            return
+        painter = QPainter(self)
+        painter.setClipRect(QRect(rect.x(), rect.y(), fill_w, rect.height()))
+        painter.setPen(_PROGRESS_TEXT_COLOR)
+        # Match the QLabel's own text layout (alignment + indent) so
+        # the overpaint registers pixel-for-pixel with the underlying
+        # default rendering — anything else would show as a faint
+        # double-strike artefact.
+        painter.drawText(rect, int(self.alignment()), self.text())
 
 
 class _ChannelRow(QFrame):  # type: ignore[misc]
@@ -60,7 +105,7 @@ class _ChannelRow(QFrame):  # type: ignore[misc]
         self._radio.toggled.connect(self._on_radio_toggled)
         layout.addWidget(self._radio)
 
-        self._label = QLabel(group.label)
+        self._label = _ProgressLabel(group.label)
         self._label.setMinimumWidth(120)
         self._label.setToolTip("Channels: " + ", ".join(group.channels))
         # Transparent label background so the row's cache-fill paint
@@ -93,11 +138,13 @@ class _ChannelRow(QFrame):  # type: ignore[misc]
         if total <= 0:
             if self._fraction != -1.0:
                 self._fraction = -1.0
+                self._label.set_fraction(-1.0)
                 self.update()
             return
         new_fraction = max(0.0, min(1.0, cached / total))
         if new_fraction != self._fraction:
             self._fraction = new_fraction
+            self._label.set_fraction(new_fraction)
             self.update()
         self._label.setToolTip(
             f"Channels: {', '.join(self._original_channels)}\n"
@@ -122,7 +169,20 @@ class _ChannelRow(QFrame):  # type: ignore[misc]
             painter = QPainter(self)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
             label_geom = self._label.geometry()
-            full = QRectF(label_geom)
+            # Start the bar a few pixels before the label's first
+            # character so the fill never crashes flush against the
+            # text. We borrow the radio↔label gutter (``S.SM``) — the
+            # bar fills this gap without ever leaking under the radio
+            # ring. The cream overpaint inside the label is keyed off
+            # the same fraction; the small left-side offset stays
+            # purely decorative.
+            left_offset = S.SM
+            full = QRectF(
+                label_geom.x() - left_offset,
+                label_geom.y(),
+                label_geom.width() + left_offset,
+                label_geom.height(),
+            )
             fill_w = full.width() * self._fraction
             if fill_w > 0:
                 fill_rect = QRectF(full.x(), full.y(), fill_w, full.height())
