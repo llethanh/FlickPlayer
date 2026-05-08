@@ -135,7 +135,7 @@ header nav a:hover { color: var(--text-primary); }
 
 .app-frame {
   position: relative;
-  max-width: 1280px; margin: 0 auto;
+  max-width: 1766px; margin: 0 auto;
   background: var(--bg-base);
   border: 1px solid var(--border-default);
   border-radius: 12px;
@@ -183,8 +183,12 @@ section .lede {
   border-radius: 10px;
   padding: var(--s-lg);
   transition: border-color 0.15s ease, transform 0.15s ease;
+  color: inherit;
+  text-decoration: none;
+  display: block;
 }
-.feature-card:hover { border-color: var(--border-default); transform: translateY(-2px); }
+a.feature-card { cursor: pointer; }
+a.feature-card:hover { border-color: var(--accent); transform: translateY(-2px); }
 .feature-card .icon {
   width: 36px; height: 36px;
   display: grid; place-items: center;
@@ -230,6 +234,15 @@ section .lede {
   width: auto;
   max-width: 100%;
   max-height: 480px;
+  margin: 0 auto;
+  object-fit: contain;
+}
+/* Larger variant — for tall dialog screenshots that need more breathing room */
+.mockup-fit-lg { align-self: center; }
+.mockup-fit-lg .mockup-shot {
+  width: auto;
+  max-width: 100%;
+  max-height: 960px;
   margin: 0 auto;
   object-fit: contain;
 }
@@ -1067,55 +1080,55 @@ footer a:hover { color: var(--accent); }
       <h3>Real-time playback</h3>
       <p>Async RAM cache + OpenGL viewport. Smooth scrubbing on 4K EXRs at 24 fps. Worker pool auto-tunes to your CPU + GPU.</p>
     </div>
-    <div class="feature-card">
+    <a href="#layers" class="feature-card">
       <div class="icon">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="14" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/><rect x="15" y="4" width="6" height="6" rx="1"/></svg>
       </div>
       <h3>Stack &amp; mount</h3>
       <p>Drop multiple sequences to compose a layered review. Reorder by drag, trim IN/OUT on the timeline, slide each layer's offset. Image sequences <em>and</em> video clips mix together.</p>
-    </div>
-    <div class="feature-card">
+    </a>
+    <a href="#compare" class="feature-card">
       <div class="icon">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/></svg>
       </div>
       <h3>A/B compare</h3>
       <p>Two layers, four modes: vertical wipe, horizontal wipe, opacity blend, solo-B. Drag the seam live — pure shader, no re-decode. Bake the wipe into your export too.</p>
-    </div>
-    <div class="feature-card">
+    </a>
+    <a href="#cache" class="feature-card">
       <div class="icon">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 7 6 7 6 17 9 17"/><polyline points="9 7 12 7 12 17 15 17"/><polyline points="15 7 18 7 18 17 21 17"/></svg>
       </div>
       <h3>Smart cache</h3>
       <p>Multi-version key keeps a snapshot per channel selection — switching AOVs back and forth is an instant hit, not a re-decode. Smart reload diffs file mtimes; force reload (Ctrl+Shift+R) drops everything.</p>
-    </div>
-    <div class="feature-card">
+    </a>
+    <a href="#cache" class="feature-card">
       <div class="icon">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h6l3 -7l3 14l3 -7h3"/></svg>
       </div>
       <h3>Background channel pre-cache</h3>
       <p>Once the active channel is cached, idle workers quietly pre-decode every other group (RGB, albedo, normal, Z…). Per-row progress bar in the channel menu. Suspended during playback so the GIL stays clean.</p>
-    </div>
-    <div class="feature-card">
+    </a>
+    <a href="#color" class="feature-card">
       <div class="icon">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="13" r="2.5"/><circle cx="8" cy="20" r="2.5"/><circle cx="6.5" cy="9" r="2.5"/><line x1="6.5" y1="9" x2="13.5" y2="6.5"/><line x1="13.5" y1="6.5" x2="17.5" y2="13"/><line x1="8" y1="20" x2="6.5" y2="9"/><line x1="8" y1="20" x2="17.5" y2="13"/></svg>
       </div>
       <h3>OCIO color</h3>
       <p>ACES 2.0 CG built-in. Source / display / view round-trip on the GPU shader — toggling is free. Auto-detect from EXR metadata (Nuke, Arnold, V-Ray, Houdini), with a per-pipeline override for unmarked sources.</p>
-    </div>
-    <div class="feature-card">
+    </a>
+    <a href="#annotations" class="feature-card">
       <div class="icon">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18 L17 6"/><path d="M14 4 L20 10 L17 13 L11 7 Z"/><path d="M3 21 L6 21"/></svg>
       </div>
       <h3>Annotations</h3>
       <p>Pen / eraser / 7-color palette / per-frame undo. Persistent strokes — <em>and</em> a Google-Meet-style ghost mode that auto-fades.</p>
-    </div>
-    <div class="feature-card">
+    </a>
+    <a href="#comments" class="feature-card">
       <div class="icon">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
       </div>
       <h3>Comments</h3>
       <p>Per-frame text threads beside the visual annotations. Author auto-filled from OS user, blue dot on the timeline. Round-trips through the same sidecar JSON.</p>
-    </div>
+    </a>
     <div class="feature-card">
       <div class="icon">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 4 20 12 6 20 6 4"/><path d="M2 8 v8"/><path d="M2 12 h2"/></svg>
@@ -1130,20 +1143,13 @@ footer a:hover { color: var(--accent); }
       <h3>Multichannel EXR</h3>
       <p>Channel selector for AOVs, depth, normals, cryptomattes — per layer. R/G/B mute + solo-alpha view (Nuke / RV convention). Pickable transparency background: checker, black, mid-grey, white.</p>
     </div>
-    <div class="feature-card">
+    <a href="#export" class="feature-card">
       <div class="icon">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12"/><polyline points="6 10 12 16 18 10"/><path d="M4 20h16"/></svg>
       </div>
       <h3>Export</h3>
       <p>Full-sequence to PNG / JPG / EXR / TIFF or H.264 / H.265 / ProRes / DNxHR / VP9 / FFV1 / v210. Bake annotations and the live A/B compare wipe. Custom output filename. Save Frame As… for one-shot snapshots.</p>
-    </div>
-    <div class="feature-card">
-      <div class="icon">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11 L4 16 L9 21"/><path d="M4 16 H17 A4 4 0 0 0 17 8 H10"/></svg>
-      </div>
-      <h3>Undo / Redo</h3>
-      <p>Edit menu &amp; Ctrl+Z / Ctrl+Y revert layer add / remove / reorder, drop-replace, trim and offset edits — atomic per gesture.</p>
-    </div>
+    </a>
     <div class="feature-card">
       <div class="icon">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12l4 4v12H4z"/><path d="M16 4v4h4"/><path d="M8 12h8M8 16h8"/></svg>
@@ -1182,22 +1188,9 @@ footer a:hover { color: var(--accent); }
         <li><b>Bake into your export</b> — tick "Bake A/B compare overlay" in the export dialog and the live wipe is reproduced for every frame written to disk.</li>
       </ul>
     </div>
-    <div class="mockup">
+    <div class="mockup mockup-fit">
       <div class="mockup-label">compare/state.py · GPU shader</div>
-      <div style="position: relative; aspect-ratio: 16/9; background: linear-gradient(90deg, #1f2228 0%, #1f2228 50%, #2c2c30 50%, #2c2c30 100%); border-radius: 6px; overflow: hidden; border: 1px solid var(--border-default);">
-        <div style="position: absolute; inset: 0; display: grid; grid-template-columns: 1fr 1fr; align-items: center; justify-items: center; color: var(--text-secondary); font-family: 'JetBrains Mono', monospace; font-size: 11px;">
-          <div>A</div>
-          <div>B</div>
-        </div>
-        <div style="position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--accent); box-shadow: 0 0 8px rgba(232,144,28,0.7);"></div>
-      </div>
-      <div style="display: flex; gap: 6px; margin-top: 10px; align-items: center; flex-wrap: wrap;">
-        <span style="padding: 4px 10px; background: var(--accent); color: var(--bg-deep); border-radius: 4px; font-size: 11px; font-weight: 600;">Vert</span>
-        <span style="padding: 4px 10px; background: var(--bg-raised); color: var(--text-secondary); border: 1px solid var(--border-default); border-radius: 4px; font-size: 11px;">Horiz</span>
-        <span style="padding: 4px 10px; background: var(--bg-raised); color: var(--text-secondary); border: 1px solid var(--border-default); border-radius: 4px; font-size: 11px;">Opacity</span>
-        <span style="padding: 4px 10px; background: var(--bg-raised); color: var(--text-secondary); border: 1px solid var(--border-default); border-radius: 4px; font-size: 11px;">A↔B</span>
-        <span style="margin-left: auto; color: var(--text-disabled); font-family: 'JetBrains Mono', monospace; font-size: 10px;">seam 50%</span>
-      </div>
+      <img src="screenshots/compare_tool.png" alt="Two-layer A/B compare overlay with vertical seam between layer A and layer B" class="mockup-shot">
     </div>
   </div>
 </section>
@@ -1293,7 +1286,7 @@ footer a:hover { color: var(--accent); }
         <li><b>Bake into export</b> if you want a self-contained MP4 to send a colleague.</li>
       </ul>
     </div>
-    <div class="mockup" style="display: flex; justify-content: center; padding: var(--s-xl);">
+    <div class="mockup" style="display: flex; flex-direction: row; align-items: center; justify-content: center; gap: var(--s-md); padding: var(--s-xl) calc(var(--s-xl) + 56px) var(--s-xl) var(--s-xl);">
 
       <!-- Pixel-faithful reproduction of AnnotationToolbar in float mode.
            Width 78, padding 6, gap 6 — same as toolbar.py. -->
@@ -1337,6 +1330,8 @@ footer a:hover { color: var(--accent); }
         <div class="ann-sep"></div>
         <div class="ann-clear">Clear</div>
       </div>
+
+      <img src="screenshots/annotation.gif" alt="Annotation pen drawing strokes live on a frame, with per-frame undo and color palette" class="mockup-shot" style="flex: 1 1 480px; min-width: 320px; max-width: 100%; height: auto; border-radius: var(--radius); border: 1px solid var(--border); transform: scale(1.2); transform-origin: left center;">
     </div>
   </div>
 </section>
@@ -1449,10 +1444,7 @@ footer a:hover { color: var(--accent); }
       <p>
         Send your sequence as an image-per-frame run for the next tool in the pipe,
         or bake it into one of eight video codecs to ship a review reel. The live
-        A/B compare wipe bakes through too. Need a single still? <em>File → Save
-        Frame As…</em> snapshots the viewer to PNG / JPG / TIFF / BMP / WebP — same
-        compare and annotation toggles as the full export. Every option persists
-        between sessions.
+        A/B compare wipe bakes through too. Every option persists between sessions.
       </p>
       <ul>
         <li><b>Custom filename</b>: empty falls back to the source basename, otherwise drives the output (image seq → <code>{stem}.NNNN.ext</code>, video → <code>{stem}.ext</code>). Versioned bundle dirs by default.</li>
@@ -1460,26 +1452,35 @@ footer a:hover { color: var(--accent); }
         <li><b>Color</b>: bake the OCIO display transform, or keep the linear buffer untouched (EXR / TIFF passthrough).</li>
         <li><b>Annotations</b>: bake into pixels + optional sidecar JSON copy alongside the export.</li>
         <li><b>Bake compare overlay</b>: when the live wipe is on, the export reproduces it for every frame. Untick to ship the active sequence's clean composite instead.</li>
+        <li><b>Codecs</b>: PNG / JPG / EXR / TIFF for image sequences; H.264 / H.265 / ProRes 422 HQ / ProRes 4444 / DNxHR / VP9 / FFV1 / v210 for video.</li>
         <li><b>Missing-frame policy</b> (see below): never let a hole abort an overnight render again.</li>
-        <li><b>Save Frame As…</b>: one-shot still snapshot of the viewer with the same toggles, perfect for review email attachments.</li>
       </ul>
     </div>
-    <div class="mockup">
-      <div class="mockup-label">supported codecs</div>
-      <div class="codecs">
-        <div class="codec-pill"><span class="ext">.png</span> PNG · 8-bit lossless</div>
-        <div class="codec-pill"><span class="ext">.jpg</span> JPEG · 8-bit lossy</div>
-        <div class="codec-pill"><span class="ext">.exr</span> OpenEXR · half float</div>
-        <div class="codec-pill"><span class="ext">.tif</span> TIFF · 16-bit</div>
-        <div class="codec-pill"><span class="ext">.mp4</span> H.264 · universal</div>
-        <div class="codec-pill"><span class="ext">.mp4</span> H.265 · modern</div>
-        <div class="codec-pill"><span class="ext">.mov</span> ProRes 422 HQ</div>
-        <div class="codec-pill"><span class="ext">.mov</span> ProRes 4444</div>
-        <div class="codec-pill"><span class="ext">.mov</span> DNxHR · Avid</div>
-        <div class="codec-pill"><span class="ext">.webm</span> VP9 · web</div>
-        <div class="codec-pill"><span class="ext">.mkv</span> FFV1 · lossless</div>
-        <div class="codec-pill"><span class="ext">.mov</span> v210 · broadcast</div>
-      </div>
+    <div class="mockup mockup-fit-lg">
+      <div class="mockup-label">export/dialog.py · sequence export</div>
+      <img src="screenshots/export_sequence.png" alt="Export dialog for image sequence with output filename, range, resolution, frame rate, color and annotation toggles" class="mockup-shot">
+    </div>
+  </div>
+
+  <!-- Sub-detail: Save Frame As… -->
+  <div class="feature-detail reverse" style="margin-top: var(--s-xl);">
+    <div class="copy">
+      <h2><span class="accent">Save Frame As…</span> for one-shot stills.</h2>
+      <p>
+        Need a single image to drop in a review email or a Slack thread? <em>File →
+        Save Frame As…</em> snapshots the viewer with the same compare and annotation
+        toggles as the full export — no need to spin up a 1-frame range. Picks up the
+        active OCIO display transform too, so what you see is what gets written.
+      </p>
+      <ul>
+        <li><b>Formats</b>: PNG / JPG / TIFF / BMP / WebP. Defaults to PNG with the source basename + master frame number.</li>
+        <li><b>Same toggles</b> as full export: bake annotations, bake the A/B compare wipe, bake OCIO display.</li>
+        <li><b>Persistent path</b> — the dialog remembers the last folder you wrote to, per session.</li>
+      </ul>
+    </div>
+    <div class="mockup mockup-fit">
+      <div class="mockup-label">File → Save Frame As…</div>
+      <img src="screenshots/save_frame_as.png" alt="Save Frame As dialog for one-shot still snapshot with format and bake toggles" class="mockup-shot">
     </div>
   </div>
 
@@ -1530,118 +1531,6 @@ footer a:hover { color: var(--accent); }
         </div>
       </div>
     </div>
-  </div>
-</section>
-
-<!-- ============================================================ Transport bar -->
-<section id="transport">
-  <div class="feature-detail reverse">
-    <div class="copy">
-      <h2>One <span class="accent">transport bar</span>, every gesture.</h2>
-      <p>
-        IN / OUT / clear, loop / once / ping-pong, full-step nav with the play
-        buttons hugging the frame display, annotation jump &amp; toggle, the
-        show-during-play 👁 lock, FPS, fullscreen. Built around the keyboard but
-        every action is one click away.
-      </p>
-      <ul>
-        <li><b>Direction-aware play</b>: J reverses, L plays forward, K toggles, Space plays/pauses.</li>
-        <li><b>Loop button</b> cycles through 🔁 Loop → ▶️ Once → 🏓 Ping-Pong.</li>
-        <li><b>👁 / 🚫 toggle</b> shows / hides annotations during playback — mirror of the A shortcut.</li>
-        <li><b>Reload (Ctrl+R)</b> &amp; <b>Export (Ctrl+Shift+E)</b> live in the top-right corner widget.</li>
-      </ul>
-    </div>
-    <div class="mockup">
-      <div class="mockup-label">ui/transport.py</div>
-      <div class="transport">
-        <div class="group">
-          <div class="t-btn" title="Mark IN (I)">🚩</div>
-          <div class="t-btn" title="Mark OUT (O)">🏁</div>
-          <div class="t-btn" title="Clear range (Shift+R)">🧹</div>
-        </div>
-        <div class="sep"></div>
-        <div class="t-btn" title="Loop (click to cycle)">🔁</div>
-        <div class="sep"></div>
-        <div class="group">
-          <div class="t-btn" title="First frame (Home)">
-            <svg width="14" height="14" viewBox="0 0 16 16"><rect x="2" y="2" width="2" height="12" rx="1" fill="currentColor"/><polygon points="14,2 6,8 14,14" fill="currentColor"/></svg>
-          </div>
-          <div class="t-btn" title="Previous frame (←)">
-            <svg width="14" height="14" viewBox="0 0 16 16"><polygon points="12,2 4,8 12,14" fill="currentColor"/></svg>
-          </div>
-          <div class="t-btn accent" title="Play reverse (J)">
-            <svg width="14" height="14" viewBox="0 0 16 16"><polygon points="12,2 2,8 12,14" fill="currentColor"/></svg>
-          </div>
-          <div class="t-btn accent" title="Play forward (L)">
-            <svg width="14" height="14" viewBox="0 0 16 16"><polygon points="4,2 14,8 4,14" fill="currentColor"/></svg>
-          </div>
-          <div class="t-btn" title="Next frame (→)">
-            <svg width="14" height="14" viewBox="0 0 16 16"><polygon points="4,2 12,8 4,14" fill="currentColor"/></svg>
-          </div>
-          <div class="t-btn" title="Last frame (End)">
-            <svg width="14" height="14" viewBox="0 0 16 16"><rect x="12" y="2" width="2" height="12" rx="1" fill="currentColor"/><polygon points="2,2 10,8 2,14" fill="currentColor"/></svg>
-          </div>
-        </div>
-        <div class="sep"></div>
-        <div class="group">
-          <div class="t-btn" title="Previous annotation ([)">⏮️</div>
-          <div class="t-btn" title="Toolbar (D)">✏️</div>
-          <div class="t-btn" title="Next annotation (])">⏭️</div>
-          <div class="t-btn checked-eye" title="Show annotations during play (A)">👁</div>
-        </div>
-        <div class="sep"></div>
-        <span class="t-fps-label">FPS</span>
-        <div class="t-input">25</div>
-        <div class="sep"></div>
-        <div class="t-btn" title="Fullscreen (F)">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4"/></svg>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ============================================================ Sessions -->
-<section id="sessions">
-  <h2>Save the whole <span class="accent">stack</span> as a session.</h2>
-  <p class="lede">
-    File → Save session writes every layer's source path, offset, IN/OUT trim,
-    channel selection, alpha-composite mode, visibility and per-layer audio state
-    (mute / solo / gain) into one <code>.session</code> JSON file. Drop the file
-    back on the viewer and the full stack reappears exactly as you left it.
-    Travels next to the work; readable by hand if you ever need to check what's
-    in there.
-  </p>
-</section>
-
-<!-- ============================================================ Shortcuts -->
-<section id="shortcuts">
-  <h2>Built around the <span class="accent">keyboard</span>.</h2>
-  <p class="lede">
-    Every meaningful action has a one-or-two-key shortcut. Ergonomics matter when
-    you're reviewing 200 shots back to back.
-  </p>
-
-  <div class="kbd-table">
-    <div class="kbd-row"><span><span class="kbd">Space</span> / <span class="kbd">K</span></span><span class="desc">Toggle play / pause</span></div>
-    <div class="kbd-row"><span><span class="kbd">J</span> / <span class="kbd">L</span></span><span class="desc">Play reverse / forward</span></div>
-    <div class="kbd-row"><span><span class="kbd">←</span> / <span class="kbd">→</span></span><span class="desc">Previous / next frame</span></div>
-    <div class="kbd-row"><span><span class="kbd">Home</span> / <span class="kbd">End</span></span><span class="desc">First / last frame</span></div>
-    <div class="kbd-row"><span><span class="kbd">I</span> / <span class="kbd">O</span></span><span class="desc">Set IN / OUT at current frame</span></div>
-    <div class="kbd-row"><span><span class="kbd">Shift</span> + <span class="kbd">R</span></span><span class="desc">Clear IN/OUT range</span></div>
-    <div class="kbd-row"><span><span class="kbd">D</span></span><span class="desc">Show / hide annotation toolbar</span></div>
-    <div class="kbd-row"><span><span class="kbd">A</span></span><span class="desc">Show / hide annotations during playback</span></div>
-    <div class="kbd-row"><span><span class="kbd">P</span> / <span class="kbd">E</span></span><span class="desc">Pen / eraser tool</span></div>
-    <div class="kbd-row"><span><span class="kbd">G</span></span><span class="desc">Toggle ghost (ephemeral) mode</span></div>
-    <div class="kbd-row"><span><span class="kbd">[</span> / <span class="kbd">]</span></span><span class="desc">Previous / next annotated frame</span></div>
-    <div class="kbd-row"><span><span class="kbd">Ctrl</span> + <span class="kbd">Z</span> / <span class="kbd">Y</span></span><span class="desc">Undo / redo (layers, trim, strokes)</span></div>
-    <div class="kbd-row"><span><span class="kbd">Ctrl</span> + <span class="kbd">N</span></span><span class="desc">Clear current sequence</span></div>
-    <div class="kbd-row"><span><span class="kbd">Ctrl</span> + <span class="kbd">O</span></span><span class="desc">Open file or sequence</span></div>
-    <div class="kbd-row"><span><span class="kbd">Ctrl</span> + <span class="kbd">R</span></span><span class="desc">Reload — re-scan source folder</span></div>
-    <div class="kbd-row"><span><span class="kbd">Ctrl</span> + <span class="kbd">T</span></span><span class="desc">Toggle frame ↔ timecode display</span></div>
-    <div class="kbd-row"><span><span class="kbd">Ctrl</span> + <span class="kbd">Shift</span> + <span class="kbd">E</span></span><span class="desc">Open export dialog</span></div>
-    <div class="kbd-row"><span><span class="kbd">+</span> / <span class="kbd">-</span></span><span class="desc">Nudge exposure ± 0.25 stops</span></div>
-    <div class="kbd-row"><span><span class="kbd">F</span></span><span class="desc">Fullscreen</span></div>
   </div>
 </section>
 
