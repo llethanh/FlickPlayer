@@ -644,12 +644,21 @@ class MasterFrameCache:
         path = self._path_index[layer.id].get(source_frame)
         if path is None:
             # Layer covers this master frame but the source has a
-            # hole there (sparse sequence). Pre-mark missing.
+            # hole there (sparse sequence). Pre-mark missing — using
+            # the *shared* (memoised) placeholder rather than the
+            # per-frame variant. The filename-baked overlay is meant
+            # for "this file failed to decode" cases where the user
+            # needs to know which path is bad; for a sparse-sequence
+            # gap the absence is intentional / expected and a fresh
+            # ~33 MB array per gap (each with its own QImage paint
+            # pass) freezes the UI for seconds when load_sequence
+            # primes a sparse range. The shared placeholder is built
+            # once per (w, h) and aliased across every gap — drop
+            # from O(gaps × decode-cost) to O(1).
             with self._lock:
                 placeholder = get_missing_placeholder(
                     layer.sequence.width or 512,
                     layer.sequence.height or 512,
-                    filename=_expected_filename(layer.sequence, source_frame),
                 )
                 key = (master_frame, self._signature_at(master_frame))
                 self._frames[key] = placeholder
@@ -1333,15 +1342,19 @@ class MasterFrameCache:
                     # from the layer above and isn't actually missing.
                     topmost = self._stack.topmost_visible_at(master_frame)
                     if topmost is None or topmost.id == layer.id:
-                        # Per-frame placeholder so the user sees which
-                        # filename is missing on the overlay. Built
-                        # outside the lock — QPainter is slow-ish.
-                        placeholder = get_missing_placeholder(
-                            ph_w, ph_h,
-                            filename=_expected_filename(
-                                layer.sequence, source_frame,
-                            ),
-                        )
+                        # Use the *shared* (memoised) placeholder
+                        # rather than the per-frame variant. Filename-
+                        # baked overlays are valuable for "decode
+                        # failed at runtime" cases where the user
+                        # needs to know which path is bad; for a
+                        # sparse-sequence gap (the absence is known
+                        # at scan time and presumably intentional)
+                        # the shared placeholder is fine. Building
+                        # the per-frame variant for every gap froze
+                        # the UI for ~10 s on dense-gap sparse
+                        # sequences (~50 missing 4K frames × ~50 ms
+                        # of QImage paint each, all serialised here).
+                        placeholder = get_missing_placeholder(ph_w, ph_h)
                         with self._lock:
                             self._frames[key] = placeholder
                             self._missing.add(key)
