@@ -720,6 +720,7 @@ class ImgPlayerApp:
         w.new_sequence_requested.connect(self._on_new_sequence)
         w.reload_sequence_requested.connect(self._on_reload_sequence)
         w.transport.reload_clicked.connect(self._on_reload_sequence)
+        w.force_reload_sequence_requested.connect(self._on_force_reload_sequence)
         # Edit menu — wire to the same chained handlers the keyboard
         # shortcut (Ctrl+Z / Ctrl+Shift+Z) uses, so menu and shortcut
         # produce identical behaviour (annotations first, layer
@@ -767,6 +768,7 @@ class ImgPlayerApp:
         # display.
         w.channel_selection_changed.connect(self._on_channel_selection_changed)
         w.channel_mask_changed.connect(self._on_channel_mask_changed)
+        w.transparency_bg_mode_changed.connect(self._on_transparency_bg_mode_changed)
 
     def _wire_compare(self) -> None:
         """Compare-mode signals: transport button + band + shortcuts."""
@@ -1856,6 +1858,15 @@ class ImgPlayerApp:
             return
         self._window.viewer.gl.set_color_params(channel_mask=(r, g, b, a))
 
+    def _on_transparency_bg_mode_changed(self, mode: int) -> None:
+        """Forward the BG picker to the GL viewport + persist the
+        choice. Mode is 0..3 (checker / black / grey / white)."""
+        self._window.viewer.gl.set_color_params(transparency_bg_mode=int(mode))
+        try:
+            self._prefs.transparency_bg_mode = int(mode)
+        except Exception:
+            log.exception("[prefs] failed to persist transparency_bg_mode")
+
     def _on_zoom_requested(self, factor: object) -> None:
         """Forward a zoom request from the combo to the GL viewport.
 
@@ -2135,6 +2146,8 @@ class ImgPlayerApp:
             self._window._save_frame_act.setEnabled(False)  # noqa: SLF001
         if hasattr(self._window, "_reload_act"):
             self._window._reload_act.setEnabled(False)  # noqa: SLF001
+        if hasattr(self._window, "_force_reload_act"):
+            self._window._force_reload_act.setEnabled(False)  # noqa: SLF001
         self._window.transport.set_export_enabled(False)
         self._window.transport.set_reload_enabled(False)
         # Reset the current-session pointer + title bar.
@@ -2225,6 +2238,36 @@ class ImgPlayerApp:
         self._window.set_status(
             f"Reload: {kept} kept, {dropped} re-decoded, {missing} missing"
             + (f", {added} new" if added else "")
+        )
+
+    def _on_force_reload_sequence(self) -> None:
+        """Reload (force) — Ctrl+Shift+R / File → Reload (force).
+
+        Drops every cached frame and re-decodes from scratch, ignoring
+        the mtime-diff that the smart reload uses. The smart reload is
+        right 99 % of the time, but for the rare case where files were
+        overwritten without an mtime bump (``cp -p``, restore from
+        backup, slow Drive sync that updated content but not the
+        timestamp) the user gets a nuclear option to re-read everything.
+
+        Implementation = ``cache.clear()`` then route through the
+        regular smart-reload path. The clear empties every cached
+        frame; the smart reload's mtime diff has nothing left to pop
+        and just refreshes the per-layer path / mtime indexes against
+        the rescanned sequence (= what we want, without duplicating
+        the target-resolution logic).
+        """
+        seq = self._controller.sequence
+        if seq is None:
+            self._window.set_status("Reload (force): no sequence loaded.")
+            return
+        self._cache.clear()
+        self._on_reload_sequence()
+        # Override the smart-reload status (which would say
+        # "0 kept, 0 re-decoded" after a clear — confusing) with
+        # something that reflects what actually happened.
+        self._window.set_status(
+            "Reload (force): cache cleared, full re-decode in progress…"
         )
 
     # ------------------------------------------------------------------ Export (v0.5.0)
@@ -3011,6 +3054,13 @@ def _apply_preferences_to_window(app: ImgPlayerApp) -> None:
         prefs.unmarked_exr_source,
         prefs.unmarked_exr_view,
     )
+
+    # Transparency-background pick — restore the GL viewport's uniform
+    # AND the transport's BG button so what the user sees matches what
+    # the menu reports.
+    bg_mode = int(prefs.transparency_bg_mode)
+    app._window.viewer.gl.set_color_params(transparency_bg_mode=bg_mode)
+    app._window.transport.set_transparency_bg_mode(bg_mode)
 
     # FPS — push through the controller so transport + timeline pick up
     # the value via state_changed (keeps the FPS combo / timeline TC in sync).

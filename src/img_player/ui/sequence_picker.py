@@ -67,31 +67,38 @@ class SequencePickerDialog(QDialog):  # type: ignore[misc]
         self.setWindowTitle("Pick a sequence")
         self.setModal(True)
         self.setMinimumWidth(560)
+        # Floor the dialog at a height that comfortably shows the
+        # header + ~6 rows + buttons row. ``_resize_for_content``
+        # below grows it from there based on actual row count, capped
+        # at 80 % of the screen — so this is the "minimum useful"
+        # floor, not the typical opening size.
+        self.setMinimumHeight(260)
         self._multi = multi
         # Either a flat sequence list or a grouped list — never both.
         self._sequences: list[SequenceInfo] = list(sequences) if sequences else []
         self._groups: list[FolderGroup] = list(groups) if groups else []
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(S.LG, S.LG, S.LG, S.LG)
-        outer.setSpacing(S.MD)
+        # Tighter chrome — the previous LG / MD pairing left a
+        # noticeable empty band above and below the list. Pull the
+        # margins to MD and the inter-widget spacing to SM so the
+        # header, list, and button row sit close together; the
+        # vertical real estate goes to the content the user actually
+        # scans (the sequence rows).
+        outer.setContentsMargins(S.MD, S.MD, S.MD, S.MD)
+        outer.setSpacing(S.SM)
 
         if multi:
             total = sum(len(g.sequences) for g in self._groups)
             if total <= 1:
-                header_text = (
-                    "One sequence detected in the dropped sources. "
-                    "Confirm to load:"
-                )
+                header_text = "1 sequence detected — confirm to load:"
             else:
                 header_text = (
-                    f"{total} sequences detected in the dropped sources. "
-                    f"Tick the ones you want to load:"
+                    f"{total} sequences detected — tick the ones to load:"
                 )
         else:
             header_text = (
-                f"This folder contains {len(self._sequences)} sequences. "
-                f"Pick one to load:"
+                f"{len(self._sequences)} sequences in this folder — pick one:"
             )
         header = QLabel(header_text)
         header.setWordWrap(True)
@@ -99,7 +106,11 @@ class SequencePickerDialog(QDialog):  # type: ignore[misc]
 
         self._list = QListWidget()
         self._list.setFont(F.mono(F.SIZE_SM))
-        self._list.setMinimumHeight(220)
+        # Internal list floor — gives the rows enough vertical
+        # breathing room even on a single-sequence drop without the
+        # whole dialog feeling oversized. The dialog's own floor
+        # (260 px) covers the header + buttons chrome.
+        self._list.setMinimumHeight(180)
         self._list.setStyleSheet(_LIST_QSS.format(accent=H.ACCENT))
         if multi:
             # Checkboxes are the entire selection model — row
@@ -172,6 +183,50 @@ class SequencePickerDialog(QDialog):  # type: ignore[misc]
             if self._sequences:
                 self._list.setCurrentRow(0)
 
+        # Size the dialog to its actual content: a multi-source drop
+        # with 30 sequences shouldn't open the same height as a
+        # single-folder drop with 4. Caps at ~80 % of the screen
+        # so we never produce a dialog taller than the display.
+        self._resize_for_content()
+
+    def _resize_for_content(self) -> None:
+        """Compute an initial dialog height that fits the populated
+        rows, capped at 80 % of the screen.
+
+        The default Qt sizeHint for a ``QListWidget`` doesn't grow
+        with row count past its viewport height, so a 30-sequence
+        drop opens the same as a 3-sequence drop and the user has
+        to resize manually every time. Walk the rows, sum their
+        ``sizeHintForRow`` values, add the dialog chrome (header
+        text + buttons + margins ~140 px), then clamp to the screen
+        rectangle so the dialog never exceeds the display."""
+        row_count = self._list.count()
+        if row_count <= 0:
+            return
+        # Per-row height: trust ``sizeHintForRow`` (correctly accounts
+        # for the mono font + checkbox indicator) and fall back to a
+        # conservative 20 px per row when the widget hasn't been laid
+        # out yet (= can return 0 / -1 pre-show). 20 matches the
+        # tightened ``padding: 2px 10px`` in the list QSS.
+        per_row = max(20, self._list.sizeHintForRow(0))
+        list_h = per_row * row_count + 8  # +8 for inner scrollarea padding
+        # Dialog chrome: header label + buttons row + outer margins +
+        # inter-widget spacings. ~90 px after the LG→MD margin pull
+        # and the MD→SM spacing pull (2024-05 design pass).
+        chrome_h = 90
+        target_h = list_h + chrome_h
+        # Cap to 80 % of the available screen so we never open a
+        # dialog taller than the user's monitor (4 K + tall picker
+        # dropdowns can add up).
+        screen = self.screen()
+        if screen is not None:
+            avail = screen.availableGeometry().height()
+            target_h = min(target_h, int(avail * 0.80))
+        # Floor at the minimum height so a one-sequence drop still
+        # opens at the readable baseline rather than collapsing.
+        target_h = max(target_h, self.minimumHeight())
+        self.resize(self.width() or 560, int(target_h))
+
     # ------------------------------------------------------------------ Population
 
     def _populate_flat(self) -> None:
@@ -241,7 +296,7 @@ class SequencePickerDialog(QDialog):  # type: ignore[misc]
         item.setForeground(QBrush(QColor("#3A3D43")))
         # Force a thin row height. The default would inherit the
         # mono font's full line — way too tall for a separator.
-        item.setSizeHint(QSize(0, 6))
+        item.setSizeHint(QSize(0, 4))
         self._list.addItem(item)
 
     def _add_seq_item(self, seq: SequenceInfo, *, checked: bool) -> None:
@@ -386,7 +441,7 @@ QListWidget {{
     outline: 0;
 }}
 QListWidget::item {{
-    padding: 4px 10px;
+    padding: 2px 10px;
     color: #D8D8D8;
 }}
 QListWidget::item:hover {{

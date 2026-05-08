@@ -814,7 +814,18 @@ class MasterFrameCache:
             # warrants its own cached snapshot.
             ac = "1" if layer.alpha_composite else "0"
             pm = "1" if layer.alpha_is_straight else "0"
-            parts.append(f"{layer.id}@{sel_label}#{ac}{pm}")
+            # Include offset + layer_in too — they determine which
+            # source frame this layer contributes at ``master_frame``
+            # (``source_frame = layer_in + (mf - master_start)``).
+            # Without these, dragging a layer along the timeline
+            # leaves stale composites under the old signature: the
+            # cache thinks "same chain" but the underlying source
+            # frame the layer would now read has shifted.
+            off = int(layer.offset)
+            lin = int(layer.layer_in)
+            parts.append(
+                f"{layer.id}@{sel_label}#{ac}{pm}+{off}+{lin}"
+            )
             if not layer.alpha_composite:
                 break
         sig = "|".join(parts)
@@ -1291,22 +1302,25 @@ class MasterFrameCache:
                 # an A channel.
                 "is_opaque_floor": not layer.alpha_composite,
             })
-        # User rule: the checker only shows when the bottom contributor
-        # has *no* layer beneath it in the stack (regardless of
-        # coverage at this master frame). If any layer sits below it
-        # in stack order, transparent regions render as solid black
-        # instead — the user has explicitly stacked layers, so the
-        # checker would feel like a stand-in for content that isn't
-        # there. Black is the honest "no contribution here" value.
-        # Implementation: force the bottom plan entry's opaque-floor
-        # flag when its layer isn't the stack's last one.
+        # User rule: the checker only shows when no other layer would
+        # actually contribute pixels beneath the bottom of the chain.
+        # "Would contribute" means *visible AND covers this master
+        # frame* — hidden layers and trimmed-out layers both fall
+        # outside the chain at this frame, so neither should mask the
+        # transparency background. Without filtering by coverage, a
+        # layer visible globally but trimmed past the current frame
+        # still forced the bottom plan entry to opaque-floor, and the
+        # transparent regions rendered black instead of the BG.
         if plan:
-            all_ids = [l.id for l in self._stack.layers()]
+            covering_ids = [
+                l.id for l in self._stack.layers()
+                if l.visible and l.covers(master_frame)
+            ]
             bottom_id = plan[-1]["layer_id"]
-            if bottom_id in all_ids:
-                stack_idx = all_ids.index(bottom_id)
-                has_below = stack_idx < len(all_ids) - 1
-                if has_below:
+            if bottom_id in covering_ids:
+                stack_idx = covering_ids.index(bottom_id)
+                has_below_covering = stack_idx < len(covering_ids) - 1
+                if has_below_covering:
                     plan[-1]["is_opaque_floor"] = True
         if not plan:
             # Every layer had a hole at this frame — pre-mark missing.

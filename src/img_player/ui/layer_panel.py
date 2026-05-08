@@ -366,9 +366,18 @@ class LayerRow(QFrame):  # type: ignore[misc]
     def update_layer(self, layer: Layer) -> None:
         """Push a fresh Layer reference into the bar — call after the
         underlying layer's offset/trim/visibility/alpha-flags have
-        mutated. Keeps the per-row toggles (T / αS / M / S) in sync
-        without firing their own signals."""
+        mutated. Keeps the per-row toggles (eye / T / αS / M / S) in
+        sync without firing their own signals.
+
+        Visibility is synced here too because the multi-select
+        cascade in :class:`LayerPanel` uses ``stack.update(sid,
+        visible=...)`` rather than ``stack.toggle_visible``; that
+        path only emits ``layer_modified`` (not ``visibility_changed``),
+        so without resyncing the eye here the other selected rows'
+        eye buttons would lag behind their underlying layer state.
+        """
         self._bar.set_layer(layer)
+        self.set_visible_state(layer.visible)
         self.set_transparency_state(layer.alpha_composite)
         self.set_alpha_straight_state(layer.alpha_is_straight)
         self.set_audio_mute_state(layer.audio_mute)

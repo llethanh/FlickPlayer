@@ -274,6 +274,12 @@ class _ColorParams:
     # where the cached buffer's alpha is < 1 (per-layer alpha-
     # composite controls whether the buffer has alpha at all).
     checker_scale: float = 8.0
+    # Transparency-background mode. 0 = checker (default), 1 = black,
+    # 2 = mid-grey, 3 = white. The user picks via the BG button in
+    # the menu-bar's right corner; the choice persists across launches
+    # via :class:`Preferences`. Only matters where the cached buffer
+    # has alpha < 1; opaque content paints over it regardless.
+    transparency_bg_mode: int = 0
 
 
 class GLViewport(QOpenGLWidget):  # type: ignore[misc]
@@ -518,10 +524,11 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
         exposure: float | None = None,
         gamma: float | None = None,
         channel_mask: tuple[float, float, float, float] | None = None,
+        transparency_bg_mode: int | None = None,
     ) -> None:
         """Swap the OCIO shader bundle and/or tweak exposure / gamma /
-        channel mask. Any argument left ``None`` keeps its current
-        value."""
+        channel mask / transparency background. Any argument left
+        ``None`` keeps its current value."""
         if bundle is not None:
             self._pending_bundle = bundle
         if exposure is not None:
@@ -530,6 +537,10 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
             self._color_params.gamma = max(0.01, gamma)
         if channel_mask is not None:
             self._color_params.channel_mask = channel_mask
+        if transparency_bg_mode is not None:
+            mode = int(transparency_bg_mode)
+            if 0 <= mode <= 3:
+                self._color_params.transparency_bg_mode = mode
         self.update()
 
     def set_current_frame(self, frame: int) -> None:
@@ -910,6 +921,11 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
         self._set_uniform_float(
             "uCheckerScale", float(self._color_params.checker_scale),
         )
+        loc_bg = GL.glGetUniformLocation(self._program, "uTransparencyBgMode")
+        if loc_bg != -1:
+            GL.glUniform1i(
+                loc_bg, int(self._color_params.transparency_bg_mode),
+            )
         self._set_uniform_matrix4("uTransform", self._fit_matrix())
 
         GL.glBindVertexArray(self._vao)

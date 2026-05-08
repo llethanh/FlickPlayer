@@ -5,13 +5,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QEvent, QObject, QSize, Qt, Signal
-from PySide6.QtGui import QIcon, QMouseEvent
+from PySide6.QtGui import QAction, QActionGroup, QIcon, QMouseEvent
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QToolButton,
     QWidget,
@@ -106,6 +107,10 @@ class TransportBar(QWidget):  # type: ignore[misc]
     # toggling is free runtime cost and does not invalidate the
     # frame cache.
     channel_mask_changed = Signal(tuple)
+    # Transparency-background pick. Carries an int in 0..3:
+    #   0 = checker (default), 1 = black, 2 = mid-grey, 3 = white.
+    # Pure GL-uniform change — no cache invalidation, no re-decode.
+    transparency_bg_mode_changed = Signal(int)
     # Annotation transport buttons (slice 4): the user can toggle the
     # toolbar visibility, and jump to the previous / next annotated
     # frame. App.py decides what "previous / next" means by reading
@@ -460,11 +465,36 @@ class TransportBar(QWidget):  # type: ignore[misc]
             ("R", "Show / hide red channel"),
             ("G", "Show / hide green channel"),
             ("B", "Show / hide blue channel"),
-            ("A", "Show / hide alpha channel"),
+            (
+                "A",
+                "Solo alpha — click to view the alpha channel as "
+                "grayscale (white = opaque, black = transparent). "
+                "Click again to return to RGB.",
+            ),
         ):
             btn = _channel_toggle_button(letter, tooltip)
             btn.toggled.connect(self._emit_channel_mask)
             self._channel_btns[letter] = btn
+
+        # --- Transparency background picker ---------------------------
+        # A small popup-menu button next to the RGBA toggles. Lets the
+        # reviewer choose what to draw under transparent pixels — VFX
+        # checker (default), or a flat colour for evaluating edges
+        # against a known background. Pure GL uniform change, no
+        # cache invalidation.
+        self._bg_button = QToolButton()
+        self._bg_button.setText("BG")
+        self._bg_button.setFixedHeight(G.BTN_TRANSPORT_H)
+        self._bg_button.setMinimumWidth(34)
+        self._bg_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._bg_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self._bg_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._bg_button.setToolTip(
+            "Choose background for transparent pixels — checker / black / grey / white",
+        )
+        self._bg_menu = self._build_bg_menu()
+        self._bg_button.setMenu(self._bg_menu)
+        self._current_bg_mode: int = 0
 
         # NB: T + αS toggles moved to each :class:`LayerRow` since
         # they reflect *per-layer* state. Keeping them here would
@@ -641,8 +671,26 @@ class TransportBar(QWidget):  # type: ignore[misc]
         return self._channel_btns
 
     @property
+    def bg_button(self) -> QToolButton:
+        """Background-picker for transparent pixels (checker / black /
+        grey / white). Sits next to the R/G/B/A mute toggles."""
+        return self._bg_button
+
+    @property
     def zoom_combo(self) -> QComboBox:
         return self._zoom_combo
+
+    def set_transparency_bg_mode(self, mode: int) -> None:
+        """Sync the BG picker's checked entry from outside — used when
+        prefs restore the user's last pick on boot. Doesn't re-emit
+        ``transparency_bg_mode_changed`` (would loop the GL setter)."""
+        m = int(mode)
+        if not 0 <= m <= 3:
+            m = 0
+        if m == self._current_bg_mode:
+            return
+        self._current_bg_mode = m
+        self._refresh_bg_menu_check()
 
     def update_from_state(self, state: PlaybackState) -> None:
         # Swap the play button's icon between the two states. We keep
@@ -826,6 +874,44 @@ class TransportBar(QWidget):  # type: ignore[misc]
         fps = self._parse_fps(text)
         if fps is not None:
             self.fps_changed.emit(fps)
+
+    # ---- Transparency background picker ------------------------------
+
+    def _build_bg_menu(self) -> QMenu:
+        """Build the BG button's popup with four mutually-exclusive
+        actions. The action group enforces the radio behaviour so only
+        one option ever shows as checked at a time."""
+        menu = QMenu(self)
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+        self._bg_actions: dict[int, QAction] = {}
+        for mode, label in (
+            (0, "Checker (default)"),
+            (1, "Black"),
+            (2, "Mid grey"),
+            (3, "White"),
+        ):
+            act = QAction(label, menu)
+            act.setCheckable(True)
+            act.setData(mode)
+            act.triggered.connect(
+                lambda _checked, m=mode: self._on_bg_picked(m),
+            )
+            group.addAction(act)
+            menu.addAction(act)
+            self._bg_actions[mode] = act
+        # Default-checked entry mirrors ``_current_bg_mode``.
+        self._bg_actions[0].setChecked(True)
+        return menu
+
+    def _on_bg_picked(self, mode: int) -> None:
+        self._current_bg_mode = int(mode)
+        self._refresh_bg_menu_check()
+        self.transparency_bg_mode_changed.emit(int(mode))
+
+    def _refresh_bg_menu_check(self) -> None:
+        for mode, act in self._bg_actions.items():
+            act.setChecked(mode == self._current_bg_mode)
 
     def _emit_channel_mask(self) -> None:
         """Bundle the four RGBA toggle states and emit

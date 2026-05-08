@@ -111,6 +111,12 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
     save_session_requested = Signal(Path)  # File → Save session… (v1.0)
     open_session_requested = Signal(Path)  # File → Open session… (v1.0)
     reload_sequence_requested = Signal()   # Reload cache (Ctrl+R / button)
+    # Force-reload — ignores mtime, drops every cached frame and
+    # replays decode from scratch. Useful when files were overwritten
+    # without an mtime bump (cp -p, restore from backup, sync still
+    # propagating) or when the user just wants nuclear-option
+    # confidence in the cache state.
+    force_reload_sequence_requested = Signal()
     # Edit menu — same chained handlers as the Ctrl+Z / Ctrl+Shift+Z
     # QShortcuts (annotation first, layer-stack fallback). Routing
     # via signals keeps the App in charge of priority logic; the
@@ -124,6 +130,10 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
     # the rich selection without reaching into the transport widget.
     channel_selection_changed = Signal(object)
     channel_mask_changed = Signal(tuple)  # (R, G, B, A) bools
+    # User picked a transparency background. Carries an int 0..3
+    # (0 = checker, 1 = black, 2 = mid-grey, 3 = white). Forwarded
+    # from :class:`TransportBar`.
+    transparency_bg_mode_changed = Signal(int)
     zoom_requested = Signal(object)       # float | None ; None = fit
     step_clicked = Signal(int)  # +1 / -1
     jump_to_ends = Signal(int)  # -1 first, +1 last
@@ -511,6 +521,8 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
             self._save_frame_act.setEnabled(True)
         if hasattr(self, "_reload_act"):
             self._reload_act.setEnabled(True)
+        if hasattr(self, "_force_reload_act"):
+            self._force_reload_act.setEnabled(True)
         if hasattr(self, "_add_layer_act"):
             self._add_layer_act.setEnabled(True)
         if hasattr(self, "_save_session_act"):
@@ -627,11 +639,31 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         # rest, and surfaces any newly-arrived / removed files.
         # Disabled until a sequence is loaded — same gating as
         # Export.
-        self._reload_act = QAction("&Reload", self)
+        self._reload_act = QAction("&Reload (smart)", self)
+        self._reload_act.setToolTip(
+            "Re-scan the source folder and re-decode only frames "
+            "whose mtime changed on disk."
+        )
         self._reload_act.setShortcut(QKeySequence("Ctrl+R"))
         self._reload_act.setEnabled(False)
         self._reload_act.triggered.connect(self.reload_sequence_requested.emit)
         file_menu.addAction(self._reload_act)
+
+        # File → Reload (force) (Ctrl+Shift+R): drop every cached
+        # frame and re-decode from scratch, ignoring mtime. Same
+        # enable-gating as the smart reload.
+        self._force_reload_act = QAction("Reload (&force)", self)
+        self._force_reload_act.setToolTip(
+            "Drop every cached frame and re-decode from scratch, "
+            "regardless of mtime — for the rare case where files "
+            "were overwritten without an mtime bump."
+        )
+        self._force_reload_act.setShortcut(QKeySequence("Ctrl+Shift+R"))
+        self._force_reload_act.setEnabled(False)
+        self._force_reload_act.triggered.connect(
+            self.force_reload_sequence_requested.emit,
+        )
+        file_menu.addAction(self._force_reload_act)
 
         self._recent_menu = file_menu.addMenu("Open &Recent")
         self._recent_menu.aboutToShow.connect(self._refresh_recent_menu)
@@ -683,6 +715,17 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         self._redo_act.setShortcut(QKeySequence.StandardKey.Redo)
         self._redo_act.triggered.connect(self.redo_requested.emit)
         edit_menu.addAction(self._redo_act)
+
+        # --- Image menu : actions that operate on the loaded image ----
+        # Currently the two reload variants (smart + force). Same
+        # QActions as the File menu duplicates so the shortcuts
+        # (Ctrl+R / Ctrl+Shift+R) stay single-binding and the gating
+        # state is shared automatically. Discoverable from the new
+        # menu without taking the user out of the File menu's
+        # file-level operations.
+        image_menu = menu_bar.addMenu("&Image")
+        image_menu.addAction(self._reload_act)
+        image_menu.addAction(self._force_reload_act)
 
         # --- View menu : timeline display mode ----------------------------
         view_menu = menu_bar.addMenu("&View")
@@ -854,6 +897,10 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         buttons_layout.addWidget(self._transport.channel_button)
         for letter in ("R", "G", "B", "A"):
             buttons_layout.addWidget(self._transport.channel_mute_buttons[letter])
+        # Transparency-background picker — sits next to the RGBA
+        # toggles since they're all "what does the viewer paint?"
+        # controls. Popup menu gives discoverable per-mode picks.
+        buttons_layout.addWidget(self._transport.bg_button)
         # Zoom selector — preceded by a small "Zoom" label, mirroring
         # the "FPS" label/field pairing in the transport bar.
         zoom_label = QLabel("Zoom")
@@ -1153,6 +1200,9 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
             self.channel_selection_changed.emit
         )
         self._transport.channel_mask_changed.connect(self.channel_mask_changed.emit)
+        self._transport.transparency_bg_mode_changed.connect(
+            self.transparency_bg_mode_changed.emit,
+        )
         # Zoom: combo → viewport (forward), wheel → combo (back-channel
         # so the displayed value follows the wheel without us
         # re-emitting and ping-ponging).

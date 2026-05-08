@@ -158,6 +158,29 @@ class Preferences:
         else:
             self._s.remove("color/view")
 
+    @property
+    def transparency_bg_mode(self) -> int:
+        """Background drawn under transparent pixels in the viewport.
+        ``0 = checker`` (default), ``1 = black``, ``2 = mid-grey``,
+        ``3 = white``. Persisted across sessions so the user's choice
+        survives restarts.
+        """
+        try:
+            v = int(self._s.value("color/transparency_bg_mode", 0))
+        except (TypeError, ValueError):
+            return 0
+        return v if 0 <= v <= 3 else 0
+
+    @transparency_bg_mode.setter
+    def transparency_bg_mode(self, value: int) -> None:
+        try:
+            v = int(value)
+        except (TypeError, ValueError):
+            return
+        if not 0 <= v <= 3:
+            return
+        self._s.setValue("color/transparency_bg_mode", v)
+
     # ---- Default profile for unmarked EXRs ---------------------------
     # Studios that bake their display transform into EXR (or write EXR
     # without a colorspace tag) need a project-wide override so the

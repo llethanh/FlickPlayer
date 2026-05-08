@@ -33,6 +33,17 @@ uniform float uChannelIsolateLuminance;
 // content never sees it — no mode flag needed.
 uniform float uCheckerScale;
 
+// Transparency background mode. The default checker is the VFX
+// convention but reviewers sometimes want a flat colour to
+// evaluate edges (white for a print, black for a key-on-black
+// composite). Single int because four values fit in the obvious
+// switch and keep the host-side state minimal.
+//   0 = checker (default)
+//   1 = solid black
+//   2 = solid mid-grey (0.18)
+//   3 = solid white
+uniform int uTransparencyBgMode;
+
 // ---- Compare overlay (v1.2) -----------------------------------------
 // Two-layer A/B compare lives in the shader so dragging the seam is
 // a uniform-update, not a full numpy compose + GL upload. ``uImage``
@@ -125,6 +136,21 @@ void main() {
     // Optional user gamma adjustment applied to the display-encoded output.
     pixel.rgb = pow(max(pixel.rgb, vec3(0.0)), vec3(1.0 / uGamma));
 
+    // Alpha solo — when ``uChannelMask.a`` is muted (= 0), short-
+    // circuit to a grayscale view of the alpha channel. Same
+    // convention Nuke / RV use for their alpha button: white =
+    // opaque, black = transparent. The R/G/B mask toggles are
+    // ignored in this mode (alpha is independent of colour).
+    float a = clamp(raw_alpha, 0.0, 1.0);
+    if (uChannelMask.a < 0.5) {
+        vec3 alpha_view = vec3(a);
+        // Honour the compare seam line so the wipe boundary stays
+        // visible while soloing alpha.
+        alpha_view = paint_seam_tint(alpha_view);
+        fragColor = vec4(alpha_view, 1.0);
+        return;
+    }
+
     // Channel masking — done last, in display space, so the result
     // is exactly "what the user said to show". A single-channel
     // isolation can promote that channel to luminance if the user
@@ -137,19 +163,28 @@ void main() {
         float lum = dot(masked, vec3(1.0)) / rgb_count;
         masked = vec3(lum);
     }
-    // Always-on checker composite where the buffer's alpha < 1.
+    // Transparency background composite where the buffer's alpha < 1.
     // The cache produces premultiplied buffers (composite path
     // converts straight contributors to premult before the over
-    // operator) — so a single ``masked + checker * (1 - a)`` formula
-    // is correct here. Opaque content (alpha = 1) renders as before;
-    // alpha < 1 reveals the checker. The uChannelMask.a toggle still
-    // dims alpha-driven content for the legacy "show alpha as
-    // brightness multiplier" workflow.
-    vec2 cell = floor(gl_FragCoord.xy / max(uCheckerScale, 1.0));
-    float c = mod(cell.x + cell.y, 2.0);
-    vec3 checker = mix(vec3(0.40), vec3(0.55), c);
-    float a = clamp(raw_alpha, 0.0, 1.0);
-    vec3 final_rgb = masked * uChannelMask.a + checker * (1.0 - a);
+    // operator) — so a single ``masked + bg * (1 - a)`` formula is
+    // correct regardless of which background the user picked.
+    // Opaque content (alpha = 1) renders as before; alpha < 1
+    // reveals the background.
+    vec3 bg;
+    if (uTransparencyBgMode == 1) {
+        bg = vec3(0.0);                  // black
+    } else if (uTransparencyBgMode == 2) {
+        bg = vec3(0.18);                 // mid-grey (VFX standard)
+    } else if (uTransparencyBgMode == 3) {
+        bg = vec3(1.0);                  // white
+    } else {
+        // Checker default — two greys alternating in screen-space
+        // squares of ``uCheckerScale`` pixels.
+        vec2 cell = floor(gl_FragCoord.xy / max(uCheckerScale, 1.0));
+        float c = mod(cell.x + cell.y, 2.0);
+        bg = mix(vec3(0.40), vec3(0.55), c);
+    }
+    vec3 final_rgb = masked + bg * (1.0 - a);
     // Compare seam line — painted in display space so it stays a
     // consistent thickness regardless of zoom or OCIO output range.
     final_rgb = paint_seam_tint(final_rgb);
