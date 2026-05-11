@@ -76,9 +76,24 @@ icon_datas = [
 ]
 
 # Splash PNG — loaded at boot via ``QSplashScreen`` from
-# ``src/img_player/splash.py``. Same Path-arithmetic pattern as the
-# fonts / icons above so the asset survives the bundle relocation.
+# ``src/img_player/splash.py``. Regenerate it now so the version
+# stamp on the splash matches whatever ``__version__`` was bumped
+# to before this build. Otherwise the bundled splash drifts behind
+# real releases (the "1.4.2 install that boots showing v1.4.0"
+# bug we hit on 1.4.1 and 1.4.2). Falls back to whatever PNG is
+# on disk if the regen helper / Pillow blow up — better an old
+# splash than no splash.
 splash_asset = PROJECT_ROOT / "src" / "img_player" / "assets" / "splash.png"
+try:
+    import sys as _sys
+    _tools_dir = str(PROJECT_ROOT / "tools")
+    if _tools_dir not in _sys.path:
+        _sys.path.insert(0, _tools_dir)
+    from regen_splash import regenerate as _regen_splash  # type: ignore[import-untyped]
+    _regen_splash(PROJECT_ROOT)
+    print(f"[spec] regenerated splash PNG at v{VERSION}")
+except Exception as _err:  # noqa: BLE001 — best-effort, never fail the build over the splash
+    print(f"[spec] splash regen skipped ({_err}); using existing PNG if any.")
 splash_datas = (
     [(str(splash_asset), "img_player/assets")] if splash_asset.is_file() else []
 )
