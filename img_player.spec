@@ -405,3 +405,18 @@ coll = COLLECT(  # noqa: F821
     # break across versions.
     name=f"FlickPlayer_v{VERSION}",
 )
+
+# Post-COLLECT: drop a tiny version marker next to the .exe so the
+# bundle is self-identifying at a glance — both the filename
+# ("Flick Player v1.4.2.txt") and the file body carry the version,
+# which is what a reviewer wants to copy / paste into a bug
+# report. The bundle dir was just populated by COLLECT above; we
+# can just touch the file now.
+_bundle_dir = PROJECT_ROOT / "dist" / f"FlickPlayer_v{VERSION}"
+if _bundle_dir.is_dir():
+    _marker = _bundle_dir / f"Flick Player v{VERSION}.txt"
+    try:
+        _marker.write_text(f"Flick Player v{VERSION}\n", encoding="utf-8")
+        print(f"[spec] wrote version marker {_marker.name}")
+    except Exception as _err:  # noqa: BLE001 — never fail the build on a marker file
+        print(f"[spec] could not write version marker ({_err})")
