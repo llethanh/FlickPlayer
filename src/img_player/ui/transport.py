@@ -23,7 +23,9 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QPushButton,
+    QSlider,
     QToolButton,
+    QVBoxLayout,
     QWidget,
     QWidgetAction,
 )
@@ -184,6 +186,13 @@ class TransportBar(QWidget):  # type: ignore[misc]
     # over moving content. Mirrored on the ``A`` keyboard shortcut.
     annotation_show_during_play_toggled = Signal(bool)
     fullscreen_clicked = Signal()
+    # Master audio (popup volume slider). Carries a float in
+    # [0.0, 1.0] (linear gain, sliderValue / 100). Wired to
+    # ``AudioOutput.set_master_gain`` in app.py. Mute is implicit:
+    # the gain falls to zero when the slider sits at the bottom,
+    # which silences the output naturally in the audio callback —
+    # no separate mute toggle.
+    master_volume_changed = Signal(float)
     # Export button (v0.5.0) — opens the export dialog. Disabled
     # until the app calls ``set_export_enabled(True)`` (which the
     # app does after a sequence loads).
@@ -683,6 +692,29 @@ class TransportBar(QWidget):  # type: ignore[misc]
         # at the very top of the window and frees the transport bar
         # for playback-only tools.
 
+        # Master audio: a compact speaker icon. Click toggles a
+        # vertical-slider popup that floats above the button and
+        # auto-closes on outside click (``Qt.WindowType.Popup``).
+        # Volume == 0 swaps the icon to the muted glyph; there's no
+        # separate mute button (slider zero IS the mute).
+        layout.addWidget(_separator())
+        self._volume_value = 100  # 0-100, mirrors the popup slider
+        self._volume_popup: _VolumePopup | None = None
+        # Monotonic timestamp of the last popup hide. ``Qt.Popup``
+        # dismisses on any outside click — but the same click also
+        # reaches the volume button right after and would re-open
+        # the popup. We swallow the re-open inside a short guard
+        # window so the button reads as a clean toggle. See
+        # ``_show_volume_popup``.
+        self._volume_popup_closed_at: float = 0.0
+        self._volume_btn = QPushButton()
+        self._volume_btn.setFixedSize(G.BTN_TRANSPORT_W, G.BTN_TRANSPORT_H)
+        self._volume_btn.setText("🔊")
+        self._volume_btn.setToolTip("Volume")
+        self._volume_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._volume_btn.clicked.connect(self._show_volume_popup)
+        layout.addWidget(self._volume_btn)
+
         # Fullscreen toggle, sitting last on the right — that's the
         # corner reviewers reach for instinctively (YouTube / VLC
         # convention). Click cycles in / out of fullscreen, the
@@ -779,6 +811,91 @@ class TransportBar(QWidget):  # type: ignore[misc]
     @property
     def zoom_combo(self) -> QComboBox:
         return self._zoom_combo
+
+    # ----- Master audio (popup volume slider) ----------------------
+
+    def _refresh_volume_icon(self) -> None:
+        """Icon swap based purely on the current slider value: zero
+        reads as muted (🔇), any positive value reads as audible
+        (🔊). No second source of truth — mute is implicit in the
+        slider position."""
+        muted = self._volume_value == 0
+        self._volume_btn.setText("🔇" if muted else "🔊")
+        self._volume_btn.setToolTip(
+            "Volume — muted (slider at 0)" if muted else "Volume",
+        )
+
+    def _show_volume_popup(self) -> None:
+        """Toggle the vertical-slider popup above the volume button.
+
+        Lazily creates the popup on first click + reuses the same
+        instance across opens so the slider's connections survive.
+        Positioned bottom-anchored to the button (the transport bar
+        sits at the window's bottom, so up is the only space).
+
+        Toggle logic: ``Qt.Popup`` dismisses on any outside click
+        — including the click on the volume button itself. That
+        same click then reaches the button's ``clicked`` signal
+        and would re-open the popup. We swallow the re-open inside
+        a ~250 ms guard window after the popup hides, so the
+        second-click-while-open path actually leaves the popup
+        closed (= proper toggle).
+        """
+        import time
+
+        # Guard window: if the popup was just dismissed by this
+        # same click, treat it as the "close" half of a toggle and
+        # stay closed.
+        if (time.monotonic() - self._volume_popup_closed_at) < 0.25:
+            return
+
+        if self._volume_popup is None:
+            self._volume_popup = _VolumePopup(self._volume_value, self)
+            self._volume_popup.value_changed.connect(self._on_volume_changed)
+            self._volume_popup.closed.connect(self._on_volume_popup_closed)
+        else:
+            # Keep the popup state in sync with any prefs / programmatic
+            # change that happened while it was closed.
+            self._volume_popup.set_value(self._volume_value)
+
+        btn_top_left = self._volume_btn.mapToGlobal(self._volume_btn.rect().topLeft())
+        popup_size = self._volume_popup.sizeHint()
+        x = btn_top_left.x() + (self._volume_btn.width() - popup_size.width()) // 2
+        y = btn_top_left.y() - popup_size.height() - 4
+        self._volume_popup.move(x, y)
+        self._volume_popup.show()
+
+    def _on_volume_popup_closed(self) -> None:
+        """Stamp the time the popup auto-dismissed. Read by
+        ``_show_volume_popup`` to suppress the re-open that would
+        otherwise follow when the dismissing click also lands on
+        the volume button."""
+        import time
+        self._volume_popup_closed_at = time.monotonic()
+
+    def _on_volume_changed(self, value: int) -> None:
+        # Popup slider → cached value + icon refresh + gain emit.
+        # The downstream audio callback skips the multiply at unity,
+        # so we don't waste cycles on the default state.
+        self._volume_value = max(0, min(100, int(value)))
+        self._refresh_volume_icon()
+        self.master_volume_changed.emit(self._volume_value / 100.0)
+
+    def set_master_volume(self, gain: float) -> None:
+        """Sync the slider state from outside (prefs restore). Doesn't
+        emit ``master_volume_changed`` — the app already set the
+        audio output's gain when reading prefs, re-emitting would
+        just round-trip the value."""
+        try:
+            v = int(round(max(0.0, min(1.0, float(gain))) * 100))
+        except (TypeError, ValueError):
+            return
+        if v == self._volume_value:
+            return
+        self._volume_value = v
+        if self._volume_popup is not None:
+            self._volume_popup.set_value(v)
+        self._refresh_volume_icon()
 
     def set_transparency_bg_mode(self, mode: int) -> None:
         """Sync the BG picker's checked entry from outside — used when
@@ -1458,6 +1575,131 @@ def _swatch_icon(
     finally:
         painter.end()
     return QIcon(pm)
+
+
+class _VolumePopup(QWidget):
+    """Vertical-slider popup that floats above the transport's volume
+    button. Implemented as a top-level widget with the
+    :attr:`Qt.WindowType.Popup` flag so a click outside its bounds
+    closes it automatically — the standard "transient overlay"
+    pattern Qt uses for combobox dropdowns.
+
+    Carries the same 0-100 integer range as the previous inline
+    slider; the parent ``TransportBar`` converts to linear gain.
+    """
+
+    value_changed = Signal(int)
+    # Emitted whenever the popup transitions to hidden, regardless
+    # of cause (outside click via ``Qt.Popup``, explicit ``hide()``,
+    # parent destruction, etc.). The parent ``TransportBar`` uses
+    # this timestamp to suppress the toggle bounce — see
+    # ``_show_volume_popup``.
+    closed = Signal()
+
+    def __init__(self, value: int, parent: QWidget | None = None) -> None:
+        super().__init__(parent, Qt.WindowType.Popup)
+        # Pop the chrome on top of the menu-bar without bleeding the
+        # parent's QSS into the popup. Auto-fill so the dark theme
+        # stays opaque (otherwise the desktop bleeds through).
+        self.setAutoFillBackground(True)
+        self.setStyleSheet(
+            f"_VolumePopup {{ "
+            f"  background: {H.BG_RAISED}; "
+            f"  border: 1px solid {H.BORDER_DEFAULT}; "
+            f"  border-radius: 4px; "
+            f"}}"
+        )
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        self._readout = QLabel(str(int(value)))
+        self._readout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._readout.setStyleSheet(
+            f"color: {H.TEXT_SECONDARY}; font-size: 10px;",
+        )
+
+        self._slider = QSlider(Qt.Orientation.Vertical)
+        self._slider.setRange(0, 100)
+        self._slider.setValue(int(value))
+        self._slider.setFixedHeight(140)
+        self._slider.setMinimumWidth(24)
+        self._slider.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        # Accent-orange chrome so the slider reads as belonging to
+        # the Flick palette rather than the OS default. We paint:
+        #   - groove (track): muted grey + the "filled" portion in
+        #     accent dim (= the orange the user has dialled in so far);
+        #   - sub-page below the handle in the lit accent so the
+        #     filled portion of the track is unmistakable;
+        #   - add-page above in a darker neutral so the unfilled
+        #     portion still reads as a track and not background;
+        #   - handle in bright accent on hover for click affordance.
+        self._slider.setStyleSheet(
+            f"""
+            QSlider::groove:vertical {{
+                background: {H.BORDER_DEFAULT};
+                width: 4px;
+                border-radius: 2px;
+            }}
+            QSlider::sub-page:vertical {{
+                background: {H.BORDER_DEFAULT};
+                width: 4px;
+                border-radius: 2px;
+            }}
+            QSlider::add-page:vertical {{
+                background: {H.ACCENT};
+                width: 4px;
+                border-radius: 2px;
+            }}
+            QSlider::handle:vertical {{
+                background: {H.ACCENT};
+                border: 1px solid {H.ACCENT_BRIGHT};
+                height: 12px;
+                width: 14px;
+                margin: 0 -5px;
+                border-radius: 3px;
+            }}
+            QSlider::handle:vertical:hover {{
+                background: {H.ACCENT_BRIGHT};
+            }}
+            """
+        )
+        self._slider.valueChanged.connect(self._on_slider)
+
+        layout.addWidget(self._readout)
+        layout.addWidget(self._slider, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+    def _on_slider(self, value: int) -> None:
+        v = int(value)
+        self._readout.setText(str(v))
+        self.value_changed.emit(v)
+
+    def value(self) -> int:
+        return int(self._slider.value())
+
+    def set_value(self, value: int) -> None:
+        """Sync the slider from outside (boot-time prefs restore or
+        external setter). Blocks signals so a programmatic set
+        doesn't loop back through ``value_changed``."""
+        v = int(value)
+        if v == self._slider.value():
+            self._readout.setText(str(v))
+            return
+        blocked = self._slider.blockSignals(True)
+        try:
+            self._slider.setValue(v)
+        finally:
+            self._slider.blockSignals(blocked)
+        self._readout.setText(str(v))
+
+    def hideEvent(self, event: QEvent) -> None:  # noqa: D401, N802
+        """Notify the parent when the popup goes hidden so it can
+        timestamp the close. Without this signal there's no
+        reliable hook for "Qt.Popup just dismissed me" — we'd have
+        to poll ``isVisible()`` from the button click handler."""
+        super().hideEvent(event)
+        self.closed.emit()
 
 
 class _SwatchPaint(QWidget):

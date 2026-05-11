@@ -134,10 +134,21 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
     # (0 = checker, 1 = black, 2 = mid-grey, 3 = white). Forwarded
     # from :class:`TransportBar`.
     transparency_bg_mode_changed = Signal(int)
+    # Master volume slider (popup) in the transport bar. Forwarded
+    # from :class:`TransportBar` so the app can push the gain to
+    # ``AudioOutput`` + persist via Preferences. Mute is implicit:
+    # slider at zero silences the output through the same gain
+    # multiply — no separate mute toggle.
+    master_volume_changed = Signal(float)  # 0.0-1.0 linear gain
     zoom_requested = Signal(object)       # float | None ; None = fit
     step_clicked = Signal(int)  # +1 / -1
     jump_to_ends = Signal(int)  # -1 first, +1 last
     frame_requested = Signal(int)
+    # Scrub gesture lifecycle — forwarded from the Timeline so the
+    # app can toggle video decoders into fast-seek mode for the
+    # duration of the drag.
+    scrub_started = Signal()
+    scrub_finished = Signal()
     exposure_step = Signal(float)  # +/- keyboard adjustment
     fps_changed = Signal(float)
     direction_play_requested = Signal(int)  # +1 forward, -1 reverse (J/L)
@@ -1288,12 +1299,17 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         self._transport.transparency_bg_mode_changed.connect(
             self.transparency_bg_mode_changed.emit,
         )
+        self._transport.master_volume_changed.connect(
+            self.master_volume_changed.emit,
+        )
         # Zoom: combo → viewport (forward), wheel → combo (back-channel
         # so the displayed value follows the wheel without us
         # re-emitting and ping-ponging).
         self._transport.zoom_requested.connect(self.zoom_requested.emit)
         self._viewer.gl.zoom_changed.connect(self._transport.set_zoom_display)
         self._timeline.frame_requested.connect(self.frame_requested.emit)
+        self._timeline.scrub_started.connect(self.scrub_started.emit)
+        self._timeline.scrub_finished.connect(self.scrub_finished.emit)
         # Ctrl-click drag → forward the in/out frame request.
         self._timeline.set_in_at_requested.connect(self.set_in_at_requested.emit)
         self._timeline.set_out_at_requested.connect(self.set_out_at_requested.emit)
@@ -1302,6 +1318,8 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         # timeline scrubber. From the controller's point of view the
         # two sources are indistinguishable.
         self._viewer.gl.frame_requested.connect(self.frame_requested.emit)
+        self._viewer.gl.scrub_started.connect(self.scrub_started.emit)
+        self._viewer.gl.scrub_finished.connect(self.scrub_finished.emit)
         # Image dimensions readout in the menu corner — refreshed on
         # every transform change (which fires on size change AND on
         # zoom/pan; the dedicated update is idempotent so zoom-only

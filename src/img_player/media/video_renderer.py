@@ -35,9 +35,13 @@ log = logging.getLogger(__name__)
 _PREFETCH_WINDOW = 2
 
 # Maximum cached frames. The worker prunes once this is exceeded —
-# a small ring centred on the playhead so backward scrubs within
-# this window stay free of seek overhead.
-_CACHE_CAPACITY = 6
+# a ring centred on the playhead so backward scrubs within this
+# window stay free of seek overhead. 32 keeps roughly a second of
+# 30 fps content live, which covers most "drag back to compare"
+# motions during review without re-seeking. At HD that's ~200 MB
+# per video layer (32 × 6 MB); 4K caps to ~770 MB — still well
+# under the main image-sequence cache budget.
+_CACHE_CAPACITY = 32
 
 
 class _ThreadedDecoder:
@@ -80,6 +84,20 @@ class _ThreadedDecoder:
     @property
     def fps(self) -> float:
         return float(self._source.fps)
+
+    def set_fast_seek(self, enabled: bool) -> None:
+        """Toggle the keyframe-only scrub mode + drop the frame cache.
+
+        We clear ``self._cache`` on **every** transition because fast
+        results are temporally approximate (keyframe ≤ target rather
+        than exact) — leaving them under their target-idx key would
+        let a precise request after scrub release return a stale
+        keyframe instead of re-decoding. Cheap to flush: the worker's
+        prefetch fills it again within a few ticks.
+        """
+        with self._lock:
+            self._source.set_fast_seek(enabled)
+            self._cache.clear()
 
     def get(self, t_seconds: float) -> np.ndarray:
         """Return the frame at ``t_seconds`` (RGB uint8).
@@ -220,6 +238,9 @@ class VideoSourceManager:
 
     def __init__(self) -> None:
         self._decoders: dict[str, _ThreadedDecoder] = {}
+        # Latched scrub state — new decoders opened mid-scrub inherit
+        # the flag so they don't decode-forward on their first frame.
+        self._fast_seek: bool = False
 
     # Backwards-compat alias used by tests written against the old
     # ``_sources`` attribute name. New code should use ``_decoders``.
@@ -240,8 +261,30 @@ class VideoSourceManager:
         dec = self._decoders.get(layer_id)
         if dec is None:
             dec = _ThreadedDecoder(path)
+            # New decoders inherit the manager's scrub state so the
+            # first frame request after a layer add during an active
+            # drag doesn't pay the precise-decode cost.
+            if self._fast_seek:
+                dec.set_fast_seek(True)
             self._decoders[layer_id] = dec
         return dec
+
+    def set_fast_seek_all(self, enabled: bool) -> None:
+        """Fan the fast-seek (keyframe-only) scrub mode across every
+        open decoder. Called by the app when the timeline mouse drag
+        starts (``True``) and ends (``False``). Cheap fanout — the
+        per-decoder setter flips the bool *and* clears its frame
+        cache so an approximate scrub frame doesn't leak into the
+        precise post-release request.
+        """
+        self._fast_seek = bool(enabled)
+        for dec in self._decoders.values():
+            try:
+                dec.set_fast_seek(enabled)
+            except Exception:
+                log.exception(
+                    "[video] failed to push fast_seek=%s to decoder", enabled,
+                )
 
     def close(self, layer_id: str) -> None:
         """Close the decoder for ``layer_id`` if any. No-op if absent."""

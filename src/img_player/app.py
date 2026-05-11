@@ -729,6 +729,13 @@ class ImgPlayerApp:
         w.step_clicked.connect(self._controller.step)
         w.jump_to_ends.connect(self._on_jump_to_ends)
         w.frame_requested.connect(self._on_scrub_requested)
+        # Scrub gesture lifecycle — switch video decoders into a
+        # keyframe-only fast-seek mode during drag (cuts ~5-15 ms
+        # per seek down to ~1-3 ms on long-GOP H.264 / H.265), and
+        # back to precise seeks on release with a re-request at the
+        # final frame so the landing is exact.
+        w.scrub_started.connect(self._on_scrub_started)
+        w.scrub_finished.connect(self._on_scrub_finished)
         w.open_requested.connect(self._open_path)
         w.add_layer_requested.connect(self._on_add_layer_requested)
         w.save_session_requested.connect(self._on_save_session_requested)
@@ -793,6 +800,11 @@ class ImgPlayerApp:
         w.channel_selection_changed.connect(self._on_channel_selection_changed)
         w.channel_mask_changed.connect(self._on_channel_mask_changed)
         w.transparency_bg_mode_changed.connect(self._on_transparency_bg_mode_changed)
+        # Master audio (transport bar popup volume slider). Pushes
+        # the gain to ``AudioOutput`` AND persists it so the
+        # reviewer's level survives across launches. Mute is
+        # implicit: slider==0 → gain=0 → silence in the callback.
+        w.master_volume_changed.connect(self._on_master_volume_changed)
         # Hand the channel menu a way to ask the cache for per-group
         # cache-fill data. The menu polls this every 250 ms while it's
         # open so each row's progress pip reflects the alt-channel
@@ -1918,6 +1930,22 @@ class ImgPlayerApp:
         except Exception:
             log.exception("[prefs] failed to persist transparency_bg_mode")
 
+    def _on_master_volume_changed(self, gain: float) -> None:
+        """Transport slider → audio output + persist. Linear gain in
+        [0.0, 1.0]."""
+        try:
+            g = max(0.0, min(1.0, float(gain)))
+        except (TypeError, ValueError):
+            return
+        try:
+            self._audio_output.set_master_gain(g)
+        except Exception:
+            log.exception("[audio] failed to set master gain")
+        try:
+            self._prefs.master_volume = g
+        except Exception:
+            log.exception("[prefs] failed to persist master_volume")
+
     def _on_zoom_requested(self, factor: object) -> None:
         """Forward a zoom request from the combo to the GL viewport.
 
@@ -1934,6 +1962,40 @@ class ImgPlayerApp:
         from img_player.channel_handler import on_channel_selection_changed
         on_channel_selection_changed(self, selection)
 
+
+    def _on_scrub_started(self) -> None:
+        """User started dragging the timeline. Flip video decoders
+        into keyframe-only fast-seek mode so long-GOP H.264 / H.265
+        seeks return a clean keyframe in ~1-3 ms instead of paying
+        the full 5-15 ms decode-forward cost on every drag tick.
+
+        Image-sequence layers are untouched — their frame cache
+        keeps them snappy already. Only the video path benefits.
+        """
+        try:
+            self._video_sources.set_fast_seek_all(True)
+        except Exception:
+            log.exception("[scrub] could not enable fast seek on video decoders")
+
+    def _on_scrub_finished(self) -> None:
+        """User released the mouse. Restore precise seeks and force
+        a re-decode at the final landing frame so the post-scrub
+        frame is exact (the cache was cleared on the transition,
+        so the next ``decode_at`` call goes through the worker's
+        sync path).
+        """
+        try:
+            self._video_sources.set_fast_seek_all(False)
+        except Exception:
+            log.exception("[scrub] could not disable fast seek on video decoders")
+        # Re-paint with a precise decode at the current frame. The
+        # cache clear inside ``set_fast_seek_all`` guarantees this
+        # request can't return a stale approximate frame.
+        try:
+            current = int(self._controller.state.frame)
+            self._show_best_available(current)
+        except Exception:
+            log.exception("[scrub] post-release re-decode failed")
 
     def _on_scrub_requested(self, frame: int) -> None:
         """Timeline scrub: update the display immediately from the cache, but
@@ -3196,6 +3258,18 @@ def _apply_preferences_to_window(app: ImgPlayerApp) -> None:
     bg_mode = int(prefs.transparency_bg_mode)
     app._window.viewer.gl.set_color_params(transparency_bg_mode=bg_mode)
     app._window.transport.set_transparency_bg_mode(bg_mode)
+
+    # Master audio — push the persisted volume into the audio output
+    # AND the transport bar UI so the slider position matches the
+    # actual gain being applied on the first frame the user plays.
+    # Mute is implicit: a saved volume of 0 will naturally silence
+    # the output and show the muted glyph on the button.
+    try:
+        master_vol = float(prefs.master_volume)
+        app._audio_output.set_master_gain(master_vol)
+        app._window.transport.set_master_volume(master_vol)
+    except Exception:
+        log.exception("[prefs] failed to restore master audio state")
 
     # FPS — push through the controller so transport + timeline pick up
     # the value via state_changed (keeps the FPS combo / timeline TC in sync).

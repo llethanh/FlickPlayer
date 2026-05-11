@@ -41,6 +41,13 @@ class Timeline(QWidget):  # type: ignore[misc]
     """
 
     frame_requested = Signal(int)
+    # Scrub gesture lifecycle. Emitted at the start and end of a left-
+    # button drag on the timeline (i.e. when ``_scrubbing`` flips).
+    # Used by the app to toggle video decoders into a keyframe-only
+    # fast-seek mode during drag — long-GOP H.264 / H.265 seeks
+    # are expensive enough that a per-tick precise decode lags.
+    scrub_started = Signal()
+    scrub_finished = Signal()
     # Ctrl + click on the timeline: places (and lets the user drag)
     # an in or out point depending on which side of the playhead
     # the click landed. Same gesture as Nuke's timeline. Emits the
@@ -529,6 +536,7 @@ class Timeline(QWidget):  # type: ignore[misc]
             self.update()
             return
         self._scrubbing = True
+        self.scrub_started.emit()
         self._emit_for_x(x)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
@@ -548,8 +556,13 @@ class Timeline(QWidget):  # type: ignore[misc]
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         del event
+        was_scrubbing = self._scrubbing
         self._scrubbing = False
         self._drag_mode = None
+        if was_scrubbing:
+            # Tells the app to switch video decoders back to precise
+            # seeks and re-request the current frame at full accuracy.
+            self.scrub_finished.emit()
 
     def _emit_for_x(self, x: float) -> None:
         if self._last <= self._first:

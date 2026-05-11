@@ -181,6 +181,27 @@ class Preferences:
             return
         self._s.setValue("color/transparency_bg_mode", v)
 
+    # ---- Master audio (transport bar volume slider + mute) ----------
+    @property
+    def master_volume(self) -> float:
+        """Master linear gain (0.0 silent → 1.0 unity). Persisted so
+        the reviewer's preferred level survives across launches —
+        nothing more annoying than blasting full volume on every
+        cold start when you'd dialled it in on the previous run."""
+        try:
+            v = float(self._s.value("audio/master_volume", 1.0))
+        except (TypeError, ValueError):
+            return 1.0
+        return max(0.0, min(1.0, v))
+
+    @master_volume.setter
+    def master_volume(self, value: float) -> None:
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return
+        self._s.setValue("audio/master_volume", max(0.0, min(1.0, v)))
+
     # ---- Default profile for unmarked EXRs ---------------------------
     # Studios that bake their display transform into EXR (or write EXR
     # without a colorspace tag) need a project-wide override so the

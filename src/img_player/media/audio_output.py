@@ -82,6 +82,14 @@ class AudioOutput:
         self._is_playing = threading.Event()
         self._mute = False
         self._gain = 1.0
+        # Master controls (transport bar volume slider + mute button).
+        # Kept separate from ``_gain`` (which mirrors the active
+        # layer's ``audio_gain``) so the per-layer setting stays
+        # untouched when the user just turns down the overall volume.
+        # Both gains compound in the callback; either mute flag
+        # silences output.
+        self._master_gain = 1.0
+        self._master_mute = False
         # Ring buffer: ``queue.Queue`` of (N, channels) ndarrays.
         # Bounded so the feeder blocks rather than runs ahead by
         # arbitrary amounts after a long pause.
@@ -210,8 +218,29 @@ class AudioOutput:
         self._mute = abs(speed - 1.0) > 1e-3
 
     def set_gain(self, gain: float) -> None:
-        """Set the global linear gain (0.0 = silent, 1.0 = unity)."""
+        """Set the per-layer linear gain (0.0 = silent, 1.0 = unity).
+
+        Driven by the active layer's ``audio_gain`` field. Compounds
+        with the master gain in the callback.
+        """
         self._gain = max(0.0, float(gain))
+
+    def set_master_gain(self, gain: float) -> None:
+        """Set the master linear gain (0.0 = silent, 1.0 = unity).
+
+        Driven by the transport-bar volume slider. Clamped to [0, 1]
+        because the UI emits a 0-100 range; higher values would risk
+        clipping without anyone asking for boost.
+        """
+        self._master_gain = max(0.0, min(1.0, float(gain)))
+
+    def set_master_mute(self, muted: bool) -> None:
+        """Toggle the master mute (transport-bar mute button).
+
+        Output drops to silence in the callback as long as the flag
+        is set, regardless of per-layer gain or speed.
+        """
+        self._master_mute = bool(muted)
 
     # ------------------------------------------------------------------
     # Internals
@@ -278,8 +307,9 @@ class AudioOutput:
         """
         del time_info, status
         out = outdata.reshape(frames, self._channels)
-        # Mute or paused → silence.
-        if self._mute or not self._is_playing.is_set():
+        # Mute (per-layer speed≠1.0 OR master mute toggle) or paused
+        # → silence.
+        if self._mute or self._master_mute or not self._is_playing.is_set():
             out.fill(0.0)
             return
         written = 0
@@ -308,7 +338,9 @@ class AudioOutput:
         # Underrun: fill remainder with silence.
         if written < frames:
             out[written:].fill(0.0)
-        # Apply gain in-place. Skip the multiply when unity for the
-        # common case.
-        if self._gain != 1.0:
-            out *= self._gain
+        # Apply compound gain (master × per-layer) in-place. Skip the
+        # multiply when both are unity for the common case (no audio
+        # adjustments, default state).
+        total_gain = self._gain * self._master_gain
+        if total_gain != 1.0:
+            out *= total_gain

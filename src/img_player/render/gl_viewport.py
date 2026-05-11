@@ -311,6 +311,11 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
     MAX_ZOOM = 8.0
 
     frame_requested = Signal(int)
+    # Drag-scrub lifecycle inside the viewport (left-button horizontal
+    # drag). Same signal contract as the Timeline's so the app can
+    # route both through the same fast-seek toggle on video decoders.
+    scrub_started = Signal()
+    scrub_finished = Signal()
     # Emitted when the wheel changes the zoom — lets the transport's
     # zoom combo follow. Carries the new zoom factor (1.0 = 100%) or
     # ``None`` when fit-to-window mode is engaged.
@@ -653,6 +658,7 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
             self._drag_base_frame = self._current_frame
             self._drag_start_x = event.position().x()
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            self.scrub_started.emit()
             event.accept()
             return
         if event.button() == Qt.MouseButton.MiddleButton:
@@ -706,6 +712,7 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
         if event.button() == Qt.MouseButton.LeftButton and self._drag_base_frame is not None:
             self._drag_base_frame = None
             self.setCursor(Qt.CursorShape.SizeHorCursor)
+            self.scrub_finished.emit()
             event.accept()
             return
         if event.button() == Qt.MouseButton.MiddleButton and self._pan_drag_start is not None:
@@ -725,8 +732,14 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
         feature in v1.2.
         """
         if event.button() == Qt.MouseButton.LeftButton:
+            was_dragging = self._drag_base_frame is not None
             self._drag_base_frame = None
             self.setCursor(Qt.CursorShape.SizeHorCursor)
+            if was_dragging:
+                # End the scrub gesture cleanly so video decoders flip
+                # back to precise seeks — otherwise a double-click in
+                # mid-drag would leave them stuck in fast-seek mode.
+                self.scrub_finished.emit()
             event.accept()
             return
         super().mouseDoubleClickEvent(event)

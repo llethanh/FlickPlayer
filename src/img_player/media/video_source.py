@@ -74,6 +74,14 @@ class VideoSource:
         # MasterFrameCache already provides at the layer level.
         self._last_pts: float | None = None
         self._last_frame: np.ndarray | None = None
+        # Fast-seek mode is toggled on by the app while the user is
+        # actively scrubbing the timeline. In that window we land on
+        # the nearest keyframe ≤ ``t`` and **return it directly**
+        # without decode-forwarding to bracket the exact target —
+        # 1-3 ms per seek instead of 5-15 ms. On scrub release the
+        # app turns this off and re-issues a precise request so the
+        # final landing frame is exact.
+        self._fast_seek: bool = False
         # Persistent decoder generator — PyAV's ``container.decode()``
         # returns a generator that pulls packets from the demuxer; once
         # exhausted (EOF or interrupted via ``break``/``return``), we
@@ -155,12 +163,44 @@ class VideoSource:
             if self._last_pts <= t < self._last_pts + interval:
                 return self._last_frame
 
-        # If the request is before our current decode position, we
-        # need a backwards seek (FFmpeg lands at or before the
-        # requested PTS on a keyframe boundary).
-        # Tolerance: a fraction of a frame interval, so float jitter
-        # in PTS arithmetic doesn't trigger spurious seeks.
         interval = 1.0 / float(self.fps)
+
+        # Fast-seek (scrub) path — runs **before** the
+        # forward/backward asymmetry check. Otherwise a forward drag
+        # falls into the natural decode-forward loop and pays the
+        # full 5-15 ms per frame, while backward goes through the
+        # cheap seek+keyframe path: scrub forward feels twice as
+        # laggy as scrub backward. Seeking unconditionally in fast
+        # mode keeps the cost uniform (~1-3 ms) in both directions.
+        # Visual fidelity: keyframe-resolution scrub — within a GOP
+        # the displayed frame stays the same I-frame until the user
+        # crosses the next keyframe. Trade-off accepted; release
+        # fires a precise re-decode at the final frame.
+        if self._fast_seek:
+            self._seek_to(t)
+            try:
+                frame = next(self._decoder)
+            except StopIteration:
+                if self._last_frame is not None:
+                    return self._last_frame
+                raise RuntimeError(
+                    f"No decodable frame found at t={t} in {self._path}"
+                ) from None
+            pts = (
+                float(frame.pts * frame.time_base)
+                if frame.pts is not None
+                else 0.0
+            )
+            target_frame = frame.to_ndarray(format="rgb24")
+            self._last_pts = pts
+            self._last_frame = target_frame
+            return target_frame
+
+        # Precise path: only seek when the request lands before the
+        # current decode position. Forward steps stay on the cheap
+        # decode-forward generator. Tolerance ½ a frame interval so
+        # float jitter in PTS arithmetic doesn't trigger spurious
+        # seeks.
         needs_seek = (
             self._last_pts is None
             or t < self._last_pts - 0.5 * interval
@@ -223,6 +263,13 @@ class VideoSource:
                 retried = True
                 continue
             # pts < t — keep decoding forward until we bracket the target.
+
+    def set_fast_seek(self, enabled: bool) -> None:
+        """Toggle the keyframe-only scrub shortcut. See ``_fast_seek``
+        in ``__init__`` for the tradeoff. Cheap setter — no decode
+        side-effects; just flips the flag the next ``frame_at_time``
+        reads."""
+        self._fast_seek = bool(enabled)
 
     def _seek_to(self, t_seconds: float) -> None:
         """Seek the demuxer to the keyframe at or before ``t``.
