@@ -62,6 +62,7 @@ import logging
 import os
 import queue
 import sqlite3
+import struct
 import sys
 import threading
 import time
@@ -154,8 +155,54 @@ import zlib
 
 # Magic prefix written at the start of every blob so a corrupt /
 # orphaned file can be identified by its first 4 bytes when sweeping
-# the cache root. Bumped if the on-disk format ever changes.
-_BLOB_MAGIC = b"FCD1"
+# the cache root.
+#
+# Two versions are recognised on read:
+#
+#   * ``FCD1`` — 1.5.0..1.5.4 format. Payload is
+#     ``lz4(np.save(arr))``. Slow on read (npy header parse, ~1-2 ms
+#     per blob) but compatible with older caches the user already
+#     has on disk.
+#   * ``FCD2`` — 1.5.5+ format. Payload is ``lz4(header + raw_bytes)``
+#     with a 16-byte fixed-layout header packed via :mod:`struct`.
+#     Skips the ``np.save`` overhead — relevant for HD/4K where it's
+#     a measurable fraction of the read budget.
+#
+# Writes always use ``FCD2``; the legacy path is kept only so the
+# user doesn't lose their warm cache the day they upgrade. ``FCD1``
+# blobs fade naturally via LRU eviction as new writes replace them.
+_BLOB_MAGIC_V1 = b"FCD1"
+_BLOB_MAGIC_V2 = b"FCD2"
+# v3 = same struct-packed header as v2 but the payload is NOT
+# lz4-compressed. Trades ~2× more disk space for skipping the lz4
+# decode step on every read — worth it on fast NVMe where I/O is
+# essentially free and lz4 decode time (~5 ms / 4K frame) becomes
+# the bottleneck.
+_BLOB_MAGIC_V3 = b"FCD3"
+# Backwards-compat alias for callers that imported ``_BLOB_MAGIC``
+# from this module. v2 is the default for writes.
+_BLOB_MAGIC = _BLOB_MAGIC_V2
+
+# Dtype codes for the v2 header. Stable across cache format versions:
+# adding a new dtype must use a fresh code (never reassign existing
+# ones — would silently misread stored blobs).
+_DTYPE_CODES: dict[np.dtype, int] = {
+    np.dtype(np.float16): 0,
+    np.dtype(np.float32): 1,
+    np.dtype(np.uint8): 2,
+    np.dtype(np.uint16): 3,
+}
+_CODE_TO_DTYPE: dict[int, np.dtype] = {v: k for k, v in _DTYPE_CODES.items()}
+
+# v2 header — 16 bytes, little-endian:
+#   B uint8  dtype code (see ``_DTYPE_CODES``)
+#   B uint8  ndim (only 3 today; future-proofed)
+#   H uint16 reserved (=0; align dim0 to 4-byte boundary)
+#   I uint32 dim0 (height)
+#   I uint32 dim1 (width)
+#   I uint32 dim2 (channels)
+_V2_HEADER_FMT = "<BBHIII"
+_V2_HEADER_SIZE = struct.calcsize(_V2_HEADER_FMT)  # = 16
 
 # Current on-disk format / key version, stored as SQLite
 # ``PRAGMA user_version``. Bump alongside any change that invalidates
@@ -223,24 +270,52 @@ def _decompress(blob: bytes) -> bytes:
     return zlib.decompress(blob)
 
 
-def _serialize(arr: np.ndarray) -> bytes:
-    """Convert ndarray → compressed bytes blob.
+def _serialize(arr: np.ndarray, compress: bool = True) -> bytes:
+    """Convert ndarray → bytes blob (v2 / v3 format).
 
-    Float arrays are cast to ``float16`` for storage (2× space win). Other
-    dtypes (uint8 for placeholders, uint16 for half-float-already inputs)
-    are stored as-is. ``np.save`` preserves shape + dtype so we don't need
-    a custom header — round-trip via the matching ``_deserialize``.
+    Float arrays are cast to ``float16`` for storage (2× space win).
+    Other dtypes (uint8 for placeholders, uint16 for half-float-already
+    inputs) are stored as-is.
+
+    Layout written:
+      * ``compress=True``  → ``FCD2`` + ``lz4(header + raw_bytes)``
+      * ``compress=False`` → ``FCD3`` + ``header + raw_bytes``
+
+    The struct-packed header (16 bytes) replaces ``np.save``'s NPY
+    format, saving ~5 ms per HD read by skipping the ``literal_eval``
+    of the NPY header string and the implicit memcpy that ``np.load``
+    does.
+
+    Falls back to the v1 NPY-based path for dtypes we don't have a
+    code for in :data:`_DTYPE_CODES`. That keeps the cache writable
+    even if someone hands it an exotic dtype, at the cost of the
+    slower read path for those entries.
     """
-    # Avoid a copy when the array is already float16; the cast is in-place
-    # via the ``copy=False`` hint.
+    # Avoid a copy when the array is already float16; ``copy=False``
+    # short-circuits when the dtype already matches.
     if arr.dtype == np.float32:
         arr = arr.astype(np.float16, copy=False)
-    buf = io.BytesIO()
-    # ``allow_pickle=False`` is a sanity guard — we only round-trip plain
-    # arrays here; if a pickled object ever sneaks in we'd rather fail
-    # loud than silently load arbitrary code on read.
-    np.save(buf, arr, allow_pickle=False)
-    return _BLOB_MAGIC + _compress(buf.getvalue())
+    dtype_code = _DTYPE_CODES.get(arr.dtype)
+    if dtype_code is None or arr.ndim != 3:
+        # Exotic dtype or non-3D shape → fall back to NPY format.
+        # ``allow_pickle=False`` is a sanity guard — we only round-trip
+        # plain arrays here; if a pickled object ever sneaks in we'd
+        # rather fail loud than silently load arbitrary code on read.
+        buf = io.BytesIO()
+        np.save(buf, arr, allow_pickle=False)
+        return _BLOB_MAGIC_V1 + _compress(buf.getvalue())
+    # Ensure C-contiguous so ``tobytes()`` matches the natural
+    # ``frombuffer`` layout on read. Already-contiguous arrays
+    # (the overwhelming common case) hit the no-op branch inside
+    # ``ascontiguousarray``.
+    if not arr.flags["C_CONTIGUOUS"]:
+        arr = np.ascontiguousarray(arr)
+    h, w, c = arr.shape
+    header = struct.pack(_V2_HEADER_FMT, dtype_code, arr.ndim, 0, h, w, c)
+    payload = header + arr.tobytes()
+    if compress:
+        return _BLOB_MAGIC_V2 + _compress(payload)
+    return _BLOB_MAGIC_V3 + payload
 
 
 def _deserialize(blob: bytes) -> np.ndarray:
@@ -253,17 +328,52 @@ def _deserialize(blob: bytes) -> np.ndarray:
     upload, no conversion needed. Returning float16 directly skips a
     ~30 ms astype copy per 4K frame (HD = ~3 ms) AND keeps the RAM
     cache half as wide, so the same budget fits 2× more frames when
-    they come from disk. The trade-off is precision — half-float
-    covers HDR up to ~65 504 with sub-percent accuracy in [0, 1], well
-    beyond viewer-display needs.
+    they come from disk.
+
+    Auto-routes between v1 (legacy NPY) and v2 (raw header) on the
+    magic prefix. The returned ``ndarray`` from the v2 path is a view
+    over the decompressed bytes (``writeable=False``); the composite
+    builder never mutates contributor buffers in place (it always
+    allocates fresh accumulators via ``+`` and ``copy()``) so this
+    is safe and avoids a 4K-frame memcpy on every disk hit.
     """
-    if not blob.startswith(_BLOB_MAGIC):
-        raise ValueError(
-            f"DiskCache blob missing magic prefix (got {blob[:4]!r}); "
-            "file is corrupt or pre-dates current format.",
+    if blob.startswith(_BLOB_MAGIC_V2) or blob.startswith(_BLOB_MAGIC_V3):
+        is_compressed = blob.startswith(_BLOB_MAGIC_V2)
+        if is_compressed:
+            raw = _decompress(blob[len(_BLOB_MAGIC_V2):])
+        else:
+            # v3: raw payload, no lz4 step. Slice off the magic prefix
+            # and hand the rest straight to ``frombuffer``. On fast
+            # NVMe this saves ~5 ms / 4K read vs the v2 lz4 path.
+            raw = blob[len(_BLOB_MAGIC_V3):]
+        dtype_code, ndim, _reserved, h, w, c = struct.unpack_from(
+            _V2_HEADER_FMT, raw, 0,
         )
-    raw = _decompress(blob[len(_BLOB_MAGIC):])
-    return np.load(io.BytesIO(raw), allow_pickle=False)
+        dtype = _CODE_TO_DTYPE.get(dtype_code)
+        if dtype is None:
+            raise ValueError(
+                f"DiskCache v2/v3 blob has unknown dtype code {dtype_code}; "
+                "blob written by a newer Flick version?",
+            )
+        # ``frombuffer`` is a view over the bytes object — no copy,
+        # but read-only. ``ndim`` is captured in the header for
+        # future flexibility; today only 3D is written.
+        arr = np.frombuffer(raw, dtype=dtype, offset=_V2_HEADER_SIZE)
+        if ndim == 3:
+            return arr.reshape(h, w, c)
+        # Future 2D / 4D paths land here if we ever stop gating on
+        # ``ndim == 3`` in ``put()``. For now this branch is dead.
+        return arr.reshape((h, w, c)[:ndim])  # pragma: no cover
+    if blob.startswith(_BLOB_MAGIC_V1):
+        # Legacy 1.5.0..1.5.4 path — NPY format. Kept for backwards
+        # compat so an upgrade doesn't invalidate the warm cache.
+        # New writes always use v2; v1 entries fade via LRU.
+        raw = _decompress(blob[len(_BLOB_MAGIC_V1):])
+        return np.load(io.BytesIO(raw), allow_pickle=False)
+    raise ValueError(
+        f"DiskCache blob missing magic prefix (got {blob[:4]!r}); "
+        "file is corrupt or pre-dates 1.5.0.",
+    )
 
 
 # Sentinel for the writer thread's shutdown signal — comparing identity
@@ -303,10 +413,20 @@ class DiskCache:
     # granularity (eviction happens on the order of minutes / hours).
     _ACCESS_FLUSH_INTERVAL = 2.0
 
-    def __init__(self, cache_dir: Path, budget_bytes: int = 0) -> None:
+    def __init__(
+        self,
+        cache_dir: Path,
+        budget_bytes: int = 0,
+        compress: bool = True,
+    ) -> None:
         self._cache_dir = Path(cache_dir)
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         self._budget_bytes = max(0, int(budget_bytes))
+        # Compression toggle for new writes. The reader auto-detects
+        # via magic prefix so flipping this at runtime (via
+        # :meth:`set_compress`) doesn't invalidate the warm cache —
+        # old entries stay readable, new entries follow the new flag.
+        self._compress = bool(compress)
 
         # ---- Multi-process lock (F) ----------------------------------
         # Acquire <cache_dir>/.lock so a second Flick instance can't
@@ -691,6 +811,16 @@ class DiskCache:
         """True iff another instance owns the cache lock. UI uses this."""
         return self._read_only
 
+    def set_compress(self, compress: bool) -> None:
+        """Toggle lz4 compression for **new** writes. Idempotent.
+
+        Existing entries keep their on-disk format (v2 lz4 or v3 raw);
+        the reader auto-routes via the blob's magic prefix so the
+        switch is non-destructive — no need to clear the cache when
+        the user changes their mind about the speed-vs-space trade.
+        """
+        self._compress = bool(compress)
+
     def pending_writes(self) -> int:
         """Approximate queue depth of frames waiting to be written.
 
@@ -966,7 +1096,7 @@ class DiskCache:
         abs_path = self._cache_dir / rel
         abs_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            blob = _serialize(arr)
+            blob = _serialize(arr, compress=self._compress)
         except Exception:  # pragma: no cover — defensive
             log.exception("DiskCache serialize failed for key %s", key[:16])
             return

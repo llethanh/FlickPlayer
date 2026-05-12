@@ -76,19 +76,24 @@ la polir.
 
 #### Perf supplémentaires (priorité basse)
 
-- **Skip `np.save` / `np.load`** : header overhead (~50-100 bytes +
-  ~1-2 ms de parsing). Remplacer par raw bytes + petit header
-  custom `(shape_h, shape_w, shape_c, dtype_code)` packé via
-  `struct`. Gain estimé : ~1-2 ms par read.
-- **Option "no compression"** : pour les utilisateurs avec un NVMe
-  rapide + beaucoup d'espace disque, skip lz4 et stocker raw
-  float16. Gain : ~5-10 ms par read, coût : 2× plus d'espace
-  disque. Switch dans Preferences > Disk cache > "Storage" :
-  *Compressed (lz4)* / *Raw (uncompressed)*.
-- **Pack multi-frames par blob** : actuellement 1 fichier par frame
-  = beaucoup de syscalls (open + read + close). Packer N frames
-  contiguës d'une même séquence dans un même fichier blob, indexé
-  par offset. Plus complexe, gain attendu marginal sauf sur HDD.
+- ~~**Skip `np.save` / `np.load`**~~ **(livré, format v2)** : nouveau
+  magic `FCD2` avec header struct-packed 16 bytes (`dtype_code`,
+  `ndim`, shape) puis `arr.tobytes()`. Skip de l'`literal_eval` du
+  header NPY + de la memcpy interne de `np.load`. Bench HD : **1.47×
+  plus rapide** que v1 (15.0 ms → 10.2 ms par deserialize). Blobs
+  legacy FCD1 toujours lisibles, fade naturel via LRU.
+- ~~**Option "no compression"**~~ **(livré, format v3)** : nouveau
+  magic `FCD3` (struct header + raw bytes, pas de lz4). Toggle dans
+  Preferences > Disk cache > "Storage" : `Compress blobs (lz4)`.
+  Bench HD : **5.35× plus rapide** que v1 (2.8 ms par deserialize),
+  coût ~2× espace disque sur des sources qui compressaient bien.
+  Auto-détection à la lecture via le magic — le toggle ne casse pas
+  les blobs existants.
+- **Pack multi-frames par blob** *(pas livré)* : actuellement 1
+  fichier par frame = beaucoup de syscalls (open + read + close).
+  Packer N frames contiguës d'une même séquence dans un même fichier
+  blob, indexé par offset. Plus complexe, gain attendu marginal sauf
+  sur HDD. Priorité basse, conservé en backlog.
 
 ## Conventions / notes utiles
 

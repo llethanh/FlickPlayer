@@ -252,7 +252,11 @@ class ImgPlayerApp:
             try:
                 cache_dir = self._prefs.disk_cache_path or default_cache_dir()
                 budget_bytes = self._prefs.disk_cache_budget_gb * (1024 ** 3)
-                disk_cache = DiskCache(cache_dir, budget_bytes=budget_bytes)
+                disk_cache = DiskCache(
+                    cache_dir,
+                    budget_bytes=budget_bytes,
+                    compress=self._prefs.disk_cache_compression,
+                )
             except Exception:  # pragma: no cover — defensive
                 log.exception(
                     "DiskCache init failed; falling back to RAM-only cache",

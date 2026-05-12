@@ -368,6 +368,7 @@ class _DiskCachePage(QWidget):
         self._initial_enabled = prefs.disk_cache_enabled
         self._initial_path = str(prefs.disk_cache_path or "")
         self._initial_budget_gb = prefs.disk_cache_budget_gb
+        self._initial_compression = prefs.disk_cache_compression
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
@@ -437,6 +438,26 @@ class _DiskCachePage(QWidget):
         layout.addWidget(budget_help)
         layout.addLayout(budget_row)
 
+        # ---- Storage / compression -------------------------------------
+        layout.addWidget(self._make_subtitle("Storage"))
+
+        self._compress_chk = QCheckBox("Compress blobs (lz4)")
+        self._compress_chk.setChecked(self._initial_compression)
+        self._compress_chk.setToolTip(
+            "lz4 compression trades ~5 ms of decode time per read for "
+            "~50 % smaller files. Disable on fast NVMe drives where I/O "
+            "is essentially free and lz4 becomes the bottleneck — costs "
+            "about 2× more disk space."
+        )
+        layout.addWidget(self._compress_chk)
+        compress_help = QLabel(
+            "Only affects new writes. Existing entries stay readable "
+            "after toggling — no need to clear the cache.",
+        )
+        compress_help.setWordWrap(True)
+        compress_help.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(compress_help)
+
         # ---- Clear ------------------------------------------------------
         layout.addWidget(self._make_subtitle("Maintenance"))
 
@@ -479,11 +500,12 @@ class _DiskCachePage(QWidget):
     # ---- Slots ---------------------------------------------------------
 
     def _on_enable_toggled(self, checked: bool) -> None:
-        # Grey out path + budget when the cache is off — they have no
-        # effect in that state and showing them as active would
-        # mislead.
+        # Grey out path + budget + compression when the cache is off —
+        # they have no effect in that state and showing them as active
+        # would mislead.
         self._path_edit.setEnabled(checked)
         self._budget_spin.setEnabled(checked)
+        self._compress_chk.setEnabled(checked)
 
     def _on_browse(self) -> None:
         current = self._path_edit.text().strip() or ""
@@ -582,6 +604,7 @@ class _DiskCachePage(QWidget):
         new_enabled = self._enable_chk.isChecked()
         new_path = self._path_edit.text().strip()
         new_budget = int(self._budget_spin.value())
+        new_compression = self._compress_chk.isChecked()
 
         changed = False
         if new_enabled != self._initial_enabled:
@@ -602,6 +625,18 @@ class _DiskCachePage(QWidget):
                     self._disk_cache.set_budget(new_budget * (1024 ** 3))
                 except Exception:  # pragma: no cover — defensive
                     log.exception("DiskCache set_budget failed")
+            changed = True
+        if new_compression != self._initial_compression:
+            self._prefs.disk_cache_compression = new_compression
+            self._initial_compression = new_compression
+            # Toggle the live cache too — affects new writes immediately.
+            # Existing entries remain readable thanks to the multi-magic
+            # auto-detection on read.
+            if self._disk_cache is not None:
+                try:
+                    self._disk_cache.set_compress(new_compression)
+                except Exception:  # pragma: no cover — defensive
+                    log.exception("DiskCache set_compress failed")
             changed = True
         return changed
 

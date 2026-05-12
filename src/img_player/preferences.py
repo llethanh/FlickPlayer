@@ -669,3 +669,24 @@ class Preferences:
     @disk_cache_budget_gb.setter
     def disk_cache_budget_gb(self, value: int) -> None:
         self._s.setValue("disk_cache/budget_gb", max(0, int(value)))
+
+    # ---- disk_cache_compression ---------------------------------------
+    @property
+    def disk_cache_compression(self) -> bool:
+        """Whether to lz4-compress disk-cache blobs.
+
+        ``True`` (default) trades ~5 ms of decode time per read for
+        ~50 % smaller files — good on spinning disks and budget SSDs.
+        ``False`` writes raw bytes — faster on NVMe where I/O is
+        essentially free but lz4 decode shows up in the profile,
+        costs ~2× disk space. The setting only affects **new writes**;
+        existing compressed blobs are still readable after the switch.
+        """
+        raw = self._s.value("disk_cache/compression", True)
+        if isinstance(raw, str):
+            return raw.lower() in ("true", "1", "yes")
+        return bool(raw)
+
+    @disk_cache_compression.setter
+    def disk_cache_compression(self, value: bool) -> None:
+        self._s.setValue("disk_cache/compression", bool(value))
