@@ -151,18 +151,26 @@ def _serialize(arr: np.ndarray) -> bytes:
 
 
 def _deserialize(blob: bytes) -> np.ndarray:
-    """Inverse of :func:`_serialize`. Restores float16 → float32 so callers
-    always see the consumer-friendly dtype."""
+    """Inverse of :func:`_serialize`. Returns the array in its **native
+    storage dtype** — float16 for frames written by :func:`_serialize`,
+    other dtypes preserved as-is.
+
+    The consumer pipeline (GL viewport, ``CompareDecoder``) handles
+    float16 natively — GL uses ``GL_HALF_FLOAT`` for the texture
+    upload, no conversion needed. Returning float16 directly skips a
+    ~30 ms astype copy per 4K frame (HD = ~3 ms) AND keeps the RAM
+    cache half as wide, so the same budget fits 2× more frames when
+    they come from disk. The trade-off is precision — half-float
+    covers HDR up to ~65 504 with sub-percent accuracy in [0, 1], well
+    beyond viewer-display needs.
+    """
     if not blob.startswith(_BLOB_MAGIC):
         raise ValueError(
             f"DiskCache blob missing magic prefix (got {blob[:4]!r}); "
             "file is corrupt or pre-dates current format.",
         )
     raw = _decompress(blob[len(_BLOB_MAGIC):])
-    arr = np.load(io.BytesIO(raw), allow_pickle=False)
-    if arr.dtype == np.float16:
-        arr = arr.astype(np.float32, copy=False)
-    return arr
+    return np.load(io.BytesIO(raw), allow_pickle=False)
 
 
 # Sentinel for the writer thread's shutdown signal — comparing identity
@@ -197,6 +205,10 @@ class DiskCache:
     # eviction on the next put. 85 % gives ~15 % headroom before the
     # next eviction wave.
     _EVICT_TARGET_RATIO = 0.85
+    # Batch interval for ``last_access`` UPDATE flushes — see
+    # ``__init__`` for the why. 2 s feels imperceptible at LRU
+    # granularity (eviction happens on the order of minutes / hours).
+    _ACCESS_FLUSH_INTERVAL = 2.0
 
     def __init__(self, cache_dir: Path, budget_bytes: int = 0) -> None:
         self._cache_dir = Path(cache_dir)
@@ -240,6 +252,20 @@ class DiskCache:
         # best-effort persistence layer, not a correctness-critical
         # path.
         self._write_queue: queue.Queue = queue.Queue(maxsize=128)
+        # ---- Batched last_access updates ----------------------------
+        # Each ``get()`` would otherwise fire one UPDATE per hit; under
+        # 4-worker decode contention that's a steady stream of SQLite
+        # write transactions through the single ``_db_lock``, each
+        # costing ~3-5 ms (lock + WAL append + fsync inside SQLite's
+        # NORMAL sync mode). Batching: in-memory dict accumulates the
+        # latest timestamp per key, the writer thread flushes the
+        # batch every :attr:`_ACCESS_FLUSH_INTERVAL` seconds.
+        # Cost trade-off: LRU eviction sees timestamps up to ~2 s
+        # stale, which is fine — eviction is rare and the precision
+        # isn't safety-critical.
+        self._pending_access: dict[str, float] = {}
+        self._pending_access_lock = threading.Lock()
+        self._last_access_flush = time.monotonic()
         self._shutdown = threading.Event()
         self._writer_thread = threading.Thread(
             target=self._writer_loop,
@@ -308,18 +334,12 @@ class DiskCache:
             )
             self._remove_internal(key)
             return None
-        # Touch the access time so this entry survives the next
-        # eviction wave. Failure is non-fatal — a stale ``last_access``
-        # at worst means the entry gets evicted slightly sooner than it
-        # should.
-        try:
-            with self._db_lock:
-                self._db.execute(
-                    "UPDATE entries SET last_access = ? WHERE key = ?",
-                    (time.time(), key),
-                )
-        except sqlite3.Error:
-            log.exception("DiskCache last_access update failed (non-fatal)")
+        # Stash the access timestamp for batched flush by the writer
+        # thread (see ``_ACCESS_FLUSH_INTERVAL``). The dict overwrite
+        # collapses multiple reads of the same key in the window into
+        # one UPDATE — bonus.
+        with self._pending_access_lock:
+            self._pending_access[key] = time.time()
         return arr
 
     def put(self, key: str, arr: np.ndarray) -> None:
@@ -455,11 +475,18 @@ class DiskCache:
         return Path(key[:2]) / key[2:4] / f"{key}.bin"
 
     def _writer_loop(self) -> None:
-        """Worker thread loop — drain the queue, serialize, write."""
+        """Worker thread loop — drain the queue, serialize, write.
+
+        Also responsible for periodically flushing the batched
+        ``last_access`` updates (see :attr:`_pending_access`). The
+        flush check happens between queue drains so a steady write
+        stream doesn't starve the access-update flush.
+        """
         while not self._shutdown.is_set():
             try:
                 task = self._write_queue.get(timeout=0.5)
             except queue.Empty:
+                self._maybe_flush_access()
                 continue
             if task is _SHUTDOWN_SENTINEL:
                 break
@@ -468,6 +495,36 @@ class DiskCache:
                 self._write_one(key, arr)
             except Exception:  # pragma: no cover — defensive
                 log.exception("DiskCache writer failed on task")
+            self._maybe_flush_access()
+        # Final flush on shutdown so a pending batch doesn't get lost
+        # when the user closes the app right after a scrub session.
+        self._maybe_flush_access(force=True)
+
+    def _maybe_flush_access(self, force: bool = False) -> None:
+        """Flush batched ``last_access`` updates if the interval has
+        elapsed, or unconditionally when ``force`` (= shutdown)."""
+        if not force:
+            now = time.monotonic()
+            if now - self._last_access_flush < self._ACCESS_FLUSH_INTERVAL:
+                return
+            self._last_access_flush = now
+        with self._pending_access_lock:
+            updates = list(self._pending_access.items())
+            self._pending_access.clear()
+        if not updates:
+            return
+        try:
+            with self._db_lock:
+                # ``executemany`` runs a single transaction with N
+                # parameterised UPDATEs — much cheaper than N
+                # individual transactions, and avoids per-statement
+                # WAL append overhead.
+                self._db.executemany(
+                    "UPDATE entries SET last_access = ? WHERE key = ?",
+                    [(t, k) for k, t in updates],
+                )
+        except sqlite3.Error:
+            log.exception("DiskCache batched access flush failed (non-fatal)")
 
     def _write_one(self, key: str, arr: np.ndarray) -> None:
         """Serialize + write a single (key, ndarray) → disk + update DB."""
