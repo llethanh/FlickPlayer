@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -188,6 +189,11 @@ class LayerRow(QFrame):  # type: ignore[misc]
     # toggles so the panel's update routing is uniform.
     audio_mute_toggled = Signal(str, bool)
     audio_solo_toggled = Signal(str, bool)
+    # Right-click on the row — panel builds the context menu (it knows
+    # multi-select state + can route actions through the cascade-aware
+    # handlers). Carries layer_id + the global screen position to pop
+    # the menu at.
+    context_menu_requested = Signal(str, QPoint)
 
     def __init__(self, layer: Layer, index: int, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -619,6 +625,16 @@ class LayerRow(QFrame):  # type: ignore[misc]
             return
         super().keyPressEvent(event)
 
+    def contextMenuEvent(self, event) -> None:  # type: ignore[no-untyped-def]
+        # Hand off to the panel — it owns multi-select state and the
+        # cascade-aware action handlers, so the menu logic stays in
+        # one place. We pass the global position so the panel can pop
+        # the menu wherever the user clicked.
+        self.context_menu_requested.emit(
+            self._layer_id, event.globalPos(),
+        )
+        event.accept()
+
     def _on_bar_reorder_drag(self, global_pos: QPoint) -> None:
         """Hand off from a vertical drag started inside the LayerBar.
         Compute a row-local press position so the drag pixmap stays
@@ -984,6 +1000,7 @@ class LayerPanel(QFrame):  # type: ignore[misc]
             row.trim_in_changed.connect(self._on_row_trim_in_changed)
             row.layer_out_changed.connect(self._on_row_layer_out_changed)
             row.still_hold_changed.connect(self._on_row_still_hold_changed)
+            row.context_menu_requested.connect(self._on_row_context_menu)
             self._rows_layout.addWidget(row)
             self._rows[layer.id] = row
         # Synchronise master-range + snap edges across every row
@@ -1341,6 +1358,173 @@ class LayerPanel(QFrame):  # type: ignore[misc]
                     if layer.id != layer_id and layer.audio_solo:
                         self._stack.update(layer.id, audio_solo=False)
             self._stack.update(layer_id, audio_solo=bool(on))
+
+    def _on_row_context_menu(self, layer_id: str, global_pos: QPoint) -> None:
+        """Build + pop the right-click menu on a layer row.
+
+        The menu mirrors the per-row toggles already visible to the
+        left of the bar (eye / T / αS / M / S) plus a Reveal-in-Explorer
+        shortcut and Delete. Actions route through the existing
+        cascade-aware handlers so a right-click on any member of a
+        multi-select group acts on the whole group, matching what the
+        in-row buttons do.
+
+        Right-clicking on a row that isn't part of the current
+        selection promotes it to single-selection first (standard
+        Premiere / Resolve / Explorer convention) so the user can't
+        accidentally trigger a cascade on a group they forgot was
+        active.
+        """
+        if layer_id not in self._rows:
+            return
+        if layer_id not in self._selected_ids:
+            self._stack.set_focus(layer_id)
+            self._set_selection_internal({layer_id})
+            self._selection_anchor = layer_id
+
+        layer = self._stack.find(layer_id)
+        if layer is None:
+            return
+
+        menu = QMenu(self)
+
+        act_show = menu.addAction(
+            "Hide" if layer.visible else "Show",
+        )
+        act_show.triggered.connect(
+            lambda: self._on_row_visibility_toggle(layer_id),
+        )
+
+        menu.addSeparator()
+
+        act_t = menu.addAction("Transparency (T)")
+        act_t.setCheckable(True)
+        act_t.setChecked(bool(layer.alpha_composite))
+        act_t.triggered.connect(
+            lambda checked: self._on_row_transparency_toggled(
+                layer_id, bool(checked),
+            ),
+        )
+
+        act_as = menu.addAction("Straight alpha (αS)")
+        act_as.setCheckable(True)
+        act_as.setChecked(bool(layer.alpha_is_straight))
+        act_as.triggered.connect(
+            lambda checked: self._on_row_alpha_straight_toggled(
+                layer_id, bool(checked),
+            ),
+        )
+
+        has_audio = bool(
+            layer.is_video
+            and layer.video_metadata is not None
+            and layer.video_metadata.has_audio
+        )
+        act_m = menu.addAction("Mute audio (M)")
+        act_m.setCheckable(True)
+        act_m.setChecked(bool(layer.audio_mute))
+        act_m.setEnabled(has_audio)
+        act_m.triggered.connect(
+            lambda checked: self._on_row_audio_mute_toggled(
+                layer_id, bool(checked),
+            ),
+        )
+
+        act_s = menu.addAction("Solo audio (S)")
+        act_s.setCheckable(True)
+        act_s.setChecked(bool(layer.audio_solo))
+        act_s.setEnabled(has_audio)
+        act_s.triggered.connect(
+            lambda checked: self._on_row_audio_solo_toggled(
+                layer_id, bool(checked),
+            ),
+        )
+
+        menu.addSeparator()
+
+        # Reveal in Explorer — acts per-selection so the user gets one
+        # window per source dir when a multi-select group is active.
+        # Same convention as Premiere / Nuke: highlight the source file
+        # inside its containing folder.
+        act_reveal = menu.addAction("Reveal in Explorer")
+        act_reveal.triggered.connect(
+            lambda: self._reveal_selected_in_explorer(),
+        )
+
+        menu.addSeparator()
+
+        act_del = menu.addAction("Delete")
+        act_del.triggered.connect(
+            lambda: self._on_row_delete_requested(layer_id),
+        )
+
+        menu.exec(global_pos)
+
+    def _reveal_selected_in_explorer(self) -> None:
+        """Open each unique source file's containing folder, with the
+        file pre-selected. Falls back to opening the folder when the
+        platform doesn't support selecting a file.
+
+        Dedupes by resolved path so a multi-select group with several
+        layers pointing at the same sequence directory only spawns one
+        Explorer window.
+        """
+        import os
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        seen: set[Path] = set()
+        targets: list[Path] = []
+        for sid in self._selected_ids:
+            layer = self._stack.find(sid)
+            if layer is None:
+                continue
+            # Video → the video file itself. Image sequence → the first
+            # frame (so the user lands on something concrete inside
+            # the directory, not just the folder).
+            if layer.video_metadata is not None:
+                p = layer.video_metadata.path
+            elif layer.sequence.frames:
+                p = layer.sequence.frames[0].path
+            else:
+                p = layer.sequence.directory
+            try:
+                resolved = Path(p).resolve()
+            except OSError:
+                resolved = Path(p)
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            targets.append(resolved)
+
+        for path in targets:
+            try:
+                if sys.platform.startswith("win"):
+                    # /select, highlights the file inside its folder.
+                    # Comma-after-flag is mandatory — explorer parses
+                    # this as a single token.
+                    subprocess.Popen(
+                        ["explorer", f"/select,{path}"],
+                    )
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", "-R", str(path)])
+                else:
+                    # Linux: no portable "select file" — open the dir.
+                    target = path if path.is_dir() else path.parent
+                    subprocess.Popen(["xdg-open", str(target)])
+            except OSError:
+                # Best-effort: fall back to just opening the folder.
+                try:
+                    target = path if path.is_dir() else path.parent
+                    if sys.platform.startswith("win"):
+                        os.startfile(str(target))  # noqa: S606
+                    else:
+                        subprocess.Popen(
+                            ["xdg-open", str(target)],
+                        )
+                except OSError:
+                    pass
 
     def compose_reorder_drag_pixmap(
         self, source_id: str,
