@@ -715,9 +715,22 @@ class MasterFrameCache:
             # once per (w, h) and aliased across every gap — drop
             # from O(gaps × decode-cost) to O(1).
             with self._lock:
+                # Source + master frame numbers are baked into the
+                # overlay so the placeholder mirrors the info-band's
+                # ``Layer 220 / 1140`` + ``Frame 1101 / 1140``
+                # breakdown. Costs one per-call ndarray + QPainter
+                # pass (~30-50 ms at HD), but the cache stores the
+                # result keyed on ``master_frame`` so subsequent
+                # lookups of the same hole hit the stored buffer
+                # directly — no rebuild on repeated visits.
+                master_first, master_last = self._stack.master_range()
                 placeholder = get_missing_placeholder(
                     layer.sequence.width or 512,
                     layer.sequence.height or 512,
+                    frame_number=master_frame,
+                    frame_max=master_last if master_last else None,
+                    source_frame=layer.source_frame_at(master_frame),
+                    source_max=layer.layer_out,
                 )
                 key = (master_frame, self._signature_at(master_frame))
                 self._frames[key] = placeholder
@@ -1434,6 +1447,10 @@ class MasterFrameCache:
         still get their holes flagged should the user toggle
         visibility later.
         """
+        # Master-range last frame is the same for every layer in this
+        # stack — pull it once outside the inner loop so each
+        # placeholder paint pass doesn't re-query.
+        _master_first, master_last = self._stack.master_range()
         for layer in self._stack.layers():
             self._ensure_index(layer)
             paths = self._path_index[layer.id]
@@ -1453,19 +1470,23 @@ class MasterFrameCache:
                     # from the layer above and isn't actually missing.
                     topmost = self._stack.topmost_visible_at(master_frame)
                     if topmost is None or topmost.id == layer.id:
-                        # Use the *shared* (memoised) placeholder
-                        # rather than the per-frame variant. Filename-
-                        # baked overlays are valuable for "decode
-                        # failed at runtime" cases where the user
-                        # needs to know which path is bad; for a
-                        # sparse-sequence gap (the absence is known
-                        # at scan time and presumably intentional)
-                        # the shared placeholder is fine. Building
-                        # the per-frame variant for every gap froze
-                        # the UI for ~10 s on dense-gap sparse
-                        # sequences (~50 missing 4K frames × ~50 ms
-                        # of QImage paint each, all serialised here).
-                        placeholder = get_missing_placeholder(ph_w, ph_h)
+                        # Source + master frame coords baked into the
+                        # overlay so the placeholder mirrors the
+                        # info-band's "Layer X / Frame Y" breakdown.
+                        # Per-frame allocation (~30-50 ms / frame at
+                        # HD, ~150 ms at 4K) at session-load time —
+                        # a sparse sequence with hundreds of gaps can
+                        # stall the UI briefly on load. We accept the
+                        # cost: the alternative was a shared
+                        # placeholder that didn't tell the user which
+                        # frame they were stuck on.
+                        placeholder = get_missing_placeholder(
+                            ph_w, ph_h,
+                            frame_number=master_frame,
+                            frame_max=master_last if master_last else None,
+                            source_frame=source_frame,
+                            source_max=layer.layer_out,
+                        )
                         with self._lock:
                             self._frames[key] = placeholder
                             self._missing.add(key)
@@ -1916,8 +1937,24 @@ class MasterFrameCache:
             # fixed 512² square (which got letterboxed weirdly when the
             # actual sequence was 1920×1080 / 4K).
             ph_w, ph_h = self._broadest_layer_size()
+            # No specific covering layer here (the plan was empty =
+            # every layer had a hole), so report the topmost layer's
+            # source frame — at least it tells the user "this is the
+            # frame the layer that *would* have shown a pixel here
+            # is missing".
+            top = self._stack.topmost_visible_at(master_frame)
+            _first, master_last = self._stack.master_range()
             with self._lock:
-                placeholder = get_missing_placeholder(ph_w, ph_h)
+                placeholder = get_missing_placeholder(
+                    ph_w, ph_h,
+                    frame_number=master_frame,
+                    frame_max=master_last if master_last else None,
+                    source_frame=(
+                        top.source_frame_at(master_frame)
+                        if top is not None else None
+                    ),
+                    source_max=top.layer_out if top is not None else None,
+                )
                 key = (master_frame, self._signature_at(master_frame))
                 self._frames[key] = placeholder
                 self._missing.add(key)
@@ -1984,8 +2021,17 @@ class MasterFrameCache:
             log.warning(
                 "composite decode failed master=%d: %s", master_frame, err,
             )
+            top = self._stack.topmost_visible_at(master_frame)
+            _first, master_last = self._stack.master_range()
             placeholder = get_missing_placeholder(
                 plan[0]["ph_w"], plan[0]["ph_h"],
+                frame_number=master_frame,
+                frame_max=master_last if master_last else None,
+                source_frame=(
+                    top.source_frame_at(master_frame)
+                    if top is not None else None
+                ),
+                source_max=top.layer_out if top is not None else None,
             )
             key = (master_frame, signature)
             with self._lock:
@@ -2069,9 +2115,18 @@ class MasterFrameCache:
                 "decode failed master=%d path=%s: %s",
                 master_frame, path, err,
             )
+            top = self._stack.topmost_visible_at(master_frame)
+            _first, master_last = self._stack.master_range()
             placeholder = get_missing_placeholder(
                 placeholder_w, placeholder_h,
                 filename=getattr(path, "name", None) or str(path),
+                frame_number=master_frame,
+                frame_max=master_last if master_last else None,
+                source_frame=(
+                    top.source_frame_at(master_frame)
+                    if top is not None else None
+                ),
+                source_max=top.layer_out if top is not None else None,
             )
             with self._lock:
                 self._decode_errors += 1

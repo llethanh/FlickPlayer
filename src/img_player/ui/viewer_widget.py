@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QStackedLayout, QWidget
 
 from img_player.render.gl_viewport import GLViewport
 from img_player.ui.brackets_overlay import BracketsOverlay
+from img_player.ui.compare_labels_overlay import CompareLabelsOverlay
 from img_player.ui.drop_zone import (
     REPLACE_ACCENT,
     DropOverlay,
@@ -46,6 +47,19 @@ class ViewerWidget(QWidget):  # type: ignore[misc]
         layout.addWidget(self._gl)
         layout.addWidget(self._overlay)
 
+        # A / B markers shown only while compare mode is active. Kept
+        # OUT of the QStackedLayout — on Windows the QOpenGLWidget
+        # composes via native surface and a stacked sibling can race
+        # the GL paint, producing dropped first-paints of the overlay.
+        # The same pattern as :class:`InfoBand` (child of ``self``,
+        # ``raise_()``d after resize) sidesteps it.
+        self._compare_labels = CompareLabelsOverlay(self)
+        # Hand the overlay a handle on the GL viewport so it can read
+        # the live image-to-widget transform AND subscribe to
+        # ``transform_changed`` for pan / zoom repaint.
+        self._compare_labels.attach_gl_viewport(self._gl)
+        self._compare_labels.raise_()
+
         # Drop zone with a "REPLACE" overlay shown during drag-over.
         # Sits as a child of ``self`` (not in the stacked layout) so
         # we can ``raise_()`` it to the absolute top during a drag —
@@ -77,6 +91,10 @@ class ViewerWidget(QWidget):  # type: ignore[misc]
         return self._overlay
 
     @property
+    def compare_labels(self) -> CompareLabelsOverlay:
+        return self._compare_labels
+
+    @property
     def info_band(self) -> InfoBand:
         return self._info_band
 
@@ -95,3 +113,8 @@ class ViewerWidget(QWidget):  # type: ignore[misc]
         if self._drop_overlay.isVisible():
             self._drop_overlay.setGeometry(self.rect())
         self._reposition_info_band()
+        # Compare-mode A/B overlay tracks the viewer rect (it's a
+        # plain child, not in the QStackedLayout). Without this it'd
+        # stay at its initial 0×0 size and paint nothing.
+        self._compare_labels.setGeometry(self.rect())
+        self._compare_labels.raise_()

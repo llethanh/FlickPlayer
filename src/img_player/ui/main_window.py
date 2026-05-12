@@ -398,12 +398,20 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
     # --------------------------------------------------------------- Status bar
 
     def _build_status_bar(self) -> None:
-        """Two-block status bar: contextual message left, perf indicators right.
+        """Three-block status bar: contextual message left, selected
+        layers in the middle, perf indicators right.
 
         Replaces the legacy single ``showMessage()`` line so we can render
         coloured dots (rich text) on the right while keeping a plain text
         message on the left. ``set_status()`` keeps its old contract for
         existing callers — it just routes to the left label now.
+
+        The middle "selection" readout was added so the user always
+        sees which layers they've highlighted in the panel, even when
+        the left side is busy with a transient ``set_status`` message
+        (load progress, in/out feedback, etc.). Plain text, accent-
+        orange, mid-dot-separated for multi-select — same convention
+        as the compare-band dropdowns.
         """
         bar = self.statusBar()
 
@@ -415,6 +423,22 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
             f"color: {H.TEXT_SECONDARY}; font-size: {F.SIZE_XS}px;"
         )
 
+        # Selected-layer readout — permanent (= survives ``set_status``
+        # overwrites). Sits between the contextual message and the
+        # perf dots so it shares the right-anchored "always-visible"
+        # group rather than competing for the left label's stretch.
+        self.status_selection = QLabel("")
+        self.status_selection.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        self.status_selection.setStyleSheet(
+            f"color: {H.ACCENT}; font-size: {F.SIZE_XS}px;"
+        )
+        self.status_selection.setToolTip(
+            "Selected layer(s) — click rows in the layer panel to "
+            "single them out.",
+        )
+
         self.status_right = QLabel()
         self.status_right.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
@@ -422,8 +446,15 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         self.status_right.setTextFormat(Qt.TextFormat.RichText)
         self.status_right.setFont(F.mono(F.SIZE_XS))
 
-        bar.addWidget(self.status_left, 1)        # stretch fills the gap
-        bar.addPermanentWidget(self.status_right) # right-anchored
+        bar.addWidget(self.status_left, 1)              # stretch fills the gap
+        bar.addPermanentWidget(self.status_selection)   # right of the message
+        bar.addPermanentWidget(self.status_right)       # far right
+
+    def set_selected_layers(self, text: str) -> None:
+        """Update the middle status-bar widget — the selected layer
+        names. Empty string clears the segment so it disappears
+        visually (no leftover "—" when nothing's selected)."""
+        self.status_selection.setText(text or "")
 
     # --------------------------------------------------------------- Accessors
 

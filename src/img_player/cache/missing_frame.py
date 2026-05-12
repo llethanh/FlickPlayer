@@ -153,7 +153,12 @@ def _apply_chromatic_aberration(
 # Qt overlay (corner crosshairs, central text, vignette)
 # ------------------------------------------------------------
 def _draw_overlay(
-    pixmap: QPixmap, w: int, h: int, filename: str | None = None,
+    pixmap: QPixmap, w: int, h: int,
+    filename: str | None = None,
+    frame_number: int | None = None,
+    frame_max: int | None = None,
+    source_frame: int | None = None,
+    source_max: int | None = None,
 ) -> None:
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -214,31 +219,84 @@ def _draw_overlay(
         "SEQUENCE ERROR  ·  FRAME NOT FOUND",
     )
 
-    # Filename label — rendered just below the central box when the
-    # caller provided one. Monospace so digits line up across frames,
-    # smaller than the subtitle so it doesn't compete with the main
-    # "MISSING FRAME" label. Drawn on its own translucent strip for
-    # readability against any checker shade.
-    if filename:
+    # Info strips — rendered below the central box, one per field.
+    # Mirrors the layout of :class:`InfoBand` (one segment per row of
+    # data) so a user staring at the placeholder sees the same
+    # "Layer 220 / 1140  ·  Frame 1101 / 1140" breakdown they'd see
+    # in the HUD.
+    #
+    # Order = layer-local source frame first, then master timeline
+    # frame, then filename (kept as a legacy fallback for callers
+    # that only know the path). Each non-empty field gets its own
+    # translucent strip; empty fields are skipped.
+    def _format_pair(cur: int, total: int | None) -> str:
+        """Zero-padded "X / Y" or "X" depending on whether the upper
+        bound is known. Padding follows the wider of cur / total so
+        scrubbing through consecutive missing frames keeps the digits
+        aligned vertically."""
+        if total is not None and total > 0:
+            width = max(len(str(int(cur))), len(str(int(total))))
+            return f"{int(cur):0{width}d} / {int(total)}"
+        width = max(5, len(str(int(cur))))
+        return f"{int(cur):0{width}d}"
+
+    strips: list[tuple[str, str]] = []
+    if source_frame is not None:
+        strips.append(("LAYER", _format_pair(source_frame, source_max)))
+    if frame_number is not None:
+        strips.append(("FRAME", _format_pair(frame_number, frame_max)))
+    if filename and source_frame is None and frame_number is None:
+        # Filename is the legacy fallback — used by callers that only
+        # know the file path (no master / layer frame context).
+        strips.append(("FILE", filename))
+    if strips:
         name_fs = max(min(w * 0.022, h * 0.04), 10)
         font_name = QFont("Consolas")
         font_name.setStyleHint(QFont.StyleHint.Monospace)
         font_name.setPixelSize(int(name_fs))
         font_name.setWeight(QFont.Weight.Medium)
         painter.setFont(font_name)
-        # Strip background — width matches the central box so the label
-        # visually anchors to it.
         strip_h = name_fs * 1.8
+        gap = name_fs * 0.35
         strip_y = by + bh + name_fs * 0.6
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(8, 8, 8, 140))
-        painter.drawRoundedRect(QRectF(bx, strip_y, bw, strip_h), 2, 2)
-        painter.setPen(QColor(255, 255, 255, 220))
-        painter.drawText(
-            QRectF(bx, strip_y, bw, strip_h),
-            int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter),
-            filename,
-        )
+        # Label-column width — wide enough for "LAYER" / "FRAME" /
+        # "FILE" at the current font, with a small breathing margin.
+        # Computed once via the painter's metrics so the dividers
+        # line up regardless of font fallback.
+        metrics = painter.fontMetrics()
+        col_label_w = max(
+            float(metrics.horizontalAdvance(label)) for label, _ in strips
+        ) + name_fs * 1.0
+        for label, value in strips:
+            rect = QRectF(bx, strip_y, bw, strip_h)
+            # Background strip.
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(8, 8, 8, 140))
+            painter.drawRoundedRect(rect, 2, 2)
+            # Label (dim grey, left-aligned within col_label_w).
+            painter.setPen(QColor(255, 255, 255, 130))
+            painter.drawText(
+                QRectF(
+                    rect.left() + name_fs * 0.8, rect.top(),
+                    col_label_w, rect.height(),
+                ),
+                int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                label,
+            )
+            # Value (full white, fills the remaining width after the
+            # label column — left-aligned so a long layer name reads
+            # naturally and doesn't squash against a centred axis).
+            painter.setPen(QColor(255, 255, 255, 230))
+            painter.drawText(
+                QRectF(
+                    rect.left() + name_fs * 0.8 + col_label_w, rect.top(),
+                    rect.width() - col_label_w - name_fs * 1.6,
+                    rect.height(),
+                ),
+                int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                value,
+            )
+            strip_y += strip_h + gap
 
     # Vignette
     grad = QRadialGradient(w / 2, h / 2, max(w, h) * 0.72)
@@ -256,13 +314,24 @@ def _draw_overlay(
 # Public API
 # ------------------------------------------------------------
 def generate_missing_frame(
-    width: int, height: int, filename: str | None = None,
+    width: int, height: int,
+    filename: str | None = None,
+    frame_number: int | None = None,
+    frame_max: int | None = None,
+    source_frame: int | None = None,
+    source_max: int | None = None,
 ) -> QPixmap:
     """Generate a 'Missing Frame' QPixmap at the requested size.
 
-    When ``filename`` is provided, it's painted below the central
-    box so the user can see *which* file is missing without having
-    to dig through logs.
+    Strips below the central box mirror the :class:`InfoBand`'s
+    "Layer  source/source_max" + "Frame  master/master_max"
+    breakdown — same convention as the bottom HUD so the user reads
+    the same info on the placeholder as they would in the live
+    sequence.
+
+    ``filename`` is a legacy fallback for callers (export's decode-
+    error path) that only know the file path; ignored when any of
+    the frame coordinates is supplied.
     """
     width = max(2, int(width))
     height = max(2, int(height))
@@ -283,17 +352,28 @@ def generate_missing_frame(
     pixmap = QPixmap.fromImage(img)
 
     # 4. Qt overlay
-    _draw_overlay(pixmap, width, height, filename)
+    _draw_overlay(
+        pixmap, width, height, filename,
+        frame_number, frame_max, source_frame, source_max,
+    )
     return pixmap
 
 
 def generate_missing_frame_rgba_float(
-    width: int, height: int, filename: str | None = None,
+    width: int, height: int,
+    filename: str | None = None,
+    frame_number: int | None = None,
+    frame_max: int | None = None,
+    source_frame: int | None = None,
+    source_max: int | None = None,
 ) -> np.ndarray:
     """Same as :func:`generate_missing_frame` but returns the result as
     an ``H×W×4`` float32 RGBA array in [0, 1] — the format the GL
     viewport / multi-layer compositor consumes directly."""
-    pixmap = generate_missing_frame(width, height, filename)
+    pixmap = generate_missing_frame(
+        width, height, filename,
+        frame_number, frame_max, source_frame, source_max,
+    )
     qimg = pixmap.toImage().convertToFormat(QImage.Format.Format_RGBA8888)
     w = qimg.width()
     h = qimg.height()

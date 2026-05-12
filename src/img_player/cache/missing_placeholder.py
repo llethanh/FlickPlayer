@@ -25,31 +25,42 @@ _cache_lock = Lock()
 
 
 def get_missing_placeholder(
-    width: int, height: int, filename: str | None = None,
+    width: int, height: int,
+    filename: str | None = None,
+    frame_number: int | None = None,
+    frame_max: int | None = None,
+    source_frame: int | None = None,
+    source_max: int | None = None,
 ) -> np.ndarray:
     """Return a HxWx4 float32 RGBA placeholder.
 
-    The base placeholder (no filename) is memoised by (w, h) — every
-    "missing slot" in the cache aliases the same shared buffer, so
-    hundreds of holes cost a single ndarray.
+    The base placeholder (no per-frame info) is memoised by (w, h)
+    — every "missing slot" in the cache aliases the same shared
+    buffer, so hundreds of holes cost a single ndarray.
 
-    When ``filename`` is provided the result is built per call (no
-    memoisation): the filename is baked into the overlay so the user
-    can see *which* file is missing directly on the placeholder. Each
-    such call allocates a fresh ndarray (~33 MB at 1920×1080), so
-    callers pay one buffer per missing frame. For typical sparse
-    sequences this is negligible; for pathological cases (thousands
-    of missing frames) the memory cost is real — call sites that
-    don't have a meaningful filename should pass ``None`` to keep
-    the shared-buffer behaviour.
+    When any of the per-frame info fields is provided the result is
+    built per call (no memoisation): each field is baked into the
+    overlay as an info-band-style strip so the user reads off the
+    same "Layer X / Frame Y" breakdown as the bottom HUD. Each such
+    call allocates a fresh ndarray (~33 MB at 1920×1080); for
+    pathological cases (thousands of missing 4K frames) the memory
+    + paint cost can stall the UI briefly on load — call sites
+    that don't have per-frame info should pass ``None`` everywhere
+    to keep the shared-buffer fast path.
     """
     width = max(2, int(width))
     height = max(2, int(height))
-    if filename:
-        # Per-frame variant — never cached. Stripping to basename keeps
-        # the overlay readable; callers that already passed a basename
-        # are no-ops here.
-        return generate_missing_frame_rgba_float(width, height, filename)
+    per_frame = (
+        filename
+        or frame_number is not None
+        or source_frame is not None
+    )
+    if per_frame:
+        # Per-frame variant — never cached.
+        return generate_missing_frame_rgba_float(
+            width, height, filename,
+            frame_number, frame_max, source_frame, source_max,
+        )
     key = (width, height)
     with _cache_lock:
         cached = _cache.get(key)

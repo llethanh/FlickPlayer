@@ -41,8 +41,14 @@ def available_layer_options(app: ImgPlayerApp) -> list[_LayerOption]:
     never had two layers to compare against.
     """
     return [
-        _LayerOption(layer_id=layer.id, name=layer.name or "(unnamed)")
-        for layer in app._layer_stack.layers()
+        _LayerOption(
+            layer_id=layer.id,
+            name=layer.name or "(unnamed)",
+            # 1-based — matches the number column shown in
+            # ``LayerPanel`` (``self._number_label = QLabel(str(i + 1))``).
+            index=i + 1,
+        )
+        for i, layer in enumerate(app._layer_stack.layers())
     ]
 
 
@@ -111,8 +117,10 @@ def toggle_compare(app: ImgPlayerApp) -> None:
         band.set_swap_showing_b(state.swap_showing_b)
         app._window.set_compare_band_visible(True)
         band.raise_()
+        _sync_compare_labels(app)
     else:
         app._window.set_compare_band_visible(False)
+        _sync_compare_labels(app)
         # Drop the per-layer decoder caches so a re-entry doesn't
         # paint stale pixels (rare, but cheap).
         app._compare_decoder.invalidate()
@@ -171,9 +179,29 @@ def _resync_compare_ui(app: ImgPlayerApp) -> None:
     band.set_mode(state.mode)
     band.set_seam(state.seam)
     band.set_swap_showing_b(state.swap_showing_b)
+    # On-image A/B markers — visibility tracks ``enabled``, position
+    # tracks ``mode``. Hidden when Solo-B is on (the image is just B,
+    # no useful "A vs B" split to label).
+    _sync_compare_labels(app)
     if state.is_active():
         gl = app._window.viewer.gl
         gl.set_compare_state(_compare_shader_mode(state), state.seam)
+
+
+def _sync_compare_labels(app: ImgPlayerApp) -> None:
+    """Push the current compare state to :class:`CompareLabelsOverlay`.
+
+    Visible when compare is on AND Solo-B is off — a Solo-B view shows
+    a single buffer, so labelling it with "A" / "B" markers would just
+    add noise. Layer A/B picks don't affect the overlay (the labels
+    are pure mode indicators, not per-layer names). The seam is also
+    forwarded so opacity-mode can fade A in / B out as the user moves
+    the slider.
+    """
+    state = app._compare_state
+    overlay = app._window.viewer.compare_labels
+    active = state.enabled and not state.swap_showing_b
+    overlay.set_state(active, state.mode, state.seam)
 
 
 def set_mode(app: ImgPlayerApp, mode: str) -> None:
@@ -182,6 +210,10 @@ def set_mode(app: ImgPlayerApp, mode: str) -> None:
         return
     state.mode = mode
     app._window.compare_band.set_mode(mode)
+    # A/B overlay positioning depends on the active mode (vertical →
+    # top corners, horizontal → right edge stack, opacity → top
+    # corners), so re-sync before the shader push.
+    _sync_compare_labels(app)
     # GPU path: just push the new mode uniform, no re-upload, no
     # numpy compose. The textures already on the GPU stay valid.
     _push_uniforms(app)
@@ -195,6 +227,11 @@ def set_seam(app: ImgPlayerApp, seam: float) -> None:
     # through ``set_seam_from_viewport`` which DOES re-feed the
     # slider so the two stay in sync.
     _push_uniforms(app)
+    # Opacity-mode A/B markers fade in/out with the seam — push the
+    # new value so the next paint shows the fresh alpha. Wipe modes
+    # use a constant alpha and ignore the seam; the overlay's
+    # ``set_state`` short-circuits when nothing user-visible changed.
+    _sync_compare_labels(app)
 
 
 def set_seam_from_viewport(app: ImgPlayerApp, seam: float) -> None:
@@ -213,6 +250,8 @@ def toggle_swap(app: ImgPlayerApp) -> None:
     state = app._compare_state
     state.swap_showing_b = not state.swap_showing_b
     app._window.compare_band.set_swap_showing_b(state.swap_showing_b)
+    # Solo-B hides the on-image A/B labels — there's only B on screen.
+    _sync_compare_labels(app)
     _push_uniforms(app)
 
 

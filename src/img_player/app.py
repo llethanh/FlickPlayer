@@ -716,6 +716,13 @@ class ImgPlayerApp:
         if panel is not None:
             self._window.timeline.frame_requested.connect(panel.set_playhead)
             self._window.viewer.gl.frame_requested.connect(panel.set_playhead)
+            # Selection drives the bottom status bar's "Selected
+            # layers" readout — the user clicked rows in the panel to
+            # single them out, so the status bar follows that rather
+            # than competing with transient ``set_status`` messages.
+            panel.selection_changed.connect(
+                self._on_layer_selection_changed,
+            )
             # NB: timeline ↔ layer-bar alignment used to be a runtime
             # signal (``bar_inset_changed`` → ``set_content_insets``).
             # That's been replaced by ``MasterTimelinePanel`` which
@@ -1147,6 +1154,44 @@ class ImgPlayerApp:
         else:
             band.set_global_frame(None, None)
 
+    def _refresh_status_selected_layers(self) -> None:
+        """Push the panel's current selection to the bottom status bar.
+
+        Renders nothing when no layer is selected (the segment goes
+        invisible-via-empty-string), so an idle app shows a clean
+        status bar rather than a stale placeholder. Multi-select uses
+        a mid-dot separator — same convention as the compare-band
+        dropdowns — and the same ``"N. name"`` prefix as
+        :class:`LayerPanel`'s row column so the user can map "status
+        bar text" back to "which row is this" without parsing.
+        """
+        window = self._window
+        if not hasattr(window, "set_selected_layers"):
+            # Defensive — older MainWindow stubs in unit tests don't
+            # have the helper. No-op rather than crash.
+            return
+        panel = getattr(window, "_layer_panel", None)
+        selected_ids: frozenset[str] = (
+            panel.selected_ids() if panel is not None else frozenset()
+        )
+        if not selected_ids or self._layer_stack is None:
+            window.set_selected_layers("")
+            return
+        parts: list[str] = []
+        for i, layer in enumerate(self._layer_stack.layers()):
+            if layer.id in selected_ids:
+                name = layer.name or "(unnamed)"
+                parts.append(f"{i + 1}. {name}")
+        window.set_selected_layers(" · ".join(parts))
+
+    def _on_layer_selection_changed(self, _selected_ids) -> None:  # type: ignore[no-untyped-def]
+        """``LayerPanel.selection_changed`` → refresh the bottom status
+        bar's selected-layers readout. Payload is ignored — we re-pull
+        from the panel so the formatting walks the stack in the same
+        order the rows are drawn.
+        """
+        self._refresh_status_selected_layers()
+
     def _nearest_cached_fallback(self, frame: int) -> int | None:
         """Pick the closest cached frame behind (for forward play) or ahead
         (for reverse play) of ``frame``. Returns ``None`` if the cache
@@ -1218,6 +1263,11 @@ class ImgPlayerApp:
         layer_count = len(list(self._layer_stack.layers()))
         self._window.transport.set_compare_enabled(layer_count >= 2)
         refresh_band_layers(self)
+        # Selected-layer readout — a stack mutation can renumber rows
+        # (insert / remove) or drop a previously-selected layer; the
+        # status-bar text needs to follow. Cheap: O(N) over layers,
+        # one ``setText`` on a QLabel.
+        self._refresh_status_selected_layers()
         # Layer mutation may have invalidated decoder caches (offset
         # change → different pixel for the same master frame).
         self._compare_decoder.invalidate()

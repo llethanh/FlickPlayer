@@ -66,10 +66,17 @@ _MODE_ICONS: dict[str, str] = {
 
 @dataclass(frozen=True)
 class _LayerOption:
-    """One entry in either A or B dropdown."""
+    """One entry in either A or B dropdown.
+
+    ``index`` is the 1-based stack position used to prefix the display
+    name (``"1. shot.exr"``). Mirrors the numbering shown in the layer
+    panel rows so the user can map "the layer I clicked in the panel"
+    to "the entry in the A/B dropdown" without parsing the filename.
+    """
 
     layer_id: str
     name: str
+    index: int = 0
 
 
 # ============================================================================
@@ -209,6 +216,19 @@ class SeamBar(QWidget):  # type: ignore[misc]
         painter.drawText(
             rect, Qt.AlignmentFlag.AlignCenter, "Split",
         )
+
+        # A / B end-labels — orange-on-orange when over the fill,
+        # orange-on-dark when over the empty track. Using the accent
+        # colour at full opacity guarantees the letters stand out from
+        # the translucent fill underneath without needing a contrast
+        # swap mid-bar. Same convention as the on-image overlay so the
+        # user sees "A is the left bucket, B is the right bucket"
+        # everywhere compare mode shows up.
+        painter.setPen(QPen(QColor(232, 144, 28)))
+        a_rect = QRectF(rect.left() + 4, rect.top(), 14, rect.height())
+        b_rect = QRectF(rect.right() - 18, rect.top(), 14, rect.height())
+        painter.drawText(a_rect, Qt.AlignmentFlag.AlignCenter, "A")
+        painter.drawText(b_rect, Qt.AlignmentFlag.AlignCenter, "B")
 
 
 # ============================================================================
@@ -381,15 +401,23 @@ class CompareBand(QFrame):  # type: ignore[misc]
         toolbar in ``MainWindow._build_menu``) runs out of horizontal
         space — no manual width clamp on our side.
         """
-        longest = max((len(opt.name) for opt in options), default=0)
+        # Build the display label up-front so the chars-budget knob
+        # below sees the prefixed length, not the bare name — without
+        # this a "1. " prefix would just ellipsise into nothing on
+        # short-name layers.
+        labels = [
+            (f"{opt.index}. {opt.name}" if opt.index > 0 else opt.name)
+            for opt in options
+        ]
+        longest = max((len(lbl) for lbl in labels), default=0)
         chars = max(_COMBO_MIN_CHARS, min(_COMBO_MAX_CHARS, longest + 2))
         for combo, current in (
             (self._combo_a, a_id), (self._combo_b, b_id),
         ):
             combo.blockSignals(True)
             combo.clear()
-            for opt in options:
-                combo.addItem(opt.name, opt.layer_id)
+            for opt, label in zip(options, labels):
+                combo.addItem(label, opt.layer_id)
             if current is not None:
                 idx = combo.findData(current)
                 if idx >= 0:

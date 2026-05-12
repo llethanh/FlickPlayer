@@ -143,6 +143,7 @@ class FrameCache:
                 missing_placeholders[fnum] = get_missing_placeholder(
                     ph_w, ph_h,
                     filename=_expected_filename(sequence, fnum),
+                    frame_number=fnum,
                 )
         with self._lock:
             self._frames.clear()
@@ -209,6 +210,7 @@ class FrameCache:
             return get_missing_placeholder(
                 ph_w, ph_h,
                 filename=_expected_filename(new_sequence, fnum),
+                frame_number=fnum,
             )
         kept = dropped = 0
         with self._lock:
@@ -462,7 +464,7 @@ class FrameCache:
             # continue across the hole. Sized to the sequence's known
             # resolution when available, otherwise a 512×512 default —
             # the GL viewport rescales it to fit the current zoom.
-            placeholder = self._build_missing_placeholder(path)
+            placeholder = self._build_missing_placeholder(path, frame)
             with self._lock:
                 self._decode_errors += 1
                 # Same epoch + race guards as the success path: drop
@@ -504,16 +506,21 @@ class FrameCache:
 
     def _build_missing_placeholder(
         self, failing_path: Path | None = None,
+        frame_number: int | None = None,
     ) -> np.ndarray:
         """Return the checkerboard "missing" placeholder, sized to
         the sequence resolution when known. When ``failing_path`` is
         provided, its basename is baked into the overlay so the user
-        sees which file failed to decode."""
+        sees which file failed to decode. ``frame_number`` is shown on
+        the same strip so the user can map the placeholder to the
+        transport readout at a glance."""
         seq = self._sequence
         w = (seq.width if seq is not None and seq.width else 512)
         h = (seq.height if seq is not None and seq.height else 512)
         fname = failing_path.name if failing_path is not None else None
-        return get_missing_placeholder(w, h, filename=fname)
+        return get_missing_placeholder(
+            w, h, filename=fname, frame_number=frame_number,
+        )
 
     def shrink_budget(self, new_bytes: int) -> None:
         """Reduce the budget at runtime and force an immediate eviction.
