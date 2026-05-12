@@ -627,37 +627,64 @@ class MasterFrameCache:
         """Master frames whose **disk** blob is available for the
         current chain × channel state.
 
+        Per-contributor semantics since 1.5.4 — a frame counts as
+        "disk available" iff **every** contributing layer at that
+        master frame has its individual blob on disk. The composite
+        is rebuilt on the fly at decode time from those per-layer
+        blobs (cheap over-blend), so the pre-paint indicator is
+        truthful: a green dim-orange means the next scrub will hit
+        the fast path for that frame.
+
         Used at session-load to pre-paint the timeline cache bar so
-        the user sees that the shot is warm on disk before scrubbing.
-        Cheap one-shot operation: O(N) hash computes + one SQLite
-        bulk-IN query, typically ~50 ms for a 1000-frame sequence.
+        the user sees the shot is warm on disk before scrubbing.
+        Cheap one-shot operation: O(N × L) hash computes + one
+        SQLite bulk-IN query (typically ~50 ms for a 1000-frame
+        single-layer sequence; ~100 ms for a 3-layer composite).
 
         Returns an empty set when:
           * Disk cache is disabled / not configured.
           * The stack has no covered range.
-          * No frame's source path / mtime is yet indexed (very rare —
-            usually means the layer is mid-load).
+          * No frame's source path / mtime is yet indexed.
         """
         if self._disk_cache is None or self._stack is None:
             return frozenset()
         first, last = self._stack.master_range()
         if last <= first:
             return frozenset()
-        keys_by_frame: dict[int, str] = {}
-        # Indexing path/mtime is required for the source key; ensure
-        # every layer in the stack has its index built before walking
-        # the range. ``_ensure_index`` is idempotent + cheap.
+        # ``_ensure_index`` is idempotent + cheap; force-build the
+        # path/mtime index for every layer in the stack before walking
+        # the range so we don't bail out per-frame.
         for layer in self._stack.layers():
             self._ensure_index(layer)
+        per_frame_keys: dict[int, list[str]] = {}
+        all_keys: set[str] = set()
         for master_frame in range(first, last + 1):
-            key = self._source_key_at(master_frame)
-            if key is not None:
-                keys_by_frame[master_frame] = key
-        if not keys_by_frame:
+            keys: list[str] = []
+            complete = True
+            for layer in self._stack.layers():
+                if not layer.visible or not layer.covers(master_frame):
+                    continue
+                channels = self._channels_for(layer)
+                key = self._source_key_for_single_layer(
+                    layer, master_frame, channels,
+                )
+                if key is None:
+                    complete = False
+                    break
+                keys.append(key)
+                if not layer.alpha_composite:
+                    # Stop at the first opaque-floor layer — the
+                    # ``over`` walk wouldn't read further anyway.
+                    break
+            if complete and keys:
+                per_frame_keys[master_frame] = keys
+                all_keys.update(keys)
+        if not all_keys:
             return frozenset()
-        existing = self._disk_cache.contains_keys(keys_by_frame.values())
+        existing = self._disk_cache.contains_keys(all_keys)
         return frozenset(
-            mf for mf, k in keys_by_frame.items() if k in existing
+            mf for mf, keys in per_frame_keys.items()
+            if all(k in existing for k in keys)
         )
 
     def stats(self) -> CacheStats:
@@ -1070,19 +1097,15 @@ class MasterFrameCache:
             stack_idx = covering_ids.index(bottom_id)
             if stack_idx < len(covering_ids) - 1:
                 plan[-1]["is_opaque_floor"] = True
-        # Same submit-time disk-key capture as the live composite
-        # path — plan's per-layer channels (with the focused layer's
-        # override applied) drive the key, not the live state.
-        with self._lock:
-            disk_key = self._composite_disk_key_for_plan(
-                master_frame, plan,
-            )
+        # Per-layer disk keys live inside each ``plan`` entry now
+        # (built in ``_build_composite_plan_with_override``), so no
+        # composite-level key needs to be captured here.
         return self._pool.submit(
             priority,
             key,
             self._make_alt_task(
                 lambda: self._decode_composited_and_store(
-                    master_frame, sig, plan, disk_key=disk_key,
+                    master_frame, sig, plan,
                 ),
             ),
         )
@@ -1146,6 +1169,14 @@ class MasterFrameCache:
                 "ph_h": layer.sequence.height or 512,
                 "is_straight": bool(layer.alpha_is_straight),
                 "is_opaque_floor": not layer.alpha_composite,
+                # Same per-contributor disk key as the regular submit
+                # path (see :meth:`_submit_composite`). ``channels``
+                # here already has the focused-layer override applied,
+                # so the key naturally points at the alt-channel
+                # blob the worker will produce.
+                "disk_key": self._source_key_for_single_layer(
+                    layer, master_frame, channels,
+                ),
             })
         return plan
 
@@ -1374,45 +1405,6 @@ class MasterFrameCache:
         that mutates the layer stack (visibility, channels, reorder,
         add / remove, trim)."""
         self._signature_cache.clear()
-
-    def _composite_disk_key_for_plan(
-        self,
-        master_frame: int,
-        plan: list[dict],
-    ) -> str | None:
-        """Build the composite disk-cache key from a submit-time
-        ``plan`` (list of per-contributor dicts built by
-        :meth:`_submit_composite` / the alt-channel override path).
-
-        Each plan entry already carries the captured ``channels`` for
-        its contributor; we look the layer up by id to read its
-        alpha flags + path/mtime. Returns ``None`` if any contributor
-        can't be resolved (the cache then skips the disk write/read
-        for that frame — fine, just slower).
-        """
-        if self._disk_cache is None or not plan:
-            return None
-        per_layer: list[str] = []
-        for entry in plan:
-            layer = self._stack.find(entry["layer_id"])
-            if layer is None:
-                return None
-            key = self._source_key_for_single_layer(
-                layer, master_frame, entry.get("channels"),
-            )
-            if key is None:
-                return None
-            per_layer.append(key)
-            # Plans use the same "stop after the first opaque floor"
-            # convention as :meth:`_signature_at`. Honour it here so
-            # the composite key matches the actual decode walk.
-            if entry.get("is_opaque_floor"):
-                break
-        if not per_layer:
-            return None
-        if len(per_layer) == 1:
-            return per_layer[0]
-        return composite_source_key(per_layer)
 
     def _source_key_for_single_layer(
         self,
@@ -2124,10 +2116,11 @@ class MasterFrameCache:
             path = self._path_index[layer.id].get(source_frame)
             if path is None:
                 continue  # sparse hole — skip this layer's contribution
+            channels = self._channels_for(layer)
             plan.append({
                 "layer_id": layer.id,
                 "path": path,
-                "channels": self._channels_for(layer),
+                "channels": channels,
                 "ph_w": layer.sequence.width or 512,
                 "ph_h": layer.sequence.height or 512,
                 # Per-layer convention so the over operator picks the
@@ -2137,6 +2130,16 @@ class MasterFrameCache:
                 # hits one, treat it as alpha=1 even if its source has
                 # an A channel.
                 "is_opaque_floor": not layer.alpha_composite,
+                # Per-contributor disk-cache key. Captured at submit
+                # time from the layer's path + mtime + channel
+                # selection + alpha flags (= what
+                # ``_read_contributor_cached`` will look up at decode
+                # time). One key per contributor, *not* one per
+                # composite — so e.g. hiding one layer in the stack
+                # still hits the cache for the others.
+                "disk_key": self._source_key_for_single_layer(
+                    layer, master_frame, channels,
+                ),
             })
         # User rule: the checker only shows when no other layer would
         # actually contribute pixels beneath the bottom of the chain.
@@ -2190,19 +2193,15 @@ class MasterFrameCache:
         # Capture the signature at submit time — the worker will store
         # under the same key even if the stack mutates mid-decode, so
         # the in-flight buffer lands as a "stale" snapshot accessible
-        # if the user reverts. Same capture for the disk key, built
-        # from the plan's per-layer channels so the cross-session
-        # cache key matches the bytes being decoded.
+        # if the user reverts. Per-contributor disk keys live in each
+        # plan entry (built above), no composite-level key needed.
         with self._lock:
             sig = self._signature_at(master_frame)
-            disk_key = self._composite_disk_key_for_plan(
-                master_frame, plan,
-            )
         return self._pool.submit(
             priority,
             (master_frame, sig),
             lambda: self._decode_composited_and_store(
-                master_frame, sig, plan, disk_key=disk_key,
+                master_frame, sig, plan,
             ),
         )
 
@@ -2211,7 +2210,7 @@ class MasterFrameCache:
         master_frame: int,
         signature: str,
         plan: list[dict],
-        disk_key: str | None = None,
+        disk_key: str | None = None,  # noqa: ARG002 — kept for back-compat
     ) -> None:
         """Worker entry: decode each layer's contribution + over-blend
         front-to-back. The first plan entry is the topmost.
@@ -2222,14 +2221,15 @@ class MasterFrameCache:
         * ``is_opaque_floor`` — the layer doesn't compose; treat it as
           fully opaque (force its alpha to 1.0) so layers below are
           masked. Reached when the walker hit a non-composing layer.
+        * ``disk_key`` (optional) — per-contributor disk-cache key
+          computed at submit time. Drives the per-layer cache lookup
+          inside the read loop.
 
-        ``disk_key`` is the cross-session cache key computed at submit
-        time (from the captured plan's per-contributor channels). It
-        must come from the same state that built ``plan`` — passing
-        ``None`` skips disk-tier read + write entirely for this
-        decode, which is the safe choice when the key couldn't be
-        resolved at submit time (e.g. a layer was reordered out of
-        the chain between submit and run).
+        The ``disk_key`` *parameter* is no longer consulted — it used
+        to be the composite-level key, but caching was migrated to
+        per-contributor in 1.5.4 so a one-layer change in the stack
+        doesn't invalidate every cached blob for that frame. Kept on
+        the signature for callers that still pass it (pure no-op).
 
         Math (everything in premult):
             accum = top + arr * (1 - accum.a)
@@ -2237,32 +2237,9 @@ class MasterFrameCache:
         with self._lock:
             epoch = self._epoch
         key = (master_frame, signature)
-        # Disk-tier lookup — same fast path as in ``_decode_and_store``
-        # but for the multi-layer composite case. The disk cache key
-        # already encodes the composite (one key per ordered chain),
-        # so a hit gives us the pre-composed result back without
-        # re-running the over-blend.
-        if disk_key is not None and self._disk_cache is not None:
-            cached = self._disk_cache.get(disk_key)
-            if cached is not None:
-                with self._lock:
-                    if epoch != self._epoch:
-                        return
-                    if key in self._frames:
-                        return
-                    self._frames[key] = cached
-                    self._bytes_used += cached.nbytes
-                    self._signature_first_cached.setdefault(
-                        signature, time.monotonic(),
-                    )
-                    self._evict_if_over_budget()
-                return
         try:
             top_plan = plan[0]
-            top = read_frame(top_plan["path"], channels=top_plan["channels"])
-            top = _ensure_rgba(top)
-            if top_plan["is_straight"]:
-                top = _premultiply(top)
+            top = self._read_contributor_cached(top_plan)
             if top_plan["is_opaque_floor"]:
                 top = _force_alpha_one(top)
             # Quick opacity check on the centre row to avoid a full
@@ -2273,10 +2250,7 @@ class MasterFrameCache:
             else:
                 accum = top.copy()
                 for layer_plan in plan[1:]:
-                    arr = read_frame(layer_plan["path"], channels=layer_plan["channels"])
-                    arr = _ensure_rgba(arr)
-                    if layer_plan["is_straight"]:
-                        arr = _premultiply(arr)
+                    arr = self._read_contributor_cached(layer_plan)
                     if layer_plan["is_opaque_floor"]:
                         arr = _force_alpha_one(arr)
                     inv_a = (1.0 - accum[..., 3:4]).astype(accum.dtype)
@@ -2344,11 +2318,40 @@ class MasterFrameCache:
                         f_sig, time.monotonic(),
                     )
             self._evict_if_over_budget()
-        # Persist the composite to disk so the next session can
-        # restore it without re-running the over-blend. Async — the
-        # writer thread serialises + lz4-compresses on its own time.
-        if disk_key is not None and self._disk_cache is not None:
-            self._disk_cache.put(disk_key, accum)
+        # NB: no composite-level disk write any more (since 1.5.4).
+        # Each contributor was already persisted in
+        # :meth:`_read_contributor_cached` so the per-layer tier
+        # reuses across stack-composition changes. Skipping the
+        # composite blob saves disk space + a write per multi-layer
+        # frame at the cost of ~5-10 ms of over-blend math on the
+        # next session's first scrub.
+
+    def _read_contributor_cached(self, entry: dict) -> np.ndarray:
+        """Decode one composite contributor with a per-layer disk
+        cache wrapper.
+
+        The cached blob is the **post-premultiply, pre-opaque-floor**
+        buffer — premult is deterministic for a given (path, channels,
+        alpha_is_straight) tuple, so caching it produces a stable
+        result. ``_force_alpha_one`` is NOT folded in here because
+        ``is_opaque_floor`` depends on *which other layers are visible
+        below this one in the current stack* — caching that would
+        invalidate the entry on any stack reorder. The composite
+        caller applies ``_force_alpha_one`` if needed after this
+        returns.
+        """
+        disk_key = entry.get("disk_key")
+        if disk_key and self._disk_cache is not None:
+            cached = self._disk_cache.get(disk_key)
+            if cached is not None:
+                return cached
+        arr = read_frame(entry["path"], channels=entry["channels"])
+        arr = _ensure_rgba(arr)
+        if entry["is_straight"]:
+            arr = _premultiply(arr)
+        if disk_key and self._disk_cache is not None:
+            self._disk_cache.put(disk_key, arr)
+        return arr
 
     def _decode_and_store(
         self,
