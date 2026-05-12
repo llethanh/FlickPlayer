@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPushButton,
     QStyle,
     QStyledItemDelegate,
@@ -227,7 +228,15 @@ class SequencePickerDialog(QDialog):  # type: ignore[misc]
                 ok_btn.setText("Load selected")
             ok_btn.setDefault(True)
             ok_btn.setAutoDefault(True)
-        buttons.accepted.connect(self.accept)
+        # Multi-select: confirm before accepting an empty selection so
+        # the user doesn't dismiss the dialog without realising they
+        # forgot to tick any row (= nothing imported, silent no-op).
+        # Single-select can't end up empty by construction (a row is
+        # always pre-selected), so we keep the direct ``accept`` wire.
+        if multi:
+            buttons.accepted.connect(self._on_accept_clicked)
+        else:
+            buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         btn_row.addWidget(buttons)
         outer.addLayout(btn_row)
@@ -549,6 +558,38 @@ class SequencePickerDialog(QDialog):  # type: ignore[misc]
             if item.checkState() == Qt.CheckState.Checked:
                 out.append(seq)
         return out
+
+    def _on_accept_clicked(self) -> None:
+        """Intercept the Load-selected click in multi-select mode.
+
+        When nothing is ticked, accepting would close the dialog
+        silently and import zero sequences — a common surprise when
+        the user dragged a 30-sequence folder, scanned through it,
+        meant to tick a few, and clicked Load without ticking
+        anything. Pop a Yes/No confirmation so they get a chance to
+        go back and tick rows. "Yes" still goes through (= cancel
+        equivalent) so a user who really wants to dismiss the dialog
+        isn't blocked.
+        """
+        if self.selected_sequences():
+            # Normal path — at least one sequence ticked, proceed.
+            self.accept()
+            return
+        # Empty selection — warn and confirm.
+        reply = QMessageBox.warning(
+            self,
+            "No sequence selected",
+            "You haven't ticked any sequence — nothing will be "
+            "imported.\n\nClose the dialog anyway?",
+            QMessageBox.StandardButton.Yes
+            | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            # User confirmed they want to close with nothing — treat
+            # it as a cancel so the caller's "if exec != Accepted"
+            # path runs and we don't try to load an empty list.
+            self.reject()
 
     # ------------------------------------------------------------------ Convenience
 

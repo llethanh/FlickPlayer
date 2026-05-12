@@ -1259,9 +1259,20 @@ class ImgPlayerApp:
         # Compare-mode bookkeeping: refresh the band's dropdown
         # entries (layer added / removed) and gate the transport
         # button on having ≥ 2 layers to compare against.
-        from img_player.compare_handler import refresh_band_layers
+        from img_player.compare_handler import (
+            refresh_band_layers,
+            toggle_compare,
+        )
         layer_count = len(list(self._layer_stack.layers()))
         self._window.transport.set_compare_enabled(layer_count >= 2)
+        # Auto-exit compare mode when the stack drops below 2 layers —
+        # there's nothing left to compare against, the band's "B"
+        # dropdown would be empty (or stuck on a stale id), and the
+        # user otherwise has to click ✕ manually after each removal.
+        # Routed through ``toggle_compare`` so it handles the band
+        # visibility + GL uniform cleanup + overlay state in one place.
+        if layer_count < 2 and self._compare_state.enabled:
+            toggle_compare(self)
         refresh_band_layers(self)
         # Selected-layer readout — a stack mutation can renumber rows
         # (insert / remove) or drop a previously-selected layer; the
