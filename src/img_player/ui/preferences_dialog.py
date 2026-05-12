@@ -18,11 +18,13 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable
+from pathlib import Path
 
 import PyOpenColorIO as ocio
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -32,8 +34,10 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPushButton,
     QRadioButton,
+    QSpinBox,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -326,6 +330,253 @@ class _ColorManagementPage(QWidget):
         return ocio.Config.CreateFromBuiltinConfig(DEFAULT_BUILTIN_URI)
 
 
+class _DiskCachePage(QWidget):
+    """Disk-cache settings — enable/disable, location, budget, clear.
+
+    The disk cache is a session-spanning second tier above the live
+    ``MasterFrameCache``: evicted RAM frames are persisted as
+    lz4-compressed half-float blobs so the next session can re-open
+    warm. This page exposes the three knobs the user cares about:
+
+    * **Enable** — global on/off. When off the cache acts RAM-only.
+    * **Path** — where the blob tree + SQLite index live. Useful to
+      move the cache off the system drive (SSD wear) or onto a
+      faster NVMe scratch.
+    * **Budget** — soft upper bound in **gigabytes**. ``0`` = no
+      limit (cache only grows on explicit clear).
+    * **Clear** — wipe everything in one click for "my disk is
+      full" situations.
+
+    Settings changes only take effect on next session — the running
+    cache instance is captured at app init. We tell the user
+    explicitly so they don't expect a hot-reload.
+    """
+
+    def __init__(
+        self,
+        prefs: Preferences,
+        disk_cache_handle: object | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._prefs = prefs
+        # ``disk_cache_handle`` is the live :class:`DiskCache` instance
+        # (or ``None`` if disk caching is disabled / unavailable).
+        # Used only for the live-stats display + Clear-now button —
+        # config changes route through ``prefs`` and apply next launch.
+        self._disk_cache = disk_cache_handle
+        self._initial_enabled = prefs.disk_cache_enabled
+        self._initial_path = str(prefs.disk_cache_path or "")
+        self._initial_budget_gb = prefs.disk_cache_budget_gb
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        title = QLabel("Disk cache")
+        title.setStyleSheet("font-size: 14px; font-weight: 600;")
+        layout.addWidget(title)
+
+        intro = QLabel(
+            "Decoded frames evicted from RAM are saved to disk so the "
+            "next session can re-open warm — same shot tomorrow loads in "
+            "a tenth of the time. Stored as lz4-compressed half-float "
+            "blobs (≈ 25 MB per 4K frame).",
+        )
+        intro.setWordWrap(True)
+        intro.setStyleSheet("color: #aaa;")
+        layout.addWidget(intro)
+
+        # ---- Enable -----------------------------------------------------
+        self._enable_chk = QCheckBox("Enable disk cache")
+        self._enable_chk.setChecked(self._initial_enabled)
+        self._enable_chk.toggled.connect(self._on_enable_toggled)
+        layout.addWidget(self._enable_chk)
+
+        # ---- Path -------------------------------------------------------
+        layout.addWidget(self._make_subtitle("Cache location"))
+
+        path_help = QLabel(
+            "Leave empty to use the default OS-specific cache directory. "
+            "Point to a faster drive (NVMe scratch) or a partition with "
+            "more headroom if needed.",
+        )
+        path_help.setWordWrap(True)
+        path_help.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(path_help)
+
+        path_row = QHBoxLayout()
+        self._path_edit = QLineEdit(self._initial_path)
+        self._path_edit.setPlaceholderText(
+            "(default — %LOCALAPPDATA%\\img_player\\disk_cache\\)",
+        )
+        browse_btn = QPushButton("Browse…")
+        browse_btn.clicked.connect(self._on_browse)
+        path_row.addWidget(self._path_edit, 1)
+        path_row.addWidget(browse_btn)
+        layout.addLayout(path_row)
+
+        # ---- Budget -----------------------------------------------------
+        layout.addWidget(self._make_subtitle("Disk budget"))
+
+        budget_row = QHBoxLayout()
+        self._budget_spin = QSpinBox()
+        self._budget_spin.setRange(0, 10000)  # 0 = unlimited; 10 TB ceiling
+        self._budget_spin.setSuffix(" GB")
+        self._budget_spin.setSpecialValueText("Unlimited")  # shown when value=0
+        self._budget_spin.setValue(self._initial_budget_gb)
+        budget_help = QLabel(
+            "Soft upper bound. When the cache exceeds this, the oldest "
+            "frames are evicted until total drops to 85 %. Set 0 for "
+            "no limit (use the Clear button below when needed).",
+        )
+        budget_help.setWordWrap(True)
+        budget_help.setStyleSheet("color: #888; font-size: 11px;")
+        budget_row.addWidget(self._budget_spin)
+        budget_row.addStretch(1)
+        layout.addWidget(budget_help)
+        layout.addLayout(budget_row)
+
+        # ---- Clear ------------------------------------------------------
+        layout.addWidget(self._make_subtitle("Maintenance"))
+
+        self._usage_label = QLabel("")
+        self._usage_label.setStyleSheet("color: #ccc;")
+        layout.addWidget(self._usage_label)
+
+        clear_btn = QPushButton("Clear cache now…")
+        clear_btn.setToolTip(
+            "Delete every cached frame from disk. Useful when the disk "
+            "is running out of space. The cache rebuilds automatically "
+            "as you decode frames during the next playback.",
+        )
+        clear_btn.clicked.connect(self._on_clear)
+        clear_btn.setMaximumWidth(220)
+        layout.addWidget(clear_btn)
+
+        layout.addStretch(1)
+
+        # Initial sync of the enabled/disabled visual state + usage.
+        self._on_enable_toggled(self._initial_enabled)
+        self._refresh_usage_label()
+
+    # ---- Subtitle helper -----------------------------------------------
+
+    def _make_subtitle(self, text: str) -> QLabel:
+        lbl = QLabel(text)
+        lbl.setStyleSheet("font-weight: 600; margin-top: 6px;")
+        return lbl
+
+    # ---- Slots ---------------------------------------------------------
+
+    def _on_enable_toggled(self, checked: bool) -> None:
+        # Grey out path + budget when the cache is off — they have no
+        # effect in that state and showing them as active would
+        # mislead.
+        self._path_edit.setEnabled(checked)
+        self._budget_spin.setEnabled(checked)
+
+    def _on_browse(self) -> None:
+        current = self._path_edit.text().strip() or ""
+        chosen = QFileDialog.getExistingDirectory(
+            self,
+            "Pick a disk cache directory",
+            current,
+        )
+        if chosen:
+            self._path_edit.setText(chosen)
+
+    def _on_clear(self) -> None:
+        if self._disk_cache is None:
+            QMessageBox.information(
+                self,
+                "Disk cache disabled",
+                "The disk cache isn't currently running — nothing to "
+                "clear. Enable it and restart to populate the cache.",
+            )
+            return
+        reply = QMessageBox.warning(
+            self,
+            "Clear disk cache?",
+            "This will delete every cached frame on disk. The cache "
+            "rebuilds automatically as frames are decoded during the "
+            "next playback, but the first scrub through the shot "
+            "won't be as fast.\n\nClear now?",
+            QMessageBox.StandardButton.Yes
+            | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            freed = self._disk_cache.clear()
+        except Exception:  # pragma: no cover — defensive
+            log.exception("DiskCache clear failed")
+            QMessageBox.critical(
+                self, "Clear failed",
+                "An error occurred while clearing the disk cache. "
+                "Check the log for details.",
+            )
+            return
+        self._refresh_usage_label()
+        QMessageBox.information(
+            self, "Disk cache cleared",
+            f"Freed {freed / (1024 ** 3):.2f} GB.",
+        )
+
+    def _refresh_usage_label(self) -> None:
+        if self._disk_cache is None:
+            self._usage_label.setText(
+                "Disk cache is not currently running.",
+            )
+            return
+        try:
+            used = self._disk_cache.size_bytes()
+            entries = self._disk_cache.entry_count()
+            path = self._disk_cache.cache_dir()
+        except Exception:  # pragma: no cover — defensive
+            self._usage_label.setText("(unable to read cache stats)")
+            return
+        used_gb = used / (1024 ** 3)
+        budget_gb = self._initial_budget_gb
+        budget_str = "unlimited" if budget_gb == 0 else f"{budget_gb} GB"
+        self._usage_label.setText(
+            f"Used: {used_gb:.2f} GB · {entries} entries · "
+            f"Budget: {budget_str} · Path: {path}",
+        )
+
+    # ---- Apply ---------------------------------------------------------
+
+    def apply(self) -> bool:
+        """Persist new values to preferences. Returns ``True`` when
+        something changed (= a restart hint is worth showing)."""
+        new_enabled = self._enable_chk.isChecked()
+        new_path = self._path_edit.text().strip()
+        new_budget = int(self._budget_spin.value())
+
+        changed = False
+        if new_enabled != self._initial_enabled:
+            self._prefs.disk_cache_enabled = new_enabled
+            self._initial_enabled = new_enabled
+            changed = True
+        if new_path != self._initial_path:
+            self._prefs.disk_cache_path = Path(new_path) if new_path else None
+            self._initial_path = new_path
+            changed = True
+        if new_budget != self._initial_budget_gb:
+            self._prefs.disk_cache_budget_gb = new_budget
+            self._initial_budget_gb = new_budget
+            # Live cache picks up the new budget immediately — eviction
+            # fires straight away if shrinking past current usage.
+            if self._disk_cache is not None:
+                try:
+                    self._disk_cache.set_budget(new_budget * (1024 ** 3))
+                except Exception:  # pragma: no cover — defensive
+                    log.exception("DiskCache set_budget failed")
+            changed = True
+        return changed
+
+
 class PreferencesDialog(QDialog):
     """Modal preferences dialog with a category sidebar.
 
@@ -338,6 +589,7 @@ class PreferencesDialog(QDialog):
         self,
         prefs: Preferences,
         on_reload: Callable[[], dict[str, object]] | None = None,
+        disk_cache: object | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -347,6 +599,7 @@ class PreferencesDialog(QDialog):
 
         self._prefs = prefs
         self._on_reload = on_reload
+        self._disk_cache = disk_cache
         self._pages: list[QWidget] = []
 
         root = QVBoxLayout(self)
@@ -389,6 +642,10 @@ class PreferencesDialog(QDialog):
         self._add_section(
             "Color Management",
             _ColorManagementPage(prefs, on_reload=on_reload, parent=self),
+        )
+        self._add_section(
+            "Disk cache",
+            _DiskCachePage(prefs, disk_cache_handle=disk_cache, parent=self),
         )
 
         self._sidebar.currentRowChanged.connect(self._stack.setCurrentIndex)

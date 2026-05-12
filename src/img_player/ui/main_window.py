@@ -1057,6 +1057,17 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         """
         self._ocio_reload_cb = cb
 
+    def set_disk_cache_handle(self, disk_cache) -> None:  # type: ignore[no-untyped-def]
+        """Register the live :class:`DiskCache` instance.
+
+        Same pattern as :meth:`set_ocio_reload_callback`: ``App``
+        passes the live handle here once construction is done, and
+        :class:`PreferencesDialog` forwards it to the disk-cache page
+        so the "clear / usage" actions can hit the running cache
+        rather than just edit prefs for the next boot.
+        """
+        self._disk_cache_handle = disk_cache
+
     def _open_preferences(self) -> None:
         """File → Open Preferences… — application-wide settings dialog.
 
@@ -1071,7 +1082,13 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         from img_player.ui.preferences_dialog import PreferencesDialog
 
         on_reload = getattr(self, "_ocio_reload_cb", None)
-        dialog = PreferencesDialog(Preferences(), on_reload=on_reload, parent=self)
+        disk_cache = getattr(self, "_disk_cache_handle", None)
+        dialog = PreferencesDialog(
+            Preferences(),
+            on_reload=on_reload,
+            disk_cache=disk_cache,
+            parent=self,
+        )
         dialog.exec()
 
     def _on_info_band_btn_context_menu(self, pos) -> None:  # type: ignore[no-untyped-def]

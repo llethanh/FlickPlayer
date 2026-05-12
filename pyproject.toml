@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "img_player"
-version = "1.4.3"
+version = "1.5.0"
 description = "VFX-grade image sequence player with OCIO color management"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -24,6 +24,12 @@ dependencies = [
     "numpy>=1.26",
     "PyOpenGL>=3.1",
     "psutil>=5.9",
+    # Disk-cache tier: half-float frame blobs are lz4-compressed for
+    # ~25 MB per 4K frame and ~5 ms decode. Falls back to stdlib zlib
+    # at runtime if lz4 isn't installable (some bare environments) so
+    # this is technically optional — leaving it in dependencies keeps
+    # the fast path universal.
+    "lz4>=4.0",
 ]
 
 [project.optional-dependencies]

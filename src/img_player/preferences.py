@@ -609,3 +609,63 @@ class Preferences:
     def save_frame_settings(self, data: dict[str, object]) -> None:
         for key, value in data.items():
             self._s.setValue(f"save_frame/{key}", value)
+
+    # ------------------------------------------------------------------ Disk cache (v1.5)
+
+    @property
+    def disk_cache_enabled(self) -> bool:
+        """When ``True``, the cache writes evicted RAM frames to disk
+        and looks them up before re-decoding on subsequent sessions.
+
+        Default ``True`` — the disk cache is a strict performance win
+        on a typical review workflow (open the same shot day after
+        day). Users on machines with tight SSD budgets can opt out
+        from Preferences → Disk cache.
+        """
+        return _qbool(self._s.value("disk_cache/enabled"), default=True)
+
+    @disk_cache_enabled.setter
+    def disk_cache_enabled(self, value: bool) -> None:
+        self._s.setValue("disk_cache/enabled", bool(value))
+
+    @property
+    def disk_cache_path(self) -> Path | None:
+        """Where to store the on-disk frame cache. ``None`` means use
+        the default location (``%LOCALAPPDATA%\\img_player\\disk_cache\\``
+        on Windows; XDG-standard equivalent elsewhere).
+
+        Users can pick a custom path in Preferences when they want
+        the cache on a faster drive (NVMe scratch) or a different
+        partition with more headroom.
+        """
+        raw = self._s.value("disk_cache/path")
+        if not raw:
+            return None
+        return Path(str(raw))
+
+    @disk_cache_path.setter
+    def disk_cache_path(self, value: Path | str | None) -> None:
+        if value is None:
+            self._s.remove("disk_cache/path")
+        else:
+            self._s.setValue("disk_cache/path", str(value))
+
+    @property
+    def disk_cache_budget_gb(self) -> int:
+        """Soft upper bound on disk-cache size, in **gigabytes**.
+
+        ``0`` = unlimited (the cache only grows when the user
+        explicitly clears it). Default 50 GB — enough room for ~2 000
+        4K frames. Values are stored as int GB to keep the
+        Preferences spinner UI simple; the cache converts to bytes
+        internally.
+        """
+        raw = self._s.value("disk_cache/budget_gb", 50)
+        try:
+            return max(0, int(raw))
+        except (TypeError, ValueError):
+            return 50
+
+    @disk_cache_budget_gb.setter
+    def disk_cache_budget_gb(self, value: int) -> None:
+        self._s.setValue("disk_cache/budget_gb", max(0, int(value)))

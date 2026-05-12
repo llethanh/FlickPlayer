@@ -37,7 +37,12 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from img_player.cache.disk_cache import DiskCache
 from img_player.cache.missing_placeholder import get_missing_placeholder
+from img_player.cache.source_key import (
+    composite_source_key,
+    source_key_for_layer_frame,
+)
 from img_player.cache.worker_pool import WorkerPool
 from img_player.io.reader import FrameReadError, read_frame
 from img_player.layers import Layer, LayerStack
@@ -146,10 +151,16 @@ class MasterFrameCache:
         stack: LayerStack,
         budget_bytes: int = _DEFAULT_BUDGET_BYTES,
         num_workers: int = _DEFAULT_NUM_WORKERS,
+        disk_cache: DiskCache | None = None,
     ) -> None:
         self._stack = stack
         self._budget = budget_bytes
         self._lock = threading.RLock()
+        # Optional second cache tier on disk — survives close/reopen.
+        # When set, decode workers check it before hitting ``read_frame``
+        # and write successful decodes back so the next session can
+        # reuse them. ``None`` keeps the legacy RAM-only behaviour.
+        self._disk_cache: DiskCache | None = disk_cache
         # Cache keys are ``(master_frame, chain_signature)`` tuples
         # where the signature captures the visible chain at that
         # master frame *plus* each contributor layer's channel
@@ -309,6 +320,15 @@ class MasterFrameCache:
         second call after shutdown sees an empty dict and no-ops.
         """
         self._pool.shutdown()
+        # Flush pending disk-cache writes before clearing the in-RAM
+        # arrays they may still reference. ``DiskCache.shutdown`` has
+        # a short timeout (default 2 s) so a runaway writer queue
+        # can't hang the app exit indefinitely.
+        if self._disk_cache is not None:
+            try:
+                self._disk_cache.shutdown()
+            except Exception:  # pragma: no cover — defensive
+                log.exception("DiskCache shutdown failed (non-fatal)")
         with self._lock:
             self._frames.clear()
             self._missing.clear()
@@ -1293,6 +1313,66 @@ class MasterFrameCache:
         add / remove, trim)."""
         self._signature_cache.clear()
 
+    def _source_key_at(self, master_frame: int) -> str | None:
+        """Compute the **session-independent** disk-cache key for the
+        chain at ``master_frame``.
+
+        Mirrors :meth:`_signature_at` (same chain walk, same channel
+        rules) but swaps each layer's session-local ``id`` for a
+        canonical ``(path, mtime, channels, alpha flags)`` tuple. Two
+        sessions opening the same EXR with the same channel selection
+        get the same key — that's the whole point of the disk tier.
+
+        Returns ``None`` when the key can't be meaningfully built:
+          * no visible layer covers this frame (= gap, nothing to
+            cache),
+          * any contributing layer has no resolved source path at
+            this frame (= sparse hole — we don't disk-cache missing
+            frame placeholders; they're cheap to regenerate),
+          * mtime info isn't yet indexed for some layer (defensive —
+            triggers a fresh decode + cache fill).
+        """
+        if self._disk_cache is None:
+            return None
+        per_layer: list[str] = []
+        for layer in self._stack.layers():
+            if not layer.visible or not layer.covers(master_frame):
+                continue
+            source_frame = layer.source_frame_at(master_frame)
+            path_map = self._path_index.get(layer.id)
+            mtime_map = self._mtime_index.get(layer.id)
+            if path_map is None or mtime_map is None:
+                return None
+            path = path_map.get(source_frame)
+            mtime = mtime_map.get(source_frame)
+            if path is None or mtime is None:
+                return None
+            # ``size`` is left at 0 — we don't store file size in the
+            # path index today and the extra ``stat`` per frame would
+            # halve the prefetch throughput. mtime + path collision is
+            # already astronomically unlikely; size is belt-and-braces
+            # we can add later if needed.
+            channels = self._channels_for(layer)
+            key = source_key_for_layer_frame(
+                source_path=path,
+                mtime=float(mtime),
+                size=0,
+                channels=channels,
+                alpha_composite=bool(layer.alpha_composite),
+                alpha_is_straight=bool(layer.alpha_is_straight),
+            )
+            per_layer.append(key)
+            if not layer.alpha_composite:
+                # Opaque-floor layer: the over-walk stops here, same
+                # as in :meth:`_signature_at`. The composite key is
+                # built from what actually contributes.
+                break
+        if not per_layer:
+            return None
+        if len(per_layer) == 1:
+            return per_layer[0]
+        return composite_source_key(per_layer)
+
     def _signature_at_with_override(
         self,
         master_frame: int,
@@ -1991,6 +2071,28 @@ class MasterFrameCache:
         """
         with self._lock:
             epoch = self._epoch
+            disk_key = self._source_key_at(master_frame)
+        key = (master_frame, signature)
+        # Disk-tier lookup — same fast path as in ``_decode_and_store``
+        # but for the multi-layer composite case. The disk cache key
+        # already encodes the composite (one key per ordered chain),
+        # so a hit gives us the pre-composed result back without
+        # re-running the over-blend.
+        if disk_key is not None and self._disk_cache is not None:
+            cached = self._disk_cache.get(disk_key)
+            if cached is not None:
+                with self._lock:
+                    if epoch != self._epoch:
+                        return
+                    if key in self._frames:
+                        return
+                    self._frames[key] = cached
+                    self._bytes_used += cached.nbytes
+                    self._signature_first_cached.setdefault(
+                        signature, time.monotonic(),
+                    )
+                    self._evict_if_over_budget()
+                return
         try:
             top_plan = plan[0]
             top = read_frame(top_plan["path"], channels=top_plan["channels"])
@@ -2078,6 +2180,11 @@ class MasterFrameCache:
                         f_sig, time.monotonic(),
                     )
             self._evict_if_over_budget()
+        # Persist the composite to disk so the next session can
+        # restore it without re-running the over-blend. Async — the
+        # writer thread serialises + lz4-compresses on its own time.
+        if disk_key is not None and self._disk_cache is not None:
+            self._disk_cache.put(disk_key, accum)
 
     def _decode_and_store(
         self,
@@ -2107,7 +2214,31 @@ class MasterFrameCache:
         """
         with self._lock:
             epoch = self._epoch
+            disk_key = self._source_key_at(master_frame)
         key = (master_frame, signature)
+        # Disk-tier lookup — short-circuit the expensive ``read_frame``
+        # when the same source was decoded in a previous session (or
+        # earlier in this one before RAM eviction). The disk cache
+        # stores half-float lz4 blobs; a 4K hit comes back in ~5-8 ms
+        # versus ~300 ms for a fresh EXR decode.
+        if disk_key is not None and self._disk_cache is not None:
+            cached = self._disk_cache.get(disk_key)
+            if cached is not None:
+                arr = cached
+                if strip_alpha and arr.ndim == 3 and arr.shape[2] == 4:
+                    arr = np.ascontiguousarray(arr[..., :3])
+                with self._lock:
+                    if epoch != self._epoch:
+                        return
+                    if key in self._frames:
+                        return
+                    self._frames[key] = arr
+                    self._bytes_used += arr.nbytes
+                    self._signature_first_cached.setdefault(
+                        signature, time.monotonic(),
+                    )
+                    self._evict_if_over_budget()
+                return
         try:
             arr = read_frame(path, channels=channels)
         except FrameReadError as err:
@@ -2185,6 +2316,12 @@ class MasterFrameCache:
                         f_sig, time.monotonic(),
                     )
             self._evict_if_over_budget()
+        # Async disk-cache write — survives this session's process
+        # exit so a re-open lands on the fast path. Outside the lock
+        # because ``put`` only enqueues; the actual write happens on
+        # the DiskCache writer thread.
+        if disk_key is not None and self._disk_cache is not None:
+            self._disk_cache.put(disk_key, arr)
 
     def _still_layer_anchored_at(self, master_frame: int):  # type: ignore[no-untyped-def]
         """Return the topmost-visible still layer whose ``master_start``

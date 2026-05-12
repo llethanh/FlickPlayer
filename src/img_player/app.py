@@ -238,14 +238,32 @@ class ImgPlayerApp:
         # from it for path / channel resolution at decode time. Order
         # matters: stack first, then cache (which subscribes to stack
         # signals), then controller (which uses the cache).
+        from img_player.cache.disk_cache import DiskCache, default_cache_dir
         from img_player.cache.master_frame_cache import MasterFrameCache
         from img_player.layers import LayerStack
         from img_player.media import VideoSourceManager
         self._layer_stack = LayerStack()
+        # On-disk frame cache — survives close/reopen so the next
+        # session re-opens warm. Path + budget driven by preferences;
+        # disabling switches the tier off entirely (the cache falls
+        # back to its legacy RAM-only behaviour).
+        disk_cache: DiskCache | None = None
+        if self._prefs.disk_cache_enabled:
+            try:
+                cache_dir = self._prefs.disk_cache_path or default_cache_dir()
+                budget_bytes = self._prefs.disk_cache_budget_gb * (1024 ** 3)
+                disk_cache = DiskCache(cache_dir, budget_bytes=budget_bytes)
+            except Exception:  # pragma: no cover — defensive
+                log.exception(
+                    "DiskCache init failed; falling back to RAM-only cache",
+                )
+                disk_cache = None
+        self._disk_cache = disk_cache
         self._cache = MasterFrameCache(
             self._layer_stack,
             budget_bytes=cache_budget_bytes,
             num_workers=num_workers,
+            disk_cache=disk_cache,
         )
         # Video decoders. Image-sequence layers go through ``self._cache``;
         # video layers (mp4 / mov / …) bypass the cache and pull pixels
@@ -878,6 +896,10 @@ class ImgPlayerApp:
         # "Restart required" banner — fine, but a restart is no longer
         # actually needed.
         self._window.set_ocio_reload_callback(self.reload_ocio_config)
+        # Hand the live DiskCache to MainWindow so the Preferences →
+        # Disk cache page can wire its "clear / usage" controls at
+        # the running instance (not just persist prefs for next boot).
+        self._window.set_disk_cache_handle(self._disk_cache)
         self._window.color_panel.unmarked_exr_save_requested.connect(
             self._on_unmarked_exr_save,
         )

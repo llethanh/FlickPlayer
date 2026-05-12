@@ -1,0 +1,610 @@
+"""On-disk frame cache tier — half-float lz4 blobs + SQLite LRU index.
+
+Sits between :class:`MasterFrameCache` (RAM) and ``read_frame`` (source
+decode + OCIO input prep) as a third tier. The goal: re-opening the
+same shot tomorrow finds yesterday's frames warm without re-decoding
+the EXRs.
+
+Why these choices
+-----------------
+
+* **Half-float blobs** — frames are stored as ``float16`` rather than
+  ``float32``. 2× smaller on disk; the dtype is restored to float32 on
+  read (free) so consumers see no difference. Half-float covers HDR up
+  to 65 504 with sub-percent precision in the 0..1 range — well beyond
+  what a viewer needs to display.
+
+* **lz4 compression** — fastest mainstream compressor (~3 GB/s decode
+  on a modern CPU). A 4K float16 frame compresses to ~25 MB and
+  decompresses in ~5 ms. Compared to a fresh EXR decode (~300 ms) this
+  is a 50× win on slow sources. Falls back to zlib if ``lz4`` isn't
+  importable — the cache still works, just slower.
+
+* **SQLite for the index** — atomic, crash-safe (WAL mode),
+  transactional bulk operations for LRU eviction. One column carries
+  ``last_access`` (UNIX epoch) so trimming to budget is a single
+  indexed query.
+
+* **Async writes** — :meth:`put` enqueues to a dedicated writer
+  thread; the caller never blocks on disk I/O. Useful when eviction
+  happens during playback: the RAM is freed immediately, the blob
+  lands a few hundred ms later.
+
+* **Sharded blob layout** — ``<cache_dir>/<hash[:2]>/<hash[2:4]>/<hash>.bin``
+  to avoid 100k files in a single directory (lethal on NTFS). Each
+  blob's existence is the source of truth; SQLite is rebuilt-able by
+  scanning the tree if it's ever lost.
+
+Key contract
+------------
+
+Keys are opaque strings (callers compute them — typically a
+SHA-1 of ``(canonical_path, mtime, channel_set, alpha_flags)``).
+The cache doesn't interpret them; it just maps key → blob. This
+keeps the cache decoupled from layer / session semantics.
+
+Threading
+---------
+
+* :meth:`get` and :meth:`put` are thread-safe.
+* :meth:`put` is fire-and-forget — actual disk write happens on the
+  writer thread. The ndarray passed in **must not be mutated** by the
+  caller after the call returns; the cache assumes the frame is
+  immutable once cached (same contract as ``MasterFrameCache._frames``).
+* SQLite access is serialised via a single connection + lock.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import io
+import logging
+import os
+import queue
+import sqlite3
+import sys
+import threading
+import time
+from pathlib import Path
+
+import numpy as np
+
+
+def default_cache_dir() -> Path:
+    """Resolve the platform-default disk-cache location.
+
+    * **Windows** — ``%LOCALAPPDATA%\\img_player\\disk_cache\\`` (the
+      same root the log file uses).
+    * **macOS**   — ``~/Library/Caches/img_player/disk_cache/``.
+    * **Linux**   — ``$XDG_CACHE_HOME/img_player/disk_cache/`` falling
+      back to ``~/.cache/img_player/disk_cache/``.
+
+    Called from :class:`img_player.app.ImgPlayerApp` when the user
+    hasn't overridden the path in Preferences. The directory itself
+    is created on first :class:`DiskCache` construction; this helper
+    only computes the location.
+    """
+    if sys.platform.startswith("win"):
+        root = os.environ.get("LOCALAPPDATA")
+        if root:
+            return Path(root) / "img_player" / "disk_cache"
+        return Path.home() / "AppData" / "Local" / "img_player" / "disk_cache"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Caches" / "img_player" / "disk_cache"
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    if xdg:
+        return Path(xdg) / "img_player" / "disk_cache"
+    return Path.home() / ".cache" / "img_player" / "disk_cache"
+
+log = logging.getLogger(__name__)
+
+# Try lz4 first (the fast path), fall back to stdlib zlib.
+try:
+    import lz4.frame as _lz4_frame  # type: ignore[import-untyped]
+    _HAS_LZ4 = True
+except ImportError:  # pragma: no cover — only on stripped envs
+    _lz4_frame = None
+    _HAS_LZ4 = False
+    log.warning(
+        "lz4 not available; disk cache will use stdlib zlib (~3× slower). "
+        "Add ``lz4`` to environment.yml to enable the fast path.",
+    )
+
+import zlib
+
+# Magic prefix written at the start of every blob so a corrupt /
+# orphaned file can be identified by its first 4 bytes when sweeping
+# the cache root. Bumped if the on-disk format ever changes.
+_BLOB_MAGIC = b"FCD1"
+
+
+def _compress(payload: bytes) -> bytes:
+    if _HAS_LZ4:
+        return _lz4_frame.compress(payload, compression_level=1)
+    return zlib.compress(payload, level=1)
+
+
+def _decompress(blob: bytes) -> bytes:
+    if _HAS_LZ4:
+        return _lz4_frame.decompress(blob)
+    return zlib.decompress(blob)
+
+
+def _serialize(arr: np.ndarray) -> bytes:
+    """Convert ndarray → compressed bytes blob.
+
+    Float arrays are cast to ``float16`` for storage (2× space win). Other
+    dtypes (uint8 for placeholders, uint16 for half-float-already inputs)
+    are stored as-is. ``np.save`` preserves shape + dtype so we don't need
+    a custom header — round-trip via the matching ``_deserialize``.
+    """
+    # Avoid a copy when the array is already float16; the cast is in-place
+    # via the ``copy=False`` hint.
+    if arr.dtype == np.float32:
+        arr = arr.astype(np.float16, copy=False)
+    buf = io.BytesIO()
+    # ``allow_pickle=False`` is a sanity guard — we only round-trip plain
+    # arrays here; if a pickled object ever sneaks in we'd rather fail
+    # loud than silently load arbitrary code on read.
+    np.save(buf, arr, allow_pickle=False)
+    return _BLOB_MAGIC + _compress(buf.getvalue())
+
+
+def _deserialize(blob: bytes) -> np.ndarray:
+    """Inverse of :func:`_serialize`. Restores float16 → float32 so callers
+    always see the consumer-friendly dtype."""
+    if not blob.startswith(_BLOB_MAGIC):
+        raise ValueError(
+            f"DiskCache blob missing magic prefix (got {blob[:4]!r}); "
+            "file is corrupt or pre-dates current format.",
+        )
+    raw = _decompress(blob[len(_BLOB_MAGIC):])
+    arr = np.load(io.BytesIO(raw), allow_pickle=False)
+    if arr.dtype == np.float16:
+        arr = arr.astype(np.float32, copy=False)
+    return arr
+
+
+# Sentinel for the writer thread's shutdown signal — comparing identity
+# in the queue drain is cleaner than checking a flag inside the dequeued
+# task tuple.
+_SHUTDOWN_SENTINEL = object()
+
+
+class DiskCache:
+    """Persistent secondary cache for decoded frame buffers.
+
+    Construct once at app startup, pass into :class:`MasterFrameCache`.
+    Survives across sessions — opening the same shot tomorrow finds
+    yesterday's frames available without re-decoding.
+
+    Parameters
+    ----------
+    cache_dir
+        Where to store the SQLite index + blob tree. Created (with
+        parents) if missing.
+    budget_bytes
+        Soft upper bound on total disk usage. After each write the
+        oldest (least-recently-accessed) entries are evicted until the
+        total is ≤ 85 % of the budget (hysteresis avoids thrashing
+        when the budget is tight). ``0`` = unlimited (eviction
+        disabled; the cache only grows when the user explicitly
+        clears it).
+    """
+
+    # When evicting to make room, trim down to this fraction of the
+    # budget so a single new write doesn't immediately re-trigger
+    # eviction on the next put. 85 % gives ~15 % headroom before the
+    # next eviction wave.
+    _EVICT_TARGET_RATIO = 0.85
+
+    def __init__(self, cache_dir: Path, budget_bytes: int = 0) -> None:
+        self._cache_dir = Path(cache_dir)
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        self._budget_bytes = max(0, int(budget_bytes))
+
+        # ---- SQLite index --------------------------------------------
+        db_path = self._cache_dir / "index.sqlite"
+        # ``check_same_thread=False`` because both the main thread
+        # (lookups) and the writer thread touch the connection. All
+        # access is guarded by ``self._db_lock``.
+        self._db = sqlite3.connect(
+            str(db_path), check_same_thread=False, isolation_level=None,
+        )
+        self._db_lock = threading.Lock()
+        # WAL mode = readers don't block the writer and vice versa.
+        # Crash-safe by SQLite's normal guarantees.
+        with self._db_lock:
+            self._db.execute("PRAGMA journal_mode = WAL")
+            self._db.execute("PRAGMA synchronous = NORMAL")
+            self._db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS entries (
+                    key TEXT PRIMARY KEY,
+                    blob_path TEXT NOT NULL,
+                    size_bytes INTEGER NOT NULL,
+                    last_access REAL NOT NULL,
+                    created_at REAL NOT NULL
+                )
+                """,
+            )
+            self._db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_last_access "
+                "ON entries(last_access)",
+            )
+
+        # ---- Async writer --------------------------------------------
+        # Bounded queue so a runaway producer (e.g. eviction storm)
+        # doesn't OOM the process. When full, ``put`` falls back to
+        # dropping the oldest enqueued task — the disk cache is a
+        # best-effort persistence layer, not a correctness-critical
+        # path.
+        self._write_queue: queue.Queue = queue.Queue(maxsize=128)
+        self._shutdown = threading.Event()
+        self._writer_thread = threading.Thread(
+            target=self._writer_loop,
+            name="DiskCacheWriter",
+            daemon=True,
+        )
+        self._writer_thread.start()
+
+        # Cached total size — updated atomically alongside SQLite
+        # writes so callers don't pay an aggregate query per ``put``.
+        # Initialised by scanning the DB once at startup.
+        with self._db_lock:
+            row = self._db.execute(
+                "SELECT COALESCE(SUM(size_bytes), 0) FROM entries"
+            ).fetchone()
+        self._total_bytes = int(row[0]) if row else 0
+
+        log.info(
+            "DiskCache ready at %s (budget=%s, entries=%d, used=%d MB, "
+            "compressor=%s)",
+            self._cache_dir,
+            "unlimited" if self._budget_bytes == 0 else f"{self._budget_bytes} B",
+            self._entry_count_unlocked(),
+            self._total_bytes // (1024 * 1024),
+            "lz4" if _HAS_LZ4 else "zlib",
+        )
+
+    # ------------------------------------------------------------------ Public API
+
+    def get(self, key: str) -> np.ndarray | None:
+        """Synchronous read. Returns ``None`` on miss.
+
+        On hit, the blob is decompressed (~3-8 ms at HD) and the
+        entry's ``last_access`` timestamp is updated so LRU eviction
+        keeps recently-used frames around. Hot path — gates a decode
+        on miss, so latency matters.
+        """
+        if not key:
+            return None
+        with self._db_lock:
+            row = self._db.execute(
+                "SELECT blob_path FROM entries WHERE key = ?", (key,),
+            ).fetchone()
+        if row is None:
+            return None
+        blob_path = self._cache_dir / row[0]
+        try:
+            blob = blob_path.read_bytes()
+        except OSError as err:
+            # File vanished between DB lookup and read (manual
+            # ``rmdir``, antivirus quarantine, …). Sweep the orphaned
+            # index entry so a future ``put`` doesn't believe the
+            # entry already exists.
+            log.warning(
+                "DiskCache blob missing at %s (%s); dropping index entry",
+                blob_path, err,
+            )
+            self._remove_internal(key)
+            return None
+        try:
+            arr = _deserialize(blob)
+        except Exception:  # pragma: no cover — only on corrupted files
+            log.exception(
+                "DiskCache failed to deserialize blob at %s; dropping",
+                blob_path,
+            )
+            self._remove_internal(key)
+            return None
+        # Touch the access time so this entry survives the next
+        # eviction wave. Failure is non-fatal — a stale ``last_access``
+        # at worst means the entry gets evicted slightly sooner than it
+        # should.
+        try:
+            with self._db_lock:
+                self._db.execute(
+                    "UPDATE entries SET last_access = ? WHERE key = ?",
+                    (time.time(), key),
+                )
+        except sqlite3.Error:
+            log.exception("DiskCache last_access update failed (non-fatal)")
+        return arr
+
+    def put(self, key: str, arr: np.ndarray) -> None:
+        """Queue an array for async disk write.
+
+        Returns immediately. The actual serialization + write happens
+        on the writer thread. The caller **must not mutate ``arr``**
+        after this call — the writer reads it directly.
+
+        Drops the put silently when:
+          * ``key`` is empty
+          * The array is not 3-D (we only cache HxWxC frame buffers)
+          * The disk cache has been shut down
+          * The write queue is full (back-pressure — better to skip a
+            disk-cache opportunity than block the eviction path)
+        """
+        if not key or arr is None:
+            return
+        if arr.ndim != 3:
+            return
+        if self._shutdown.is_set():
+            return
+        try:
+            self._write_queue.put_nowait((key, arr))
+        except queue.Full:
+            # Full queue == we're falling behind on writes. The frame
+            # stays cached only in RAM and (probably) gets evicted
+            # before we catch up. Acceptable; the disk cache is
+            # opportunistic, not a guarantee.
+            log.debug("DiskCache write queue full; dropping put for %s", key[:16])
+
+    def remove(self, key: str) -> None:
+        """Synchronous delete. No-op if the entry doesn't exist."""
+        if not key:
+            return
+        self._remove_internal(key)
+
+    def clear(self) -> int:
+        """Wipe every entry. Returns the number of bytes freed.
+
+        Synchronous (the user clicked "Clear cache" and is waiting for
+        the disk to free up). The writer thread is paused via a
+        flag-check inside the writer loop so a pending write doesn't
+        re-create files mid-clear.
+        """
+        # Drain pending writes first so nothing gets re-created after
+        # we've removed it.
+        self._drain_pending_writes(timeout_s=1.0)
+        freed = 0
+        with self._db_lock:
+            rows = self._db.execute(
+                "SELECT blob_path, size_bytes FROM entries",
+            ).fetchall()
+            for rel, size in rows:
+                blob_path = self._cache_dir / rel
+                try:
+                    blob_path.unlink(missing_ok=True)
+                    freed += int(size)
+                except OSError as err:
+                    log.warning(
+                        "DiskCache clear: failed to remove %s (%s)",
+                        blob_path, err,
+                    )
+            self._db.execute("DELETE FROM entries")
+            self._total_bytes = 0
+        # Best-effort directory cleanup — the sharded sub-dirs left
+        # empty after the unlinks above are pruned so a subsequent
+        # ``ls`` doesn't show a fan of empty stubs. Errors ignored;
+        # the tree is auto-recreated on the next put.
+        self._prune_empty_dirs()
+        log.info("DiskCache cleared %d bytes (%d entries)", freed, len(rows))
+        return freed
+
+    def size_bytes(self) -> int:
+        """Current total disk usage (sum of all stored blob sizes)."""
+        return self._total_bytes
+
+    def entry_count(self) -> int:
+        with self._db_lock:
+            return self._entry_count_unlocked()
+
+    def set_budget(self, budget_bytes: int) -> None:
+        """Update the budget. ``0`` = unlimited.
+
+        Triggers an immediate eviction round if the new budget is
+        below current usage — frees disk on demand when the user
+        shrinks the limit.
+        """
+        new = max(0, int(budget_bytes))
+        if new == self._budget_bytes:
+            return
+        self._budget_bytes = new
+        if new > 0 and self._total_bytes > new:
+            self._evict_to_budget()
+
+    def budget_bytes(self) -> int:
+        return self._budget_bytes
+
+    def cache_dir(self) -> Path:
+        return self._cache_dir
+
+    def shutdown(self, timeout_s: float = 2.0) -> None:
+        """Stop the writer thread and close the DB.
+
+        Called from :meth:`MasterFrameCache.shutdown` at app exit.
+        Best-effort flush of pending writes within ``timeout_s``;
+        anything still queued after the timeout is dropped silently
+        (better than a hanging exit).
+        """
+        if self._shutdown.is_set():
+            return
+        self._drain_pending_writes(timeout_s=timeout_s)
+        self._shutdown.set()
+        try:
+            self._write_queue.put_nowait(_SHUTDOWN_SENTINEL)
+        except queue.Full:
+            pass
+        self._writer_thread.join(timeout=timeout_s)
+        with self._db_lock:
+            try:
+                self._db.close()
+            except sqlite3.Error:
+                pass
+
+    # ------------------------------------------------------------------ Internals
+
+    def _entry_count_unlocked(self) -> int:
+        row = self._db.execute("SELECT COUNT(*) FROM entries").fetchone()
+        return int(row[0]) if row else 0
+
+    def _blob_path_for(self, key: str) -> Path:
+        """Sharded relative path inside ``cache_dir``. ``ab/cd1234.../hash.bin``."""
+        return Path(key[:2]) / key[2:4] / f"{key}.bin"
+
+    def _writer_loop(self) -> None:
+        """Worker thread loop — drain the queue, serialize, write."""
+        while not self._shutdown.is_set():
+            try:
+                task = self._write_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if task is _SHUTDOWN_SENTINEL:
+                break
+            try:
+                key, arr = task
+                self._write_one(key, arr)
+            except Exception:  # pragma: no cover — defensive
+                log.exception("DiskCache writer failed on task")
+
+    def _write_one(self, key: str, arr: np.ndarray) -> None:
+        """Serialize + write a single (key, ndarray) → disk + update DB."""
+        if self._shutdown.is_set():
+            return
+        rel = self._blob_path_for(key)
+        abs_path = self._cache_dir / rel
+        abs_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            blob = _serialize(arr)
+        except Exception:  # pragma: no cover — defensive
+            log.exception("DiskCache serialize failed for key %s", key[:16])
+            return
+        # Write to a sibling tmp file then rename — atomic-ish on
+        # Windows, atomic on POSIX. Avoids corrupt half-written blobs
+        # on a crash or power-cut during write.
+        tmp_path = abs_path.with_suffix(abs_path.suffix + ".tmp")
+        try:
+            tmp_path.write_bytes(blob)
+            tmp_path.replace(abs_path)
+        except OSError as err:
+            log.warning("DiskCache write failed for %s: %s", abs_path, err)
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return
+        now = time.time()
+        size = len(blob)
+        with self._db_lock:
+            # UPSERT — replace any existing entry so the disk usage
+            # tracker doesn't double-count when the same key is
+            # written twice (rare but possible: same signature
+            # decoded by two threads concurrently).
+            existing = self._db.execute(
+                "SELECT size_bytes FROM entries WHERE key = ?", (key,),
+            ).fetchone()
+            if existing is not None:
+                self._total_bytes -= int(existing[0])
+            self._db.execute(
+                """
+                INSERT INTO entries(key, blob_path, size_bytes,
+                                    last_access, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    blob_path = excluded.blob_path,
+                    size_bytes = excluded.size_bytes,
+                    last_access = excluded.last_access
+                """,
+                (key, str(rel).replace("\\", "/"), size, now, now),
+            )
+            self._total_bytes += size
+        # Eviction outside the lock — _evict_to_budget acquires it
+        # internally per batch to keep critical sections short.
+        if self._budget_bytes > 0 and self._total_bytes > self._budget_bytes:
+            self._evict_to_budget()
+
+    def _remove_internal(self, key: str) -> None:
+        with self._db_lock:
+            row = self._db.execute(
+                "SELECT blob_path, size_bytes FROM entries WHERE key = ?",
+                (key,),
+            ).fetchone()
+            if row is None:
+                return
+            blob_path = self._cache_dir / row[0]
+            size = int(row[1])
+            self._db.execute("DELETE FROM entries WHERE key = ?", (key,))
+            self._total_bytes -= size
+        try:
+            blob_path.unlink(missing_ok=True)
+        except OSError as err:
+            log.debug("DiskCache unlink failed for %s: %s", blob_path, err)
+
+    def _evict_to_budget(self) -> None:
+        """LRU-trim down to ``_EVICT_TARGET_RATIO`` of the budget."""
+        if self._budget_bytes <= 0:
+            return
+        target = int(self._budget_bytes * self._EVICT_TARGET_RATIO)
+        if self._total_bytes <= target:
+            return
+        # Pull the oldest entries one batch at a time so we don't load
+        # the full table into memory on a 50 GB cache.
+        batch_size = 64
+        evicted = 0
+        bytes_freed = 0
+        while self._total_bytes > target:
+            with self._db_lock:
+                rows = self._db.execute(
+                    "SELECT key FROM entries "
+                    "ORDER BY last_access ASC LIMIT ?",
+                    (batch_size,),
+                ).fetchall()
+            if not rows:
+                break
+            for (key,) in rows:
+                size_before = self._total_bytes
+                self._remove_internal(key)
+                evicted += 1
+                bytes_freed += size_before - self._total_bytes
+                if self._total_bytes <= target:
+                    break
+        if evicted:
+            log.info(
+                "DiskCache evicted %d entries (%d MB) to fit budget",
+                evicted, bytes_freed // (1024 * 1024),
+            )
+
+    def _drain_pending_writes(self, timeout_s: float) -> None:
+        """Block until the write queue is empty or ``timeout_s`` elapses."""
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            if self._write_queue.empty():
+                # The queue can become empty while the writer is mid-
+                # task; give the writer thread a moment to finish.
+                time.sleep(0.05)
+                if self._write_queue.empty():
+                    return
+            else:
+                time.sleep(0.05)
+
+    def _prune_empty_dirs(self) -> None:
+        """Remove empty shard sub-dirs left over after a clear. Best-effort."""
+        try:
+            for sub in self._cache_dir.iterdir():
+                if not sub.is_dir() or sub.name in (".",):
+                    continue
+                # Two levels deep (`ab/cd/`).
+                for sub2 in list(sub.iterdir()):
+                    if sub2.is_dir():
+                        try:
+                            sub2.rmdir()
+                        except OSError:
+                            pass
+                try:
+                    sub.rmdir()
+                except OSError:
+                    pass
+        except OSError:
+            pass
