@@ -492,7 +492,49 @@ class ImgPlayerApp:
         self._cache_bar_timer.stop()
         self._scrub_debounce.stop()
         self._controller.shutdown()
-        self._cache.shutdown()
+        # If the disk-cache writer has a backlog, show a small
+        # "Flushing disk cache..." label so the user sees the few-
+        # second pause is intentional and not a hang. Threshold of
+        # 5 is empirical: smaller backlogs drain too fast for the
+        # widget to even paint, just adding visual noise.
+        flush_label = None
+        pending = 0
+        try:
+            pending = self._cache.disk_cache_pending_writes()
+        except Exception:  # pragma: no cover — defensive
+            pending = 0
+        if pending > 5:
+            try:
+                from PySide6.QtCore import Qt
+
+                from img_player.ui.flush_indicator import FlushIndicator
+
+                flush_label = FlushIndicator(pending, parent=self._window)
+                flush_label.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+                flush_label.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+                flush_label.show()
+                QApplication.processEvents()
+            except Exception:  # pragma: no cover — UI is best effort at exit
+                log.exception("flush indicator setup failed (non-fatal)")
+                flush_label = None
+
+        def _on_flush_progress(remaining: int) -> None:
+            if flush_label is None:
+                return
+            try:
+                flush_label.update_remaining(remaining)
+                QApplication.processEvents()
+            except Exception:  # pragma: no cover
+                pass
+
+        try:
+            self._cache.shutdown(disk_progress_callback=_on_flush_progress)
+        finally:
+            if flush_label is not None:
+                try:
+                    flush_label.close()
+                except Exception:  # pragma: no cover
+                    pass
         # Close every open video decoder. Important on Windows where
         # PyAV holds an OS file handle on the container; without this
         # close the next session reload could see "file in use".

@@ -65,6 +65,7 @@ import sqlite3
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -550,17 +551,44 @@ class DiskCache:
             budget_bytes=self._budget_bytes,
         )
 
-    def shutdown(self, timeout_s: float = 2.0) -> None:
+    def pending_writes(self) -> int:
+        """Approximate queue depth of frames waiting to be written.
+
+        Lets callers (e.g. app-exit path) decide whether to show a
+        "flushing disk cache" indicator. ``queue.qsize`` is documented
+        as approximate but for our display purpose it's plenty.
+        """
+        try:
+            return self._write_queue.qsize()
+        except NotImplementedError:  # pragma: no cover — macOS edge
+            return 0
+
+    def shutdown(
+        self,
+        timeout_s: float = 10.0,
+        progress_callback: Callable[[int], None] | None = None,
+    ) -> None:
         """Stop the writer thread and close the DB.
 
         Called from :meth:`MasterFrameCache.shutdown` at app exit.
         Best-effort flush of pending writes within ``timeout_s``;
         anything still queued after the timeout is dropped silently
         (better than a hanging exit).
+
+        The default 10 s budget is sized for a worst-case queue of
+        ~150 frames at ~50 ms / blob — anything beyond that the user
+        was probably aware they were churning the cache and a few
+        dropped frames re-decode on next open. ``progress_callback``
+        is invoked every ~100 ms during the drain with the current
+        pending count so a UI can show a flushing indicator; called
+        from the same thread that called :meth:`shutdown`.
         """
         if self._shutdown.is_set():
             return
-        self._drain_pending_writes(timeout_s=timeout_s)
+        self._drain_pending_writes(
+            timeout_s=timeout_s,
+            progress_callback=progress_callback,
+        )
         self._shutdown.set()
         try:
             self._write_queue.put_nowait(_SHUTDOWN_SENTINEL)
@@ -745,15 +773,38 @@ class DiskCache:
                 evicted, bytes_freed // (1024 * 1024),
             )
 
-    def _drain_pending_writes(self, timeout_s: float) -> None:
-        """Block until the write queue is empty or ``timeout_s`` elapses."""
+    def _drain_pending_writes(
+        self,
+        timeout_s: float,
+        progress_callback: Callable[[int], None] | None = None,
+    ) -> None:
+        """Block until the write queue is empty or ``timeout_s`` elapses.
+
+        If ``progress_callback`` is supplied it's fired every ~100 ms
+        with the current queue depth — the UI can use that to show a
+        flushing indicator that ticks down to zero.
+        """
         deadline = time.monotonic() + timeout_s
+        last_cb = 0.0
         while time.monotonic() < deadline:
+            if progress_callback is not None:
+                now = time.monotonic()
+                if now - last_cb >= 0.1:
+                    try:
+                        progress_callback(self._write_queue.qsize())
+                    except Exception:  # pragma: no cover — UI cb should never throw
+                        log.exception("disk-cache drain progress callback failed")
+                    last_cb = now
             if self._write_queue.empty():
                 # The queue can become empty while the writer is mid-
                 # task; give the writer thread a moment to finish.
                 time.sleep(0.05)
                 if self._write_queue.empty():
+                    if progress_callback is not None:
+                        try:
+                            progress_callback(0)
+                        except Exception:  # pragma: no cover
+                            pass
                     return
             else:
                 time.sleep(0.05)

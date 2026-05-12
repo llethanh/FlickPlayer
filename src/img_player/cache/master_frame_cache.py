@@ -308,7 +308,20 @@ class MasterFrameCache:
 
     # ------------------------------------------------------------------ Lifecycle
 
-    def shutdown(self) -> None:
+    def disk_cache_pending_writes(self) -> int:
+        """Pending disk-cache writes (0 if no disk tier). Surface for app.
+
+        Used at shutdown to decide whether to show a "flushing"
+        progress widget before blocking on the disk-cache drain.
+        """
+        if self._disk_cache is None:
+            return 0
+        try:
+            return self._disk_cache.pending_writes()
+        except Exception:  # pragma: no cover — defensive
+            return 0
+
+    def shutdown(self, disk_progress_callback=None) -> None:  # type: ignore[no-untyped-def]
         """Stop the worker pool **and flush every cached frame**.
 
         Without the explicit flush the decoded numpy arrays sit in
@@ -318,15 +331,23 @@ class MasterFrameCache:
         buffers. Dropping the dict here makes the exit snappy and
         gives the OS the RAM back deterministically. Idempotent: a
         second call after shutdown sees an empty dict and no-ops.
+
+        ``disk_progress_callback`` (optional) is forwarded to
+        :meth:`DiskCache.shutdown` — receives the pending-write count
+        every ~100 ms during the drain. The app uses it to refresh a
+        small "flushing disk cache (N pending)" label so the user
+        understands the few-second pause at exit.
         """
         self._pool.shutdown()
         # Flush pending disk-cache writes before clearing the in-RAM
         # arrays they may still reference. ``DiskCache.shutdown`` has
-        # a short timeout (default 2 s) so a runaway writer queue
-        # can't hang the app exit indefinitely.
+        # a 10 s budget — generous enough for a ~150 frame backlog at
+        # ~50 ms / blob, short enough to bail out if something hangs.
         if self._disk_cache is not None:
             try:
-                self._disk_cache.shutdown()
+                self._disk_cache.shutdown(
+                    progress_callback=disk_progress_callback,
+                )
             except Exception:  # pragma: no cover — defensive
                 log.exception("DiskCache shutdown failed (non-fatal)")
         with self._lock:

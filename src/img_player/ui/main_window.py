@@ -1071,15 +1071,24 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
     def _open_preferences(self) -> None:
         """File → Open Preferences… — application-wide settings dialog.
 
-        ``Preferences`` is a thin QSettings wrapper, so instantiating
-        a fresh one here is essentially free and avoids threading the
-        prefs object through MainWindow's already-long constructor.
-        When :meth:`set_ocio_reload_callback` has been called, the
-        dialog hot-reloads OCIO without a restart; otherwise it falls
-        back to the "Restart required" banner.
+        Opens **non-modal** so the user keeps interacting with the
+        viewer (scrub, layer toggles, etc.) while watching the live
+        Disk-cache stats refresh. A single instance is reused: a
+        second trigger raises/activates the existing window instead
+        of stacking a new one. We hold the reference on ``self`` to
+        keep the dialog alive (otherwise Python GC would close it
+        immediately after :meth:`show`).
         """
+        from PySide6.QtCore import Qt
+
         from img_player.preferences import Preferences
         from img_player.ui.preferences_dialog import PreferencesDialog
+
+        existing = getattr(self, "_preferences_dialog", None)
+        if existing is not None and existing.isVisible():
+            existing.raise_()
+            existing.activateWindow()
+            return
 
         on_reload = getattr(self, "_ocio_reload_cb", None)
         disk_cache = getattr(self, "_disk_cache_handle", None)
@@ -1089,7 +1098,15 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
             disk_cache=disk_cache,
             parent=self,
         )
-        dialog.exec()
+        # Non-modal: don't block the main window. WA_DeleteOnClose
+        # plus the destroyed-signal handler keeps ``_preferences_dialog``
+        # in sync so the next open re-creates a fresh dialog.
+        dialog.setModal(False)
+        dialog.setWindowModality(Qt.WindowModality.NonModal)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.destroyed.connect(lambda _=None: setattr(self, "_preferences_dialog", None))
+        self._preferences_dialog = dialog
+        dialog.show()
 
     def _on_info_band_btn_context_menu(self, pos) -> None:  # type: ignore[no-untyped-def]
         """Right-click on the ⓘ pill — per-segment visibility menu.
