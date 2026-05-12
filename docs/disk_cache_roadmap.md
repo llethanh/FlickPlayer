@@ -47,14 +47,14 @@ la polir.
   `entries.blob_path` SQLite, unlink des `.bin` non référencés.
   Log INFO "swept N orphan blob(s) (X MB) out of Y scanned in Z ms"
   uniquement si quelque chose a été nettoyé.
-- **File watcher pour invalidation auto** : si une source EXR est
-  re-rendue mid-session, le `mtime` change. Aujourd'hui le cache sert
-  des pixels stale jusqu'à un redémarrage. Implémenter via
-  `QFileSystemWatcher` sur le dossier source des layers chargés ;
-  quand un fichier change, calculer la clé (nouvelle vs ancienne) et
-  invalider l'entrée. Attention : un re-render touche typiquement
-  tous les fichiers — débouncer le watcher (~200 ms) pour éviter une
-  cascade d'invalidations.
+- ~~**File watcher pour invalidation auto**~~ **(livré, E3)** :
+  `SourceWatcher` (PySide6 `QFileSystemWatcher`) sur le dossier
+  parent de chaque layer chargé. Debounce 200 ms pour coalescer un
+  re-render burst. Au signal `sources_changed` → appel automatique
+  de `_on_reload_sequence` (même chemin que Ctrl+R). Les entries
+  disque pour l'ancien mtime restent en cache jusqu'à éviction LRU
+  mais ne peuvent pas servir des pixels stale (le mtime fait partie
+  de la clé).
 - ~~**Migration v1.5.0 → v1.5.4 propre**~~ **(livré, E4)** : PRAGMA
   `user_version` lu au boot via `_migrate_if_needed`. Si version
   on-disk < `_CACHE_FORMAT_VERSION` (= 2 aujourd'hui) ET qu'il y a

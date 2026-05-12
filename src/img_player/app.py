@@ -310,6 +310,19 @@ class ImgPlayerApp:
             self._controller, self._cache, parent=self._window,
         )
 
+        # E3 — auto-reload on disk changes. Wraps a QFileSystemWatcher
+        # on the layer source directories with a 200 ms debounce; on
+        # change fires the existing smart-reload pipeline so a
+        # re-rendered EXR shows up without the artist having to
+        # press Ctrl+R. Wired below in ``_wire_layer_stack`` so the
+        # watch list tracks the live layer stack.
+        from img_player.sequence.source_watcher import SourceWatcher
+
+        self._source_watcher = SourceWatcher(parent=self._window)
+        self._source_watcher.sources_changed.connect(
+            self._on_source_watcher_fired,
+        )
+
         # Annotations: store + overlay + toolbar. The store is the
         # source of truth for strokes; the overlay is a transparent
         # QWidget child of the GL viewport that captures pen input
@@ -491,6 +504,13 @@ class ImgPlayerApp:
         self._wait_timer.stop()
         self._cache_bar_timer.stop()
         self._scrub_debounce.stop()
+        # Stop the auto-reload file watcher — frees the OS-level
+        # handles held on layer source directories so the next
+        # process launch doesn't see "files locked" issues.
+        try:
+            self._source_watcher.stop()
+        except Exception:  # pragma: no cover — defensive
+            log.exception("source watcher stop failed (non-fatal)")
         self._controller.shutdown()
         # If the disk-cache writer has a backlog, show a small
         # "Flushing disk cache..." label so the user sees the few-
@@ -726,6 +746,12 @@ class ImgPlayerApp:
         """
         self._layer_stack.layers_changed.connect(
             self._refresh_after_stack_change,
+        )
+        # Keep the file-watcher's directory list synced with the
+        # current layer stack — every add / remove / replace fires
+        # layers_changed, so this single connection is enough.
+        self._layer_stack.layers_changed.connect(
+            self._refresh_source_watcher,
         )
         # Close VideoSource handles for layers that just left the
         # stack — separate slot from the redisplay because the order
@@ -2482,6 +2508,41 @@ class ImgPlayerApp:
         # the bare "Flick Player" baseline.
         self._window.set_current_session_path(None)
         self._window.set_status("No sequence loaded — File → Open to load one.")
+
+    def _refresh_source_watcher(self) -> None:
+        """Re-sync the auto-reload watcher's directory list to the live stack.
+
+        Called on every ``layers_changed`` signal. Cheap diff inside
+        :meth:`SourceWatcher.set_watched_layers` — only the delta is
+        passed to Qt's QFileSystemWatcher.
+        """
+        watcher = getattr(self, "_source_watcher", None)
+        if watcher is None:
+            return
+        try:
+            watcher.set_watched_layers(self._layer_stack.layers())
+        except Exception:  # pragma: no cover — defensive, watcher is best-effort
+            log.exception("source watcher refresh failed (non-fatal)")
+
+    def _on_source_watcher_fired(self) -> None:
+        """File-watcher debounce ticked — trigger the smart reload.
+
+        Routes through the same path as a manual Ctrl+R so we get the
+        mtime-diff for free: unchanged frames stay hot in RAM, the
+        re-rendered ones get re-decoded. Disk-cache entries for the
+        old mtime stay until LRU evicts them; their keys won't match
+        the new mtime, so they can't serve stale pixels.
+
+        Squashed to a no-op when no sequence is loaded (e.g. the
+        watcher fires during teardown while we still have a stale
+        directory in the list).
+        """
+        if self._controller.sequence is None:
+            return
+        try:
+            self._on_reload_sequence()
+        except Exception:  # pragma: no cover — defensive
+            log.exception("auto-reload from source watcher failed (non-fatal)")
 
     def _on_reload_sequence(self) -> None:
         """Reload (Ctrl+R / 🔄): smart re-scan.
