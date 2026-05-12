@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flick Player — Changelog</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ============================================================ Header -->
+<header>
+  <a href="index.html" class="logo" style="text-decoration: none; color: inherit;">
+    <div class="logo-mark">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#1c1305" stroke-width="2" stroke-linecap="round">
+        <path d="M5 13 L5 5 Q5 3 7 3 L11 3"/>
+        <path d="M3.5 8 L9 8"/>
+      </svg>
+    </div>
+    Flick Player
+  </a>
+  <nav>
+    <a href="index.html#features">Features</a>
+    <a href="index.html#layers">Layers</a>
+    <a href="index.html#cache">Cache</a>
+    <a href="index.html#compare">Compare</a>
+    <a href="index.html#annotations">Annotations</a>
+    <a href="index.html#color">Color</a>
+    <a href="index.html#export">Export</a>
+    <a href="changelog.html" style="color: var(--accent);">Changelog</a>
+  </nav>
+</header>
+
+<!-- ============================================================ Changelog -->
+<section id="changelog">
+  <h2>What's <span class="accent">new</span>.</h2>
+  <p class="lede">
+    Every public release, what changed, why it changed. Links go to the
+    matching tag on GitHub.
+  </p>
+
+  <div class="changelog">
+
+    <article class="release">
+      <div class="release-meta">
+        <span class="ver">
+          <a href="https://github.com/llethanh/img_player/releases/tag/v1.4.5" style="color: inherit; text-decoration: none;">v1.4.5</a>
+        </span>
+        <span class="date">2026-05-12</span>
+        <span class="tagline">Hi-DPI splash polish.</span>
+      </div>
+      <div class="release-body">
+        <h4>Fixes</h4>
+        <ul>
+          <li class="fix"><strong>Splash now crisp on Hi-DPI displays</strong> — the bundled <code>splash.png</code> is now rendered at 2× the logical splash size (960×520 physical for a 480×260 logical splash) and the runtime loader tags the pixmap with <code>devicePixelRatio(2.0)</code>. Qt draws it 1:1 on Hi-DPI monitors instead of upscaling, so the text and icon stay sharp. 1× monitors get a clean downscale instead of native-pixel jaggies.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <div class="release-meta">
+        <span class="ver">
+          <a href="https://github.com/llethanh/img_player/releases/tag/v1.4.4" style="color: inherit; text-decoration: none;">v1.4.4</a>
+        </span>
+        <span class="date">2026-05-12</span>
+        <span class="tagline">Compare overlay polish, selection HUD, smarter missing-frame card.</span>
+      </div>
+      <div class="release-body">
+        <h4>New</h4>
+        <ul>
+          <li><strong>On-image A/B markers</strong> — small orange "A" and "B" letters anchored to <em>image-space</em> corners (so they follow pan + zoom), with mode-aware placement: top-left/top-right for vertical wipe, top-right/bottom-right for horizontal wipe, top-left/top-right for opacity. In opacity mode each letter fades with the seam — at <code>seam = 0</code> only A is visible, at <code>1</code> only B, at <code>0.5</code> both half-visible — so the marker mirrors the live blend instead of competing with it.</li>
+          <li><strong>Numbered A/B dropdowns + A/B on the seam bar</strong> — compare-band dropdowns now prefix each layer with its row number (<code>"1. shot.exr"</code>) so the picker maps trivially to the layer panel's numbering. The seam bar in the menu row gets orange "A" / "B" end-labels flanking its centred "Split" caption.</li>
+          <li><strong>"Selected layers" readout in the status bar</strong> — a permanent segment at the bottom-right of the window shows the panel selection (<code>"1. plate.exr · 2. mask.png"</code>) in accent-orange monospace, prefixed with row numbers and mid-dot-separated for multi-select. Stays visible under transient <code>set_status</code> messages (load progress, in/out feedback, etc.).</li>
+          <li><strong>Missing-frame placeholder mirrors the info band</strong> — the rich error graphic under "MISSING FRAME / SEQUENCE ERROR" now stacks two strips matching the bottom HUD's layout: <code>LAYER 00220 / 01140</code> (source frame / source max) and <code>FRAME 01101 / 01140</code> (master / timeline max). Same zero-padding so consecutive missing frames line up vertically when scrubbed through.</li>
+        </ul>
+        <h4>Fixes</h4>
+        <ul>
+          <li class="fix"><strong>Compare auto-exits when the stack drops below 2 layers</strong> — removing a layer while in compare mode used to leave an empty "B" dropdown and a stale shader state. The compare band now closes itself (band hides, GL uniforms clear, overlay state resets) so the user isn't forced to click ✕ manually after every removal.</li>
+          <li class="fix"><strong>Picker warns before silently importing nothing</strong> — accepting the multi-source sequence picker with zero rows ticked used to dismiss the dialog and load 0 sequences (= silent no-op). Now a Yes/No popup confirms <em>"You haven't ticked any sequence — close anyway?"</em> with No as default, so a forgotten click doesn't quietly drop the drop.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <div class="release-meta">
+        <span class="ver">
+          <a href="https://github.com/llethanh/img_player/releases/tag/v1.4.3" style="color: inherit; text-decoration: none;">v1.4.3</a>
+        </span>
+        <span class="date">2026-05-11</span>
+        <span class="tagline">Picker columns, layer right-click menu, truthful per-channel cache.</span>
+      </div>
+      <div class="release-body">
+        <h4>New</h4>
+        <ul>
+          <li><strong>Column-laid sequence picker</strong> — multi-source picker now shows resolution, frame range, and a <em>complete / partial / single-frame</em> status badge per row in aligned columns (computed once from the longest text in each column so a 30-sequence drop reads cleanly). The "select only complete" button ticks multi-frame sequences with no missing frames in one click.</li>
+          <li><strong>Right-click context menu on layer rows</strong> — Reorder up/down, isolate, duplicate, delete (single + multi-select), reset offset / trim, toggle channel mute, jump-to-layer-start. Multi-select aware: actions cascade across the whole selection group.</li>
+          <li><strong>Beauty-pass-protected channel eviction</strong> — when RAM hits budget the cache now evicts entire channels FIFO (oldest cached channel first), keeping the beauty pass (RGB / RGBA) as the last to drop. Replaces the previous "slice across channels" eviction which left every channel half-cached and unusable.</li>
+          <li><strong>Per-channel progress tells the truth</strong> — the orange fill bar on each channel row now excludes missing-frame placeholders from the "cached" count, so a sparse sequence no longer shows 100% loaded when half the slots are gap placeholders.</li>
+        </ul>
+        <h4>Fixes</h4>
+        <ul>
+          <li class="fix"><strong>Alt-channel pre-cache no longer thrashes under RAM pressure</strong> — when the active channel had filled the budget, the background pre-cache used to keep submitting alt-channel decodes that immediately got evicted by the prefetch around the playhead. Pre-cache now suspends itself when free budget &lt; one frame's worth, instead of churning the worker pool.</li>
+          <li class="fix"><strong>Pure-offset drag is now a rekey for multi-layer stacks too</strong> — dragging a layer's offset slider used to invalidate every cached entry for that layer (full re-decode on release). Multi-layer stacks now reuse the single-layer rekey path: cached entries are remapped to the new master frames in place, no decode triggered.</li>
+          <li class="fix"><strong>Scrub error gone</strong> — <code>'PlaybackState' object has no attribute 'frame'</code> on scrub release was a typo in the re-decode helper. Reading <code>state.current_frame</code> instead.</li>
+          <li class="fix">Splash <code>Loading…</code> ghost — the bundled PNG no longer bakes a placeholder status string; only the runtime <code>showMessage()</code> paints, so the user no longer sees two overlapping <em>"Loading Flick Player…"</em> lines on cold boot.</li>
+          <li class="fix">Build chain — auto-regenerate splash PNG on each PyInstaller run (so a version bump can't drift behind the splash label) and drop a <code>Flick Player v&lt;version&gt;.txt</code> marker next to the .exe so a quick listing tells you which build you've got.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <div class="release-meta">
+        <span class="ver">
+          <a href="https://github.com/llethanh/img_player/releases/tag/v1.4.2" style="color: inherit; text-decoration: none;">v1.4.2</a>
+        </span>
+        <span class="date">2026-05-10</span>
+        <span class="tagline">Video scrub fast-seek, channel-mode redesign, off-thread scan.</span>
+      </div>
+      <div class="release-body">
+        <h4>New</h4>
+        <ul>
+          <li><strong>Fast-seek mode on video scrub</strong> — during a drag-scrub gesture, the PyAV decoder switches to keyframe-only seeks (5-15 ms → 1-3 ms per seek on long-GOP H.264 / H.265) and falls back to precise seeks on release, with a final re-request at the landing frame so the playhead lands exactly. Scrubbing a 4K H.265 clip now feels as responsive as scrubbing an EXR sequence.</li>
+          <li><strong>Master volume popup</strong> on the transport bar — a small slider lives behind the speaker icon for one-click master gain, persisted across launches. Pairs with the per-layer M/S audio buttons that already live on each row.</li>
+          <li><strong>Channel mode + BG button redesign</strong> — RGB / R / G / B / A / Alpha-solo and the transparency-background picker share the same pill rail above the channel list, smaller and tighter than the previous double-row layout.</li>
+          <li><strong>Off-thread sequence scan</strong> — dropping a folder with thousands of frames no longer freezes the UI during enumeration. Scan runs on a worker; the drop overlay stays responsive and the picker pops as soon as the scan finishes.</li>
+        </ul>
+        <h4>Fixes</h4>
+        <ul>
+          <li class="fix">Channel menu rows stay legible under the cache-fill bar at any fill percentage — text repaints in the cream <code>#FFE5C0</code> tone clipped to the filled region, so the label reads cleanly across the seam between filled and empty parts of the bar.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <div class="release-meta">
+        <span class="ver">
+          <a href="https://github.com/llethanh/img_player/releases/tag/v1.4.0" style="color: inherit; text-decoration: none;">v1.4.0</a>
+        </span>
+        <span class="date">2026-05-09</span>
+        <span class="tagline">Preferences dialog, OCIO hot-reload, splash refactor.</span>
+      </div>
+      <div class="release-body">
+        <h4>New</h4>
+        <ul>
+          <li><strong>Preferences dialog</strong> — <em>File → Open Preferences…</em> (<code>Ctrl+,</code>) opens a sidebar+stack settings window. First section: <strong>Color Management</strong>, with three modes for resolving the OCIO config at boot — <em>Default</em> (built-in ACES), <em>From <code>$OCIO</code></em>, or <em>Custom config file…</em> (browse to any <code>.ocio</code> on disk). The dialog's structure is set up to accept further sections (Playback, Cache, Annotation…) by adding one widget.</li>
+          <li><strong>OCIO config hot-reload</strong> — applying a new config in Preferences swaps the running <code>OCIOManager</code> in place: ColorPanel combos repopulate, the GPU shader rebuilds against the new transform, persisted source / display / view picks that no longer exist in the new config are dropped silently. Restart no longer required. Banner turns green with the loaded config name and a summary of which picks were preserved vs reset.</li>
+          <li><strong>Cream-on-orange channel menu typography</strong> — when the cache-fill bar is half-filled behind a channel row, the label text repaints in <code>#FFE5C0</code> (the same warm cream the bottom info band uses) clipped to the filled region, so the row stays legible all the way across the bar. Outside the bar the standard theme colour shows through, so typography is untouched until loading begins.</li>
+          <li><strong>QSplashScreen at boot</strong> — the previous PyInstaller bootloader splash used Tk, which isn't DPI-aware on Windows and visibly shrunk + repositioned the splash mid-boot on HiDPI displays. The new splash is a Qt <code>QSplashScreen</code> reading a checked-in PNG asset; DPI-aware, no shrink. Trade-off: ~1-2 s appearance latency (PySide6 import) instead of the bootloader's instant paint.</li>
+        </ul>
+        <h4>Fixes</h4>
+        <ul>
+          <li class="fix">Cache-fill bar on channel rows starts a few pixels before the label's first character (in the radio↔label gutter) so the orange wash never crashes flush against the leftmost glyph.</li>
+          <li class="fix"><strong>Sparse-sequence load freeze</strong> — dropping a sequence with many missing frames (typical of comp picks where only kept frames are rendered) used to freeze the UI for ~10 s on a 4 K range with ~50 holes. The cache was building a fresh 33 MB filename-baked placeholder per gap; switched to the shared memoised placeholder for sparse gaps (the per-frame variant is kept for runtime decode failures where the user actually benefits from seeing which path is bad). Drop time falls to ~2 s, matching the contiguous-sequence baseline.</li>
+          <li class="fix">Build chain — bundle build now produces a working EXE on miniforge Windows: <code>tkinter</code> excluded again (saves ~5 MB), Tcl/Tk PATH workaround dropped, OIIO / OpenEXR / Imath DLLs explicitly pulled from <code>$CONDA_PREFIX\Library\bin\</code> so the bundle is no longer missing them at startup. <code>build_exe.bat</code> auto-zips the bundle to <code>dist\FlickPlayer_v&lt;version&gt;.zip</code> for portable distribution — atomic transfer, no install needed on the target machine.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <div class="release-meta">
+        <span class="ver">
+          <a href="https://github.com/llethanh/img_player/releases/tag/v1.3.0" style="color: inherit; text-decoration: none;">v1.3.0</a>
+        </span>
+        <span class="date">2026-05-08</span>
+        <span class="tagline">A/B compare, smart cache, color profiles.</span>
+      </div>
+      <div class="release-body">
+        <h4>New</h4>
+        <ul>
+          <li><strong>A/B compare overlay</strong> — pick two layers and split the viewer with a vertical wipe, horizontal wipe, opacity blend, or solo-B mode. The seam is draggable (right-click + drag), keyboard-nudgeable, and persists across layer picks. Compositing runs on the fragment shader so seam updates are uniform-only — no numpy compose, no cache invalidation.</li>
+          <li><strong>Compare band in the menu bar</strong> — A / B picker pills, mode pills (Vert / Horiz / Opacity / Solo-B), and a swap button live next to the File menu. The band shrinks with the window width and never overlaps menu hit-targets.</li>
+          <li><strong>Smart cache with multi-version key</strong> — the cache key is now <code>(master_frame, signature)</code> where the signature folds in layer id, label, active channel, premult flag, offset and in-frame. Switching channel or stack order keeps the previous version's entries hot for instant flip-back; eviction prefers older versions of off-screen frames first.</li>
+          <li><strong>Background channel pre-cache</strong> — alt-channel reads queued at low priority during idle on every visible layer (top-down stack order), so swapping the active channel on any layer paints in cached frames immediately. Suspended automatically during playback to free the GIL, resumed on pause.</li>
+          <li><strong>Per-row cache progress</strong> — the channel menu shows a dotted progress bar per channel and the layer button mirrors the active channel's coverage. The status bar tracks total RAM headroom.</li>
+          <li><strong>Color metadata sweep</strong> — the loader matches EXR header attributes against Nuke / Arnold / V-Ray / Houdini patterns (substring sweep on <code>colorspace</code>, <code>color_space</code>, role / alias names) before falling back to filename heuristics.</li>
+          <li><strong>Unmarked-EXR override</strong> — pick the default colorspace per pipeline in the Color panel (ACEScg, scene_linear, Linear Rec.709…) for EXRs that ship without metadata; persisted across sessions.</li>
+          <li><strong>Solo-alpha + transparency BG picker</strong> — the alpha-only mute swaps in a checkerboard or a solid background colour so the matte reads correctly against the viewport.</li>
+          <li><strong>Force reload</strong> — Ctrl+Shift+R clears the cache for the active master frame and re-reads from disk, even for frames already resident. Useful when artists overwrite shots in place.</li>
+          <li><strong>Save Frame As…</strong> — File → Save Frame As… snapshots the viewer to PNG / JPG / TIFF / BMP / WebP with the same compare and annotation toggles as the full export.</li>
+          <li><strong>Custom export filename</strong> + <strong>bake compare overlay</strong> — empty falls back to source basename, otherwise drives the output (<code>{stem}.NNNN.ext</code> for sequences, <code>{stem}.ext</code> for video). The live A/B wipe bakes through every frame; untick to ship the active sequence's clean composite.</li>
+          <li><strong>Single-image layers</strong> — drop a still on the viewer and it becomes a layer with adjustable hold duration. Great for slates, refs and frame holds in a comp pass.</li>
+          <li><strong>Versioned bundle directory</strong> — <code>dist/FlickPlayer_v&lt;version&gt;/</code> instead of <code>dist/img_player/</code>, so multiple builds coexist.</li>
+          <li><strong>No console window</strong> — the .exe ships without a stray <code>cmd</code> window. Logs are written to <code>%LOCALAPPDATA%\img_player\flick.log</code> with rotation.</li>
+          <li><strong>Splash screen at startup</strong> — PyInstaller bootloader splash with three status milestones (<em>Configuring logger…</em>, <em>Detecting hardware…</em>, <em>Loading Flick Player…</em>) so cold launch on slow disks doesn't look frozen.</li>
+          <li><strong>Taskbar icon</strong> — Windows AppUserModelID set explicitly so the taskbar shows <code>flick.ico</code> instead of the generic Python feather.</li>
+          <li><strong>Channel arrow navigation</strong> — Up/Down arrows in the channel menu walk through the channel list without leaving the keyboard. Annotation close button + fullscreen polish ship in the same pass.</li>
+          <li><strong>Missing-frame placeholder bakes the filename</strong> — the rich error graphic now writes the missing frame's expected filename into the overlay, so reviewers can spot which frame to re-render.</li>
+        </ul>
+        <h4>Fixes</h4>
+        <ul>
+          <li class="fix">Compare seam preserved across layer-picker changes; auto-disabled on File → New so a fresh session never starts in compare mode.</li>
+          <li class="fix">Layer-picker visible checkbox now toggles correctly on click instead of swallowing the event.</li>
+          <li class="fix">Export keeps partial files on cancel and surfaces colour-coded outcomes (success / cancelled / error) instead of a silent dialog dismiss.</li>
+          <li class="fix">Cache handles 1-channel mask buffers and 2-channel L+A buffers without raising; 5-channel crash on AOV groups with a bare alpha is gone.</li>
+          <li class="fix">Boot tolerates the missing <code>QScreen.colorSpace</code> attribute on PySide6 6.11 Windows builds.</li>
+          <li class="fix">Cleanup pass — ruff fixes, helper de-duplication, stale comments hunted out across the cache and compare modules.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <div class="release-meta">
+        <span class="ver">
+          <a href="https://github.com/llethanh/img_player/releases/tag/v1.2.0" style="color: inherit; text-decoration: none;">v1.2.0</a>
+        </span>
+        <span class="date">2026-05-05</span>
+        <span class="tagline">Bottom info band.</span>
+      </div>
+      <div class="release-body">
+        <h4>New</h4>
+        <ul>
+          <li><strong>Orange info band</strong> at the bottom of the viewer (PDPlayer-style HUD). Four readouts in one strip: image dimensions, session fps, source-frame number on the topmost visible layer (matches the file name on disk), and absolute master-timeline frame. Toggleable via <strong>View → Show info band</strong>, the <code>ⓘ</code> pill in the timeline gutter, or <code>Ctrl+I</code>; on by default.</li>
+          <li>Info band readouts <strong>follow the timecode toggle</strong> (<code>Ctrl+T</code>) — Layer / Frame swap to <code>HH:MM:SS:FF</code> in step with the timeline ticks and the transport's frame display, so the three readouts can never disagree on units.</li>
+          <li><code>launch_app.bat</code> at the repo root — double-click to activate the conda env and start the GUI without opening a Miniforge Prompt by hand.</li>
+        </ul>
+        <h4>Fixes</h4>
+        <ul>
+          <li class="fix">OpenImageIO import is robust against PATH pollution from other VFX tools (mrViewer, RV, Nuke runtime…). Setting <code>OIIO_LOAD_DLLS_FROM_PATH=0</code> in <code>img_player/io/reader.py</code> stops OIIO from registering every PATH entry as a DLL search dir, which used to make it pick up wrong-version <code>libheif</code> / OpenEXR / <code>libavif</code> DLLs and fail with <em>"DLL load failed: La procédure spécifiée est introuvable"</em>.</li>
+          <li class="fix">Info band readouts follow timeline scrub in real time — pushed straight from <code>_on_scrub_requested</code> like the transport's frame display, bypassing the 20 ms scrub-debounce so the digits track the cursor under the mouse instead of trailing it.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <div class="release-meta">
+        <span class="ver">
+          <a href="https://github.com/llethanh/img_player/releases/tag/v1.1.0" style="color: inherit; text-decoration: none;">v1.1.0</a>
+        </span>
+        <span class="date">2026-05-05</span>
+        <span class="tagline">Video &amp; audio playback.</span>
+      </div>
+      <div class="release-body">
+        <h4>New</h4>
+        <ul>
+          <li><strong>Video playback</strong> — drop <code>.mp4</code> / <code>.mov</code> / <code>.mkv</code> / <code>.m4v</code> / <code>.avi</code> files alongside your image sequences. PyAV-backed decoder, threaded with a 2-frame-ahead prefetch so play and scrub stay smooth on H.264 / H.265 / ProRes / DNxHR.</li>
+          <li><strong>Synced audio</strong> — sounddevice <code>OutputStream</code> open from boot to shutdown (zero play-time latency). Per-layer <strong>M</strong>ute / <strong>S</strong>olo toggles on every <code>LayerRow</code>, exclusive solo (DAW idiom), per-layer gain. Speed ≠ 1.0× mutes (no pitch shift).</li>
+          <li><strong>Wall-clock-driven tick</strong> — the <code>PlayerController</code> now anchors playback on <code>time.monotonic</code> instead of "+1 per QTimer firing". Audio (which plays at PortAudio wall rate by construction) and video stay aligned long-term, even when the GUI thread hiccups.</li>
+          <li><strong>Multi-source drag-and-drop</strong> — drop a folder of EXRs <em>and</em> several <code>.mp4</code> in the same gesture, the picker shows a hierarchical tree per folder; tick exactly the sequences you want as layers.</li>
+          <li><strong>Drop a <code>.session</code> on the viewer</strong> — full-window OPEN SESSION overlay (purple) instead of the per-zone REPLACE / ADD overlays, so the gesture's intent is unambiguous.</li>
+          <li><strong>Per-layer audio fields</strong> in <code>.session</code> files — <code>audio_solo</code>, <code>audio_mute</code>, <code>audio_gain</code> persist with the rest of the layer state.</li>
+          <li><strong>Inno Setup installer template</strong> in <code>installer/flick.iss</code> — wrap the PyInstaller bundle into a per-user Windows installer with Start menu shortcut, <code>.session</code> file association and a clean uninstaller.</li>
+        </ul>
+        <h4>Fixes</h4>
+        <ul>
+          <li class="fix">Channel-menu radio &amp; checkbox indicators now visible against the dark theme — the global <code>QWidget {{ border: none }}</code> rule was hiding them. Multi-tile contact sheet was unreachable as a result.</li>
+          <li class="fix">Multi-tile contact sheet works again — single-layer selections with a tile-set now bypass the multi-layer composite path that was rejecting buffers wider than RGBA (<code>Unsupported channel count: 7</code>).</li>
+          <li class="fix">Fresh layer load no longer auto-checks tile groups from the previous session's prefs — tile sets are session-bound now (the active group + layout mode + label visibility are still preference-restored).</li>
+          <li class="fix">Scrub during play auto-pauses for the duration of the drag — used to thrash the threaded video decoder with backward seeks every tick.</li>
+          <li class="fix">Audio re-seeks correctly when the active layer's offset changes; coverage transitions during play (entering / exiting a clip) silence the feeder so the buffer doesn't drift ahead of the playhead.</li>
+          <li class="fix">Audio pitched down one octave on stereo decode — PyAV resampler was configured for interleaved <code>flt</code> when the consumer expected planar; switched to <code>fltp</code>.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <div class="release-meta">
+        <span class="ver">
+          <a href="https://github.com/llethanh/img_player/releases/tag/v1.0.2" style="color: inherit; text-decoration: none;">v1.0.2</a>
+        </span>
+        <span class="date">2026-05-04</span>
+        <span class="tagline">Per-layer transparency &amp; alpha controls.</span>
+      </div>
+      <div class="release-body">
+        <h4>New</h4>
+        <ul>
+          <li>Per-layer <strong>T</strong>ransparency and <strong>αS</strong>traight-alpha toggle buttons on every <code>LayerRow</code> — the global toolbar toggles are gone; each layer decides for itself how its alpha channel should be interpreted.</li>
+          <li>Multi-select on the layer list (Ctrl/Shift + click) — toggle visibility, transparency, alpha mode on N layers at once.</li>
+          <li>Tile-set tiles: the channel menu now reflects per-layer state on the focused layer instead of broadcasting globally.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <div class="release-meta">
+        <span class="ver">
+          <a href="https://github.com/llethanh/img_player/releases/tag/v1.0.1" style="color: inherit; text-decoration: none;">v1.0.1</a>
+        </span>
+        <span class="date">2026-05-03</span>
+        <span class="tagline">Per-layer trim &amp; offset.</span>
+      </div>
+      <div class="release-body">
+        <h4>New</h4>
+        <ul>
+          <li>Two-handle trim widget on every <code>LayerRow</code>: drag IN / OUT to scope a layer's contribution to a sub-range of the master timeline. Cached frames are kept on trim narrowing and reused on widen.</li>
+          <li>Drag-to-offset on the layer bar (Shift + drag): slide a layer's timeline position by a single gesture, with rubber-banding against the master range and a snap to other layers' IN/OUT.</li>
+        </ul>
+        <h4>Fixes</h4>
+        <ul>
+          <li class="fix">Trim handles now actually trim visibly (the drag was being absorbed by the bar).</li>
+          <li class="fix">Cache invalidation on <code>layer_modified</code> now covers the union of old + new master ranges so shrinking a layer can't leave stale pixels in the gap.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <div class="release-meta">
+        <span class="ver">
+          <a href="https://github.com/llethanh/img_player/releases/tag/v1.0.0" style="color: inherit; text-decoration: none;">v1.0.0</a>
+        </span>
+        <span class="date">2026-04-29</span>
+        <span class="tagline">First public release. Multi-layer.</span>
+      </div>
+      <div class="release-body">
+        <h4>New</h4>
+        <ul>
+          <li><strong>Multi-layer stack</strong> — drop multiple sequences on top of each other, reorder, toggle visibility per layer. Topmost-visible wins for each master frame; <code>αS</code> turns on alpha compositing per layer.</li>
+          <li><strong>Layer panel under the timeline</strong> — one row per layer with eye / T / αS toggles, drag to reorder, drag the bar to nudge offset, drag the handles to trim IN / OUT.</li>
+          <li><strong>Per-layer channel selection</strong> — each layer remembers its own RGB / RGBA / Y / N.X choice; switching focus repopulates the channel menu without invalidating other layers' caches.</li>
+          <li><strong>Sessions</strong> — File → Save / Open session writes the whole stack (paths, offsets, trims, channels, αS, visibility) to a <code>.session</code> JSON. Reopen later, get the same review setup back.</li>
+          <li><strong>Drop modes</strong> — drag-and-drop now prompts: replace the focused layer, add as a new top layer, or open in place.</li>
+          <li><strong>Per-row delete</strong> on every <code>LayerRow</code>; full undo/redo coverage on layer add / remove / reorder / drag.</li>
+        </ul>
+        <h4>Fixes</h4>
+        <ul>
+          <li class="fix">Viewport stays black on first sequence load until you scrub — fixed; the first frame now renders as soon as the cache lands.</li>
+          <li class="fix">OUT trim was getting reset to the drag-start position by the snap formula — fixed.</li>
+          <li class="fix">Trim handles now actually trim visibly (the drag was being absorbed by the bar).</li>
+          <li class="fix">Cache invalidation on <code>layer_modified</code> now covers the union of old + new master ranges so shrinking a layer can't leave stale pixels in the gap.</li>
+        </ul>
+      </div>
+    </article>
+
+  </div>
+</section>
+
+<!-- ============================================================ Footer -->
+<footer id="download">
+  <p>
+    <strong>Flick Player</strong> · open-source VFX sequence viewer · <span style="opacity: 0.55;">Download — coming soon</span> · <a href="https://github.com/llethanh/img_player">GitHub</a> · <a href="index.html">Home</a>
+  </p>
+  <p style="margin-top: var(--s-sm);">
+    Built with PySide6, OpenColorIO, OpenImageIO and PyAV. Designed for Windows.
+  </p>
+</footer>
+
+</body>
+</html>
