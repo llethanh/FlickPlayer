@@ -49,6 +49,186 @@ from img_player.preferences import Preferences
 log = logging.getLogger(__name__)
 
 
+class _GeneralPage(QWidget):
+    """Application-wide info that doesn't belong to a specific feature
+    section.
+
+    Today it surfaces the canonical on-disk locations Flick uses
+    (user preferences, disk cache root, log file, site config) plus
+    an "Open folder" shortcut so the user / studio admin doesn't
+    have to remember ``%APPDATA%`` vs ``%LOCALAPPDATA%``. The page
+    has no editable widgets — every value here is determined at boot
+    by :mod:`img_player.app_paths` and the resolved site config, so
+    there's no ``apply()`` method.
+    """
+
+    def __init__(
+        self,
+        prefs: Preferences,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._prefs = prefs
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        title = QLabel("General")
+        title.setStyleSheet("font-size: 14px; font-weight: 600;")
+        layout.addWidget(title)
+
+        subtitle = QLabel(
+            "Where Flick stores your preferences and runtime data. "
+            "The user preferences file (flick.toml) is plain text — "
+            "you can edit it by hand, copy it between machines, or "
+            "commit it to source control."
+        )
+        subtitle.setWordWrap(True)
+        subtitle.setStyleSheet("color: #9aa0a6;")
+        layout.addWidget(subtitle)
+
+        # ---- Path rows --------------------------------------------------
+        # Built lazily from app_paths so the labels reflect the
+        # post-migration locations (``FlickPlayer\`` rather than the
+        # legacy ``img_player\``).
+        from img_player.app_paths import (
+            calibration_profile_path,
+            disk_cache_default_dir,
+            log_dir,
+            user_prefs_dir,
+        )
+        from img_player.site_config import site_config
+
+        user_dir = user_prefs_dir()
+        self._add_path_row(
+            layout,
+            "User preferences",
+            user_dir / "flick.toml",
+            open_target=user_dir,
+            tooltip=(
+                "Your preference overrides — color management, disk "
+                "cache settings, anything you change via this dialog. "
+                "Hand-editable. Backed up by copying the folder."
+            ),
+        )
+
+        site_path = site_config().source
+        self._add_path_row(
+            layout,
+            "Site configuration",
+            site_path if site_path else "(none — using built-in defaults)",
+            open_target=site_path.parent if site_path else None,
+            tooltip=(
+                "Studio-wide defaults applied to every user on this "
+                "install. Drop a flick.toml next to FlickPlayer.exe "
+                "(or point $FLICK_SITE_CONFIG at one) to activate."
+            ),
+        )
+
+        cache_dir = self._prefs.disk_cache_path or disk_cache_default_dir()
+        self._add_path_row(
+            layout,
+            "Disk cache",
+            cache_dir,
+            open_target=cache_dir if cache_dir.is_dir() else cache_dir.parent,
+            tooltip=(
+                "Where decoded frames evicted from RAM are persisted "
+                "between sessions."
+            ),
+        )
+
+        logs = log_dir()
+        self._add_path_row(
+            layout,
+            "Log file",
+            logs / "flick.log",
+            open_target=logs,
+            tooltip=(
+                "Flick's running log. Attach this when filing a bug."
+            ),
+        )
+
+        calib = calibration_profile_path()
+        self._add_path_row(
+            layout,
+            "Performance profile",
+            calib,
+            open_target=calib.parent,
+            tooltip=(
+                "Auto-tuned hardware profile (worker count, cache "
+                "size, OIIO threads). Delete to force a re-detect on "
+                "next launch."
+            ),
+        )
+
+        layout.addStretch(1)
+
+    # ------------------------------------------------------------------ Helpers
+
+    def _add_path_row(  # type: ignore[no-untyped-def]
+        self,
+        layout: QVBoxLayout,
+        label: str,
+        path: object,
+        *,
+        open_target: object | None = None,
+        tooltip: str = "",
+    ) -> None:
+        """Emit one ``Label · path · [Open]`` row.
+
+        ``path`` is shown for context; ``open_target`` is what the
+        Open button reveals in the file manager. They can be the
+        same (a directory) or different (e.g. a file path shown,
+        its parent dir opened) — Explorer doesn't usefully open a
+        single file, so we always open the containing dir.
+        """
+        row = QHBoxLayout()
+        name = QLabel(f"<b>{label}:</b>")
+        name.setStyleSheet("color: #ccc;")
+        name.setMinimumWidth(140)
+        value = QLabel(str(path))
+        value.setStyleSheet("color: #9aa0a6; font-size: 11px;")
+        value.setWordWrap(True)
+        value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        row.addWidget(name)
+        row.addWidget(value, 1)
+        if open_target is not None:
+            from pathlib import Path
+
+            target_path = Path(str(open_target))
+            btn = QPushButton("Open")
+            btn.setMaximumWidth(80)
+            if tooltip:
+                btn.setToolTip(tooltip)
+            btn.clicked.connect(
+                lambda _checked=False, p=target_path: self._open_folder(p),
+            )
+            row.addWidget(btn)
+        layout.addLayout(row)
+
+    def _open_folder(self, target):  # type: ignore[no-untyped-def]
+        """Reveal ``target`` in the platform file manager.
+
+        Creates the directory first if it doesn't exist yet — a fresh
+        install hasn't necessarily written to every location. Dispatches
+        via ``QDesktopServices.openUrl`` (Explorer on Windows, Finder
+        on macOS, configured handler on Linux).
+        """
+        from pathlib import Path
+
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+
+        target = Path(target)
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+        except OSError as err:
+            log.warning("Could not create %s (%s)", target, err)
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
+
+
 class _ColorManagementPage(QWidget):
     """OCIO config source picker.
 
@@ -184,30 +364,10 @@ class _ColorManagementPage(QWidget):
         self._status.setWordWrap(True)
         self._status.setStyleSheet("color: #9aa0a6; font-size: 11px;")
         layout.addWidget(self._status)
-
-        # ---- User prefs folder + Open button ----------------------------
-        # Lets the user inspect / hand-edit their ``flick.toml`` without
-        # having to navigate %APPDATA% in Explorer manually. Same row
-        # also reveals the canonical path so the user knows what to back
-        # up / sync between machines.
-        from img_player.app_paths import user_prefs_dir as _user_prefs_dir
-        prefs_row = QHBoxLayout()
-        prefs_path = _user_prefs_dir()
-        self._prefs_path_label = QLabel(f"User prefs: {prefs_path}")
-        self._prefs_path_label.setStyleSheet(
-            "color: #9aa0a6; font-size: 11px;"
-        )
-        self._prefs_path_label.setWordWrap(True)
-        self._open_prefs_btn = QPushButton("Open folder")
-        self._open_prefs_btn.setToolTip(
-            "Open the per-user app-data folder where flick.toml "
-            "(your preferences) lives. Edit the file by hand or copy "
-            "it between machines."
-        )
-        self._open_prefs_btn.clicked.connect(self._on_open_prefs_folder)
-        prefs_row.addWidget(self._prefs_path_label, 1)
-        prefs_row.addWidget(self._open_prefs_btn)
-        layout.addLayout(prefs_row)
+        # NB: the user prefs "Open folder" button used to live here but
+        # flick.toml stores cross-section settings (color + disk cache,
+        # and any future user-facing pref), so it now lives in the
+        # General tab — a single canonical spot for "app data" actions.
 
         # ---- Pending-changes banner ---------------------------------
         # Two flavours: amber "you have pending changes" before Apply,
@@ -405,28 +565,6 @@ class _ColorManagementPage(QWidget):
         )
         if path:
             self._path_edit.setText(path)
-
-    def _on_open_prefs_folder(self) -> None:
-        """Open the user prefs directory in the platform file manager.
-
-        Creates the folder first if it doesn't exist yet — a brand-new
-        install won't have written anything to it. The folder is then
-        revealed via ``QDesktopServices.openUrl`` which dispatches to
-        Explorer on Windows, Finder on macOS, the configured handler
-        on Linux. We don't reveal a specific FILE (e.g. flick.toml)
-        because the file may not exist until the user changes a pref.
-        """
-        from PySide6.QtCore import QUrl
-        from PySide6.QtGui import QDesktopServices
-
-        from img_player.app_paths import user_prefs_dir
-        target = user_prefs_dir()
-        try:
-            target.mkdir(parents=True, exist_ok=True)
-        except OSError as err:
-            log.warning("Could not create user prefs dir %s (%s)", target, err)
-            return
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
 
     def _describe_active_config(self) -> str:
         """Show what's currently loaded — useful for debugging studio
@@ -845,7 +983,14 @@ class PreferencesDialog(QDialog):
         buttons.rejected.connect(self.reject)
         buttons.button(QDialogButtonBox.StandardButton.Apply).clicked.connect(self._on_apply)
 
-        # Sections
+        # Sections — order: General (paths + diagnostics) first because
+        # it's the section users most often want to find when something
+        # is wrong (where's my log? where's my prefs file?), then the
+        # feature-specific tabs.
+        self._add_section(
+            "General",
+            _GeneralPage(prefs, parent=self),
+        )
         self._add_section(
             "Color Management",
             _ColorManagementPage(prefs, on_reload=on_reload, parent=self),
