@@ -14,21 +14,51 @@ from typing import Any
 from PySide6.QtCore import QSettings
 
 from img_player.site_config import site_config
+from img_player.user_prefs import user_prefs
 
 _ORG = "img_player"
 _APP = "img_player"
 _RECENT_LIMIT = 10
 
 
-def _site_default(dotted_key: str, hardcoded: Any) -> Any:
-    """Return ``flick.toml[dotted_key]`` if present, else ``hardcoded``.
+# Sentinel for "no value layered above the hardcoded default". Distinct
+# from ``None`` since ``None`` is itself a valid stored value for some
+# preferences (e.g. ``ocio_config_path``).
+_UNSET = object()
 
-    Used by every preference getter to honour studio-level defaults
-    without breaking the hardcoded fallback. The site config is loaded
-    lazily on first call and cached for the process lifetime, so this
-    helper is essentially free after the first hit.
-    """
+
+def _site_default(dotted_key: str, hardcoded: Any) -> Any:
+    """Return ``flick.toml[dotted_key]`` from the SITE config, or
+    ``hardcoded`` if absent. Used for keys that aren't routed through
+    the user TOML store."""
     return site_config().get(dotted_key, hardcoded)
+
+
+def _layered_default(dotted_key: str, hardcoded: Any) -> Any:
+    """Three-tier preference lookup with the user TOML on top.
+
+    Used by every user-facing preference getter. Resolution order:
+
+        user flick.toml  →  site flick.toml  →  hardcoded fallback
+
+    User changes flow through :func:`_set_user_pref` which writes
+    only to the user TOML; the site TOML is read-only at runtime.
+    The site config supplies the studio-wide default; the user
+    config holds individual overrides.
+    """
+    user_value = user_prefs().get(dotted_key, _UNSET)
+    if user_value is not _UNSET:
+        return user_value
+    return site_config().get(dotted_key, hardcoded)
+
+
+def _set_user_pref(dotted_key: str, value: Any) -> None:
+    """Write a user override to the user TOML. ``None`` removes the
+    key so the next read falls back on site / hardcoded. Called by
+    every user-facing preference setter — keeps the routing in one
+    place so a future refactor (e.g. add a "lock" flag from the site
+    config) only has to be patched here."""
+    user_prefs().set(dotted_key, value)
 
 
 def _qbool(raw: object, default: bool = False) -> bool:
@@ -53,15 +83,89 @@ def _qbool(raw: object, default: bool = False) -> bool:
     return default
 
 
-class Preferences:
-    """Typed, app-shaped wrapper around QSettings.
+# Keys migrated from QSettings to the user TOML in v1.5.8. The mapping
+# is ``(qsettings_key, toml_dotted_key, coerce_fn)``. ``coerce_fn``
+# converts the raw QSettings return into the Python type the TOML
+# should hold — QSettings returns strings for booleans on disk-backed
+# stores, ints on Windows registry, etc. Kept here so the migration
+# step has one canonical list rather than duplicating the type knowledge
+# scattered across the getters.
+_LEGACY_QSETTINGS_MIGRATIONS: tuple[tuple[str, str, Any], ...] = (
+    ("color/ocio_config_mode", "color.ocio_config_mode", str),
+    ("color/ocio_config_path", "color.ocio_config_path", str),
+    ("color/ocio_builtin_uri", "color.ocio_builtin_uri", str),
+    ("disk_cache/enabled", "disk_cache.enabled", lambda v: _qbool(v, default=True)),
+    ("disk_cache/path", "disk_cache.path", str),
+    ("disk_cache/budget_gb", "disk_cache.budget_gb", lambda v: max(0, int(v))),
+    ("disk_cache/compression", "disk_cache.compression", lambda v: _qbool(v, default=True)),
+)
 
-    Every property round-trips through the platform's settings store. Writes
-    are flushed immediately; reads are cheap.
+
+# Module-level latch so the migration runs exactly once per process, on
+# the first ``Preferences()`` construction. Subsequent constructions are
+# free.
+_legacy_migration_done = False
+
+
+def _migrate_legacy_qsettings_once(qs: QSettings) -> None:
+    """Copy v1.5.7-era QSettings values for the user-facing keys into
+    the new user TOML, but ONLY for keys the user hasn't already
+    written to the TOML.
+
+    Conservative: we don't delete the QSettings entries (preserves
+    rollback to an older Flick build), we just stop reading from them
+    for the migrated keys.
+    """
+    global _legacy_migration_done
+    if _legacy_migration_done:
+        return
+    _legacy_migration_done = True
+
+    store = user_prefs()
+    migrated = []
+    for qkey, toml_key, coerce in _LEGACY_QSETTINGS_MIGRATIONS:
+        # Don't clobber a user TOML value (e.g. user already migrated
+        # via a previous launch, or hand-edited).
+        if store.get(toml_key, _UNSET) is not _UNSET:
+            continue
+        raw = qs.value(qkey)
+        if raw is None:
+            continue
+        try:
+            value = coerce(raw)
+        except (TypeError, ValueError):
+            continue
+        if value is None or value == "":
+            continue
+        store.set(toml_key, value)
+        migrated.append(toml_key)
+
+    if migrated:
+        import logging
+        logging.getLogger(__name__).info(
+            "Migrated %d legacy QSettings preference(s) into %s: %s",
+            len(migrated), store.path, ", ".join(migrated),
+        )
+
+
+class Preferences:
+    """Typed, app-shaped wrapper around QSettings + per-user TOML.
+
+    Most properties round-trip through QSettings (window geometry,
+    recent files, ephemeral UI state). The "user-facing" preferences
+    — color management + disk cache settings — go through a layered
+    store: per-user ``flick.toml`` on top, site-wide ``flick.toml``
+    in the middle, hardcoded fallback at the bottom. See
+    :mod:`img_player.user_prefs` for the user store and
+    :mod:`img_player.site_config` for the site config.
     """
 
     def __init__(self) -> None:
         self._s = QSettings(_ORG, _APP)
+        # One-shot migration of v1.5.7-era QSettings values for the
+        # user-facing keys into the new user TOML. Idempotent and
+        # cheap after the first call thanks to the module-level latch.
+        _migrate_legacy_qsettings_once(self._s)
 
     # ------------------------------------------------------------------ Last / recent
 
@@ -234,32 +338,26 @@ class Preferences:
 
     @property
     def ocio_config_mode(self) -> str:
-        raw = self._s.value(
-            "color/ocio_config_mode",
-            _site_default("color.ocio_config_mode", "default"),
-        )
+        raw = _layered_default("color.ocio_config_mode", "default")
         return raw if raw in ("default", "env", "custom") else "default"
 
     @ocio_config_mode.setter
     def ocio_config_mode(self, value: str) -> None:
         if value not in ("default", "env", "custom"):
             value = "default"
-        self._s.setValue("color/ocio_config_mode", value)
+        _set_user_pref("color.ocio_config_mode", value)
 
     @property
     def ocio_config_path(self) -> str | None:
-        raw = self._s.value(
-            "color/ocio_config_path",
-            _site_default("color.ocio_config_path", None),
-        )
+        raw = _layered_default("color.ocio_config_path", None)
         return str(raw) if raw else None
 
     @ocio_config_path.setter
     def ocio_config_path(self, value: str | None) -> None:
-        if value:
-            self._s.setValue("color/ocio_config_path", str(value))
-        else:
-            self._s.remove("color/ocio_config_path")
+        _set_user_pref(
+            "color.ocio_config_path",
+            str(value) if value else None,
+        )
 
     # ---- Built-in OCIO config selection ---------------------------------
     # When ``ocio_config_mode == "default"``, this URI picks WHICH of the
@@ -275,21 +373,17 @@ class Preferences:
 
     @property
     def ocio_builtin_uri(self) -> str:
-        # Studio admins typically point this at their pipeline's ACES
-        # family via flick.toml — that's the headline use case for the
-        # site-config feature.
-        site_value = _site_default(
+        raw = _layered_default(
             "color.ocio_builtin_uri", self._DEFAULT_OCIO_BUILTIN_URI,
         )
-        raw = self._s.value("color/ocio_builtin_uri", site_value)
-        return str(raw) if raw else site_value
+        return str(raw) if raw else self._DEFAULT_OCIO_BUILTIN_URI
 
     @ocio_builtin_uri.setter
     def ocio_builtin_uri(self, value: str) -> None:
-        if value:
-            self._s.setValue("color/ocio_builtin_uri", str(value))
-        else:
-            self._s.remove("color/ocio_builtin_uri")
+        _set_user_pref(
+            "color.ocio_builtin_uri",
+            str(value) if value else None,
+        )
 
     @property
     def unmarked_exr_source(self) -> str | None:
@@ -672,12 +766,11 @@ class Preferences:
         day). Users on machines with tight SSD budgets can opt out
         from Preferences → Disk cache.
         """
-        site_value = _site_default("disk_cache.enabled", True)
-        return _qbool(self._s.value("disk_cache/enabled"), default=bool(site_value))
+        return bool(_layered_default("disk_cache.enabled", True))
 
     @disk_cache_enabled.setter
     def disk_cache_enabled(self, value: bool) -> None:
-        self._s.setValue("disk_cache/enabled", bool(value))
+        _set_user_pref("disk_cache.enabled", bool(value))
 
     @property
     def disk_cache_path(self) -> Path | None:
@@ -689,20 +782,17 @@ class Preferences:
         the cache on a faster drive (NVMe scratch) or a different
         partition with more headroom.
         """
-        raw = self._s.value(
-            "disk_cache/path",
-            _site_default("disk_cache.path", None),
-        )
+        raw = _layered_default("disk_cache.path", None)
         if not raw:
             return None
         return Path(str(raw))
 
     @disk_cache_path.setter
     def disk_cache_path(self, value: Path | str | None) -> None:
-        if value is None:
-            self._s.remove("disk_cache/path")
-        else:
-            self._s.setValue("disk_cache/path", str(value))
+        _set_user_pref(
+            "disk_cache.path",
+            str(value) if value is not None else None,
+        )
 
     @property
     def disk_cache_budget_gb(self) -> int:
@@ -714,10 +804,7 @@ class Preferences:
         Preferences spinner UI simple; the cache converts to bytes
         internally.
         """
-        raw = self._s.value(
-            "disk_cache/budget_gb",
-            _site_default("disk_cache.budget_gb", 50),
-        )
+        raw = _layered_default("disk_cache.budget_gb", 50)
         try:
             return max(0, int(raw))
         except (TypeError, ValueError):
@@ -725,7 +812,7 @@ class Preferences:
 
     @disk_cache_budget_gb.setter
     def disk_cache_budget_gb(self, value: int) -> None:
-        self._s.setValue("disk_cache/budget_gb", max(0, int(value)))
+        _set_user_pref("disk_cache.budget_gb", max(0, int(value)))
 
     # ---- disk_cache_compression ---------------------------------------
     @property
@@ -739,14 +826,11 @@ class Preferences:
         costs ~2× disk space. The setting only affects **new writes**;
         existing compressed blobs are still readable after the switch.
         """
-        raw = self._s.value(
-            "disk_cache/compression",
-            _site_default("disk_cache.compression", True),
-        )
+        raw = _layered_default("disk_cache.compression", True)
         if isinstance(raw, str):
             return raw.lower() in ("true", "1", "yes")
         return bool(raw)
 
     @disk_cache_compression.setter
     def disk_cache_compression(self, value: bool) -> None:
-        self._s.setValue("disk_cache/compression", bool(value))
+        _set_user_pref("disk_cache.compression", bool(value))

@@ -115,62 +115,9 @@ class TestFileResolution:
 # ============================================================================
 # Integration with Preferences
 # ============================================================================
-
-
-class TestPreferencesIntegration:
-    """A site config value should become the QSettings default — but
-    only when the user hasn't explicitly set that key. We verify both
-    halves of the contract."""
-
-    def test_site_value_supplies_default_when_pref_unset(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, qtbot,
-    ) -> None:
-        # Site config sets a non-default OCIO URI.
-        toml = tmp_path / "studio.toml"
-        toml.write_text(
-            "[color]\n"
-            'ocio_builtin_uri = "ocio://studio-config-v2.2.0_aces-v1.3_ocio-v2.4"\n',
-            encoding="utf-8",
-        )
-        monkeypatch.setenv("FLICK_SITE_CONFIG", str(toml))
-        sc.invalidate_cache()
-        # Use a clean QSettings scope so no leftover user pref shadows
-        # the site value.
-        from PySide6.QtCore import QCoreApplication, QSettings
-
-        QCoreApplication.setOrganizationName("flick-test-site")
-        QCoreApplication.setApplicationName("flick-test-app")
-        # Wipe just in case a previous test wrote something.
-        QSettings().clear()
-
-        from img_player.preferences import Preferences
-
-        assert (
-            Preferences().ocio_builtin_uri
-            == "ocio://studio-config-v2.2.0_aces-v1.3_ocio-v2.4"
-        )
-
-    def test_user_override_wins_over_site_default(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, qtbot,
-    ) -> None:
-        toml = tmp_path / "studio.toml"
-        toml.write_text(
-            '[color]\nocio_builtin_uri = "ocio://site-pick"\n',
-            encoding="utf-8",
-        )
-        monkeypatch.setenv("FLICK_SITE_CONFIG", str(toml))
-        sc.invalidate_cache()
-
-        from PySide6.QtCore import QCoreApplication, QSettings
-
-        QCoreApplication.setOrganizationName("flick-test-site2")
-        QCoreApplication.setApplicationName("flick-test-app2")
-        QSettings().clear()
-
-        from img_player.preferences import Preferences
-
-        prefs = Preferences()
-        # User explicit override.
-        prefs.ocio_builtin_uri = "ocio://user-pick"
-        # New Preferences instance should see the user value, not site.
-        assert Preferences().ocio_builtin_uri == "ocio://user-pick"
+#
+# The end-to-end behaviour (user TOML > site TOML > hardcoded) is
+# exercised by ``tests/unit/test_user_prefs.py::TestLayeredPreferences``
+# which has the proper test fixtures for isolating the user TOML store.
+# Keeping the Preferences leg out of this file avoids duplicating that
+# fixture machinery here.
