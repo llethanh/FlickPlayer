@@ -97,15 +97,23 @@ class _ColorManagementPage(QWidget):
         layout.addWidget(subtitle)
 
         # ---- Mode radio group ---------------------------------------
+        # Each mode's nested controls (the built-in dropdown for
+        # "Default", the path picker for "Custom") are added IMMEDIATELY
+        # after their owning radio so the visual hierarchy mirrors the
+        # logical one — picking a radio + tweaking the control right
+        # below it reads naturally.
         self._mode_group = QButtonGroup(self)
         self._radio_default = QRadioButton("Default (built-in ACES config)")
         self._radio_env = QRadioButton("From $OCIO environment variable")
         self._radio_custom = QRadioButton("Custom config file…")
-        for i, btn in enumerate((self._radio_default, self._radio_env, self._radio_custom)):
-            self._mode_group.addButton(btn, i)
-            layout.addWidget(btn)
+        self._mode_group.addButton(self._radio_default, 0)
+        self._mode_group.addButton(self._radio_env, 1)
+        self._mode_group.addButton(self._radio_custom, 2)
 
-        # ---- Built-in config picker (only meaningful in default mode) ----
+        # Default radio + its built-in dropdown.
+        layout.addWidget(self._radio_default)
+
+        # ---- Built-in config picker (under the Default radio) -------
         # Dropdown lists every config bundled with OCIO. Default is the
         # ACES 1.3 CG config to match Nuke / Maya / OpenRV — ACES 2.0
         # gives noticeably different tone-mapping that surprises users
@@ -150,7 +158,12 @@ class _ColorManagementPage(QWidget):
             )
             self._builtin_uris.append("ocio://default")
 
-        # ---- Path picker (only meaningful in custom mode) -----------
+        # Env radio (no nested control).
+        layout.addWidget(self._radio_env)
+
+        # Custom radio + its path picker.
+        layout.addWidget(self._radio_custom)
+
         path_row = QHBoxLayout()
         path_row.setContentsMargins(24, 0, 0, 0)
         self._path_edit = QLineEdit()

@@ -114,6 +114,13 @@ class OCIOManager:
         # import + try/except keeps OCIOManager unit-testable without a
         # QApplication and tolerant of QSettings read errors at boot.
         mode, custom_path = cls._read_pref_override()
+        # The user-chosen built-in URI is the LOCAL fallback for every
+        # mode (custom path missing, env unset, custom file fails to
+        # load, …). Falling back to ``ocio://default`` would silently
+        # land on ACES 2.0 — exactly the surprise we're trying to
+        # avoid. Using the user's pick keeps the behaviour predictable
+        # across all the failure paths below.
+        user_builtin = cls._read_pref_builtin_uri() or DEFAULT_BUILTIN_URI
 
         if mode == "custom" and custom_path:
             try:
@@ -122,35 +129,35 @@ class OCIOManager:
             except ocio.Exception as err:
                 log.warning(
                     "Failed to load custom OCIO config %s (%s). "
-                    "Falling back to builtin.",
+                    "Falling back to %s.",
                     custom_path,
                     err,
+                    user_builtin,
                 )
-                cfg = ocio.Config.CreateFromBuiltinConfig(DEFAULT_BUILTIN_URI)
+                cfg = ocio.Config.CreateFromBuiltinConfig(user_builtin)
                 return cfg, OCIOSource(
                     "builtin",
-                    f"{DEFAULT_BUILTIN_URI} (custom load failed)",
+                    f"{user_builtin} (custom load failed)",
                 )
 
         if mode == "default":
             # User-selectable builtin URI (default = ACES 1.3 CG to
             # match Nuke / Maya / OpenRV defaults). Fall back to
-            # ``ocio://default`` if the saved URI is unparseable —
-            # better than crashing the boot.
-            builtin_uri = cls._read_pref_builtin_uri() or DEFAULT_BUILTIN_URI
+            # ``ocio://default`` only if the saved URI itself fails to
+            # load — better than crashing the boot.
             try:
-                cfg = ocio.Config.CreateFromBuiltinConfig(builtin_uri)
-                return cfg, OCIOSource("builtin", builtin_uri)
+                cfg = ocio.Config.CreateFromBuiltinConfig(user_builtin)
+                return cfg, OCIOSource("builtin", user_builtin)
             except ocio.Exception as err:
                 log.warning(
                     "Failed to load builtin OCIO config %s (%s). "
                     "Falling back to %s.",
-                    builtin_uri, err, DEFAULT_BUILTIN_URI,
+                    user_builtin, err, DEFAULT_BUILTIN_URI,
                 )
                 cfg = ocio.Config.CreateFromBuiltinConfig(DEFAULT_BUILTIN_URI)
                 return cfg, OCIOSource(
                     "builtin",
-                    f"{DEFAULT_BUILTIN_URI} ({builtin_uri} load failed)",
+                    f"{DEFAULT_BUILTIN_URI} ({user_builtin} load failed)",
                 )
 
         # mode == "env" (or unset): keep the historical $OCIO lookup.
@@ -166,8 +173,15 @@ class OCIOManager:
                     err,
                 )
 
-        cfg = ocio.Config.CreateFromBuiltinConfig(DEFAULT_BUILTIN_URI)
-        return cfg, OCIOSource("builtin", DEFAULT_BUILTIN_URI)
+        # Last-ditch fallback (env mode but no $OCIO, or any mode that
+        # reached here without returning). Use the user's chosen builtin
+        # so the fallback is predictable across all paths.
+        try:
+            cfg = ocio.Config.CreateFromBuiltinConfig(user_builtin)
+            return cfg, OCIOSource("builtin", user_builtin)
+        except ocio.Exception:
+            cfg = ocio.Config.CreateFromBuiltinConfig(DEFAULT_BUILTIN_URI)
+            return cfg, OCIOSource("builtin", DEFAULT_BUILTIN_URI)
 
     @staticmethod
     def _read_pref_override() -> tuple[str | None, str | None]:
