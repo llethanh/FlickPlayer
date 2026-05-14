@@ -863,6 +863,23 @@ class TransportBar(QWidget):  # type: ignore[misc]
         self._contact_sheet_btn.setChecked(bool(on))
         self._contact_sheet_btn.blockSignals(False)
 
+    def set_playback_enabled(self, enabled: bool) -> None:
+        """Grey out the forward / reverse play buttons.
+
+        Used by contact-sheet mode where each tile owns its own
+        playback offset and a global master-clock play makes no
+        sense (the user scrubs per-tile instead). Step / first /
+        last navigation stays enabled — stepping the master frame
+        still shifts every tile in lockstep, which is useful.
+
+        The same ``:disabled`` QSS rule used by
+        :meth:`set_compare_enabled` keeps the disabled buttons
+        legible; the icon desaturation comes from Qt's Disabled
+        pixmap mode.
+        """
+        self._play_btn.setEnabled(bool(enabled))
+        self._reverse_play_btn.setEnabled(bool(enabled))
+
     def set_compare_enabled(self, enabled: bool) -> None:
         """Grey out the compare button when the layer stack has < 2
         entries — there's nothing to compare against then. The local

@@ -1620,6 +1620,13 @@ class ImgPlayerApp:
         # owns the pixels) and re-engage on exit so regular playback
         # gets its smooth cache-bound behaviour back.
         self._controller.set_always_advance(new_enabled)
+        # Disable global playback in CS mode: each tile owns its own
+        # per-layer offset, there's no single master clock to drive.
+        # Force-pause first so a currently-running playback stops on
+        # entry, then grey out the play buttons; reverse on exit.
+        if new_enabled and self._controller.state.is_playing:
+            self._controller.pause()
+        self._window.transport.set_playback_enabled(not new_enabled)
         # Auto-exit compare mode: the two are mutually exclusive
         # because both hijack the GL upload in ``_on_frame_changed``.
         if new_enabled and self._compare_state.enabled:
@@ -2328,6 +2335,17 @@ class ImgPlayerApp:
         self._last_audio_synced_frame = state.current_frame
 
     def _on_play_toggled(self) -> None:
+        # Contact-sheet mode owns its own per-tile scrub semantics —
+        # there's no single "master clock" to drive a global play
+        # (every tile has its own per_layer_offsets). Refuse the
+        # play request defensively here so the Space / K shortcuts
+        # match the greyed-out transport buttons. Pause if somehow
+        # playback was already running on entry (cf.
+        # ``toggle_contact_sheet`` which force-pauses on enter).
+        if self._contact_sheet_state.is_active():
+            if self._controller.state.is_playing:
+                self._controller.pause()
+            return
         if self._controller.state.is_playing:
             self._controller.pause()
         else:
@@ -3446,6 +3464,12 @@ class ImgPlayerApp:
         self._prefs.fps = fps
 
     def _on_direction_play(self, direction: int) -> None:
+        # Contact-sheet mode disables global playback — see
+        # ``_on_play_toggled`` for the rationale. Defensive guard
+        # against direction-play shortcuts (J / L) that the user
+        # might still press while CS is active.
+        if self._contact_sheet_state.is_active():
+            return
         # Logic lives on the controller — start / flip / pause based
         # on the requested direction vs current state. See
         # :meth:`PlayerController.play_direction` for the rules.
@@ -4191,6 +4215,13 @@ def _apply_preferences_to_window(app: ImgPlayerApp) -> None:
         # reads as read-only context, viewport per-tile drag is the
         # active gesture.
         app._window.timeline.set_dimmed(app._contact_sheet_state.enabled)
+        # Mirror the playback-disabled state too — same reasoning as
+        # the timeline dim: at boot we need to match what the runtime
+        # toggle does, otherwise the play buttons stay enabled even
+        # though CS mode is on.
+        app._window.transport.set_playback_enabled(
+            not app._contact_sheet_state.enabled,
+        )
         app._sync_contact_sheet_menu_state()
     except Exception:  # pragma: no cover — defensive
         log.exception("[contact_sheet] failed to restore prefs (using defaults)")
