@@ -630,21 +630,63 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
     def _cs_tile_at(self, x: float, y: float) -> int | None:
         """Map widget-space cursor coords to a 0-based tile index.
 
-        Returns ``None`` when contact-sheet mode is off or the
-        cursor falls outside the widget bounds. Assumes the
-        composite fills the widget — see the
-        :meth:`set_contact_sheet_grid` docstring for why this is a
-        safe simplification in practice.
+        Returns ``None`` when contact-sheet mode is off, the
+        composite hasn't been uploaded yet, or the cursor falls
+        outside the composite's drawn rect (= the letterbox /
+        pillarbox margins around it).
+
+        Why letterbox-aware: in *smart* (auto) grid mode the chosen
+        ``(cols, rows)`` makes the composite aspect match the
+        viewport so the composite fills the widget — the simple
+        ``x / widget_w * cols`` formula lands on the right tile.
+        In *manual* grids the user can pick a layout (e.g. 4×4 over
+        a 1:1 source on a 16:9 widget) where the composite is
+        letterboxed inside the widget. Without accounting for the
+        margin every click maps to a wrong tile because the formula
+        is anchored on widget pixels rather than composite pixels.
+
+        Cursor → tile transform:
+
+        1. Compute the composite's on-screen rect in widget coords
+           using the same ``factor`` / ``pan`` math the GL fit
+           matrix uses (so the visible drawn rect stays the source
+           of truth, even when the user has zoomed or panned).
+        2. Bail when the cursor falls outside that rect (= clicked
+           the letterbox margin or the widget chrome).
+        3. Map the cursor's composite-local coordinates to a
+           ``(col, row)`` and pack into a row-major index.
         """
         if self._cs_grid is None:
             return None
         cols, rows = self._cs_grid
-        w = max(1, self.width())
-        h = max(1, self.height())
-        if x < 0 or y < 0 or x >= w or y >= h:
+        win_w = max(1, self.width())
+        win_h = max(1, self.height())
+        img_w, img_h = self._image_size
+        if img_w <= 0 or img_h <= 0:
             return None
-        col = int(x / w * cols)
-        row = int(y / h * rows)
+
+        # Same scale + centring logic as :meth:`_fit_matrix`. We work
+        # in widget pixels here so no NDC conversion needed.
+        factor = (
+            self._zoom_factor
+            if self._zoom_factor is not None
+            else self._compute_fit_factor()
+        )
+        drawn_w = img_w * factor
+        drawn_h = img_h * factor
+        # Composite is centred, then translated by the user's pan
+        # (Qt coords: pan_x grows right, pan_y grows down — same as
+        # the cursor's coordinate system).
+        left = (win_w - drawn_w) / 2 + self._pan_x
+        top = (win_h - drawn_h) / 2 + self._pan_y
+
+        local_x = x - left
+        local_y = y - top
+        if local_x < 0 or local_y < 0 or local_x >= drawn_w or local_y >= drawn_h:
+            return None
+
+        col = int(local_x / drawn_w * cols)
+        row = int(local_y / drawn_h * rows)
         col = max(0, min(col, cols - 1))
         row = max(0, min(row, rows - 1))
         return row * cols + col
