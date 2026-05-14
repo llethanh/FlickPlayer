@@ -137,6 +137,10 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
     # the app translates ``-1`` to ``None`` for the state.
     contact_sheet_grid_changed = Signal(int, int)  # cols, rows
     contact_sheet_labels_toggled = Signal(bool)
+    # Output downscale divisor: 1 (full res), 2 (half on each axis),
+    # 3, 4, … The app's ``set_contact_sheet_output_divisor`` clamps
+    # to a positive integer so the signal can carry any int safely.
+    contact_sheet_divisor_changed = Signal(int)
     # Edit menu — same chained handlers as the Ctrl+Z / Ctrl+Shift+Z
     # QShortcuts (annotation first, layer-stack fallback). Routing
     # via signals keeps the App in charge of priority logic; the
@@ -571,17 +575,23 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
     # Mirror of the state on the app singleton — set by the app so the
     # settings sub-menu can build itself with the right ticks. The
     # window doesn't need to know about ``ContactSheetState`` — just
-    # the two fields it renders.
+    # the fields it renders.
     _contact_sheet_grid: tuple[int | None, int | None] = (None, None)
     _contact_sheet_labels: bool = False
+    _contact_sheet_divisor: int = 1
 
     def set_contact_sheet_grid_state(
-        self, cols: int | None, rows: int | None, show_labels: bool,
+        self,
+        cols: int | None,
+        rows: int | None,
+        show_labels: bool,
+        output_divisor: int = 1,
     ) -> None:
         """Sync the settings sub-menu state from the app side. Pass
         ``None`` for cols / rows to mark "auto"."""
         self._contact_sheet_grid = (cols, rows)
         self._contact_sheet_labels = bool(show_labels)
+        self._contact_sheet_divisor = max(1, int(output_divisor))
         # If the submenu is open right now, force a rebuild so the
         # checkmarks reflect the new state immediately.
         if self._contact_sheet_settings_menu.isVisible():
@@ -1390,6 +1400,28 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
             lambda checked: self.contact_sheet_labels_toggled.emit(bool(checked)),
         )
         menu.addAction(labels_act)
+
+        # Output resolution divisor — splits the composite size into
+        # 1/N on each axis so the user can trade tile detail for
+        # compose + GL-upload speed. Common picks: 1 (full res, only
+        # smooth with few layers), 2 (half × half = quarter pixels,
+        # the sweet spot for review at viewer scale), 4 (proxy-ish).
+        menu.addSeparator()
+        divisor_menu = menu.addMenu("Output &size")
+        for div, label in (
+            (1, "Full resolution (÷1)"),
+            (2, "Half (÷2)"),
+            (3, "Third (÷3)"),
+            (4, "Quarter (÷4)"),
+            (6, "Sixth (÷6)"),
+            (8, "Eighth (÷8)"),
+        ):
+            act = QAction(label, self, checkable=True)
+            act.setChecked(self._contact_sheet_divisor == div)
+            act.triggered.connect(
+                lambda _checked, d=div: self.contact_sheet_divisor_changed.emit(d),
+            )
+            divisor_menu.addAction(act)
 
     def _refresh_recent_menu(self) -> None:
         self._recent_menu.clear()

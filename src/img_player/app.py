@@ -889,6 +889,9 @@ class ImgPlayerApp:
         w.contact_sheet_toggle_requested.connect(self._on_contact_sheet_toggle)
         w.contact_sheet_grid_changed.connect(self._on_contact_sheet_grid_changed)
         w.contact_sheet_labels_toggled.connect(self.set_contact_sheet_labels)
+        w.contact_sheet_divisor_changed.connect(
+            self._on_contact_sheet_divisor_changed,
+        )
         # Edit menu — wire to the same chained handlers the keyboard
         # shortcut (Ctrl+Z / Ctrl+Shift+Z) uses, so menu and shortcut
         # produce identical behaviour (annotations first, layer
@@ -1307,6 +1310,11 @@ class ImgPlayerApp:
         self.set_contact_sheet_grid(c, r)
         self._sync_contact_sheet_menu_state()
 
+    def _on_contact_sheet_divisor_changed(self, divisor: int) -> None:
+        """Slot for ``MainWindow.contact_sheet_divisor_changed``."""
+        self.set_contact_sheet_output_divisor(divisor)
+        self._sync_contact_sheet_menu_state()
+
     def _sync_contact_sheet_menu_state(self) -> None:
         """Push the current ContactSheetState to the window so the
         settings sub-menu's checkmarks match reality on next open."""
@@ -1314,6 +1322,7 @@ class ImgPlayerApp:
             self._contact_sheet_state.cols,
             self._contact_sheet_state.rows,
             self._contact_sheet_state.show_labels,
+            self._contact_sheet_state.output_divisor,
         )
 
     def toggle_contact_sheet(self) -> None:
@@ -1351,6 +1360,18 @@ class ImgPlayerApp:
     def set_contact_sheet_labels(self, show: bool) -> None:
         """Toggle the per-tile name overlay."""
         self._contact_sheet_state.show_labels = bool(show)
+        self._prefs.contact_sheet_state = self._contact_sheet_state.to_dict()
+        if self._contact_sheet_state.is_active():
+            cur = self._controller.state.current_frame
+            self._last_displayed = None
+            self._on_frame_changed(cur)
+
+    def set_contact_sheet_output_divisor(self, divisor: int) -> None:
+        """Resize the composite output: ``divisor=1`` = full
+        resolution, ``2`` = half on each axis (= 1/4 pixel count),
+        etc. Larger values trade detail for compose / upload speed.
+        """
+        self._contact_sheet_state.output_divisor = max(1, int(divisor))
         self._prefs.contact_sheet_state = self._contact_sheet_state.to_dict()
         if self._contact_sheet_state.is_active():
             cur = self._controller.state.current_frame
@@ -1414,12 +1435,15 @@ class ImgPlayerApp:
         )
 
         # Compose target size: each tile gets ~source resolution
-        # (no upscale beyond what we have) and we lay them out in
-        # the chosen grid. The output is large but the GL viewport
-        # handles arbitrary sizes — keeps detail when the user
-        # zooms.
-        target_w = cols * src_w
-        target_h = rows * src_h
+        # divided by the user's chosen ``output_divisor`` (1, 2, 3,
+        # 4…). Divisor 1 = full source per tile (= memory- and CPU-
+        # expensive on a large stack); 2 = quarter pixel count
+        # (~4× faster compose + GL upload). The GL viewport
+        # rescales to fit anyway, so smaller is usually fine for
+        # review.
+        div = max(1, self._contact_sheet_state.output_divisor)
+        target_w = max(1, (cols * src_w) // div)
+        target_h = max(1, (rows * src_h) // div)
 
         names = [layer.name for layer, _ in decodes]
         composite = render_contact_sheet(
@@ -2459,6 +2483,21 @@ class ImgPlayerApp:
             self._controller.play()
 
     def _show_best_available(self, frame: int) -> None:
+        # Contact-sheet early-out — same reasoning as the compare
+        # check below. Without this, the scrub path uploads the
+        # plain cached composite of the topmost-visible layer, which
+        # overwrites the contact-sheet grid until the debounced seek
+        # eventually lets ``_on_frame_changed`` repaint it. The user
+        # sees a flicker (or, when scrubbing then pressing play, the
+        # last scrub upload sticks around for one tick) — exactly the
+        # "the cache wins over the contact sheet" symptom reported.
+        if self._contact_sheet_state.is_active():
+            if self._render_contact_sheet(frame):
+                self._last_displayed = frame
+                return
+            # else: every layer's decode failed — fall through to the
+            # cache so the user still sees something instead of black.
+
         # Compare-mode early-out: same hijack as ``_on_frame_changed``.
         # Without this, scrubbing while compare is active fires
         # ``_show_best_available`` from the scrub fast-path (which

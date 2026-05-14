@@ -38,6 +38,13 @@ class ContactSheetState:
     cols: int | None = None
     rows: int | None = None
     show_labels: bool = False
+    # Output downscale divisor — the composite ends up at
+    # ``(cols × src_w // divisor) × (rows × src_h // divisor)`` pixels.
+    # ``1`` = full resolution (each tile keeps source res, big buffer);
+    # ``2`` halves both dims (= one-quarter pixel count, ~4× faster
+    # compose + upload, suitable for review at viewer scale).
+    # The user picks the divisor to trade detail for performance.
+    output_divisor: int = 1
 
     def is_active(self) -> bool:
         """True when the GL upload should be hijacked.
@@ -89,6 +96,7 @@ class ContactSheetState:
             "cols": self.cols,
             "rows": self.rows,
             "show_labels": self.show_labels,
+            "output_divisor": self.output_divisor,
         }
 
     @classmethod
@@ -112,9 +120,17 @@ class ContactSheetState:
                 return None
             return iv if iv > 0 else None
 
+        def _pos_int(v: object, default: int) -> int:
+            try:
+                iv = int(v)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return default
+            return iv if iv > 0 else default
+
         return cls(
             enabled=bool(data.get("enabled", False)),
             cols=_opt_pos_int(data.get("cols")),
             rows=_opt_pos_int(data.get("rows")),
             show_labels=bool(data.get("show_labels", False)),
+            output_divisor=_pos_int(data.get("output_divisor"), 1),
         )

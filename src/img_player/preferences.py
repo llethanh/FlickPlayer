@@ -812,7 +812,7 @@ class Preferences:
         ``int | None``; the parsing in
         :meth:`ContactSheetState.from_dict` understands both.
         """
-        keys = ("enabled", "cols", "rows", "show_labels")
+        keys = ("enabled", "cols", "rows", "show_labels", "output_divisor")
         return _qsettings_dict(self._s, "contact_sheet", keys)
 
     @contact_sheet_state.setter
