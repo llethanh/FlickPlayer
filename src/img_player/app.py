@@ -1534,8 +1534,30 @@ class ImgPlayerApp:
             # ``_cs_drag_tile``, so this branch is defensive.
             return
         new_offset = anchor_offset + delta_frames
-        self._contact_sheet_state.per_layer_offsets[layer.id] = new_offset
+
+        # Clamp so the resulting effective source frame stays inside
+        # ``[0, trim_length - 1]``. Without this, dragging past the
+        # layer's end (or before its start) accumulates an out-of-
+        # range offset; the decoder clamps visually so the tile
+        # freezes, but the user then has to "unwind" the over-drag
+        # before the tile starts moving back — confusing.
+        #
+        # Range derivation: the decoder computes
+        # ``layer_offset = global_offset + per_layer_offset``
+        # then clamps to ``[0, trim_length - 1]``. We invert that
+        # at write-time so the stored per-tile offset is exactly the
+        # value that keeps the displayed frame at the layer's start
+        # / end after the clamp.
         cur = self._controller.state.current_frame
+        global_offset = max(
+            0, cur - self._controller._effective_in_frame(),  # noqa: SLF001
+        )
+        trim_length = max(1, layer.trim_length)
+        min_offset = -global_offset
+        max_offset = (trim_length - 1) - global_offset
+        new_offset = max(min_offset, min(new_offset, max_offset))
+
+        self._contact_sheet_state.per_layer_offsets[layer.id] = new_offset
         self._last_displayed = None
         self._on_frame_changed(cur)
 
