@@ -297,6 +297,19 @@ class FrameCache:
         """
         return self._pool.pending()
 
+    def visible_alt_layer_ids(self) -> tuple[str, ...]:
+        """Layers whose alt-channel prefetch should be queued at pause.
+
+        Always empty for the single-layer :class:`FrameCache` — alt
+        channels are a multi-layer concept that only
+        :class:`MasterFrameCache` implements. Provided here so
+        :class:`PlayerController` can duck-type both cache flavours
+        without an ``isinstance`` check on the hot path. Tests using
+        ``MagicMock(spec=FrameCache)`` also need this attribute to
+        exist for the mock-spec to accept the call.
+        """
+        return ()
+
     def shutdown(self) -> None:
         """Stop the worker pool. The cache must not be used after this."""
         self._pool.shutdown()

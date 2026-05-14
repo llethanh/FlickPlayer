@@ -123,6 +123,19 @@ class TestInvalidation:
             cache.shutdown()
 
     def test_layer_modified_invalidates_range(self, qtbot) -> None:
+        # We need a layer-modify field that actually invalidates the
+        # cache. Exposure / gamma are GPU shader uniforms applied at
+        # paint time — they don't bake into the cached pixels, so the
+        # cache correctly keeps the frame on those edits. The fields
+        # that change the cached bytes are:
+        #   * trim (layer_in / layer_out) → explicit master-range invalidation
+        #   * channel_selection / alpha flags → handled passively by
+        #     the multi-version signature key (frame 25 survives in
+        #     ``_frames`` but ``cached_frames()`` filters it out
+        #     because its stored signature no longer matches the
+        #     current query signature).
+        # We test the trim path here (explicit invalidation); the
+        # signature-key path is covered by ``TestAltChannelProgress``.
         stack = LayerStack()
         layer = _layer(offset=0)
         stack.add(layer)
@@ -135,8 +148,10 @@ class TestInvalidation:
                 cache.request(25)
                 cache.wait_idle(timeout=2.0)
             assert 25 in cache.cached_frames()
-            stack.update(layer.id, exposure=2.0)
-            # Modified → invalidate the layer's master range.
+            # Trim the layer so frame 25 falls outside the new
+            # coverage — ``_on_layer_modified`` → trim path →
+            # invalidate the now-uncovered slots.
+            stack.update(layer.id, layer_in=30)
             assert 25 not in cache.cached_frames()
         finally:
             cache.shutdown()
@@ -434,26 +449,29 @@ class TestAltChannelProgress:
         stack.add(layer)
         cache = MasterFrameCache(stack, num_workers=1)
         try:
-            # Build the synthetic signature the alt-prefetch would
-            # store under for ``albedo`` at master frames 1001 / 1002.
+            # ``Layer.from_sequence`` maps source frame numbers
+            # (1001..1010) to **master** frame numbers (0..9) — the
+            # cache keys on master frames, not source frames. So we
+            # pick two valid master frames inside the layer's range.
+            mf_real, mf_missing = 0, 1
             sig_albedo = cache._signature_at_with_override(
-                1001, layer.id, "albedo",
+                mf_real, layer.id, "albedo",
             )
             real_arr = np.zeros((4, 4, 3), dtype=np.float32)
             placeholder = np.zeros((4, 4, 4), dtype=np.float32)
             with cache._lock:
-                # 1001 = real decode
-                cache._frames[(1001, sig_albedo)] = real_arr
-                # 1002 = decode failed → placeholder + _missing entry
-                cache._frames[(1002, sig_albedo)] = placeholder
-                cache._missing.add((1002, sig_albedo))
+                # real decode at the first master frame
+                cache._frames[(mf_real, sig_albedo)] = real_arr
+                # decode failed at the second → placeholder + _missing
+                cache._frames[(mf_missing, sig_albedo)] = placeholder
+                cache._missing.add((mf_missing, sig_albedo))
 
             progress = cache.alt_channel_progress()
             cached, total = progress["albedo"]
-            # 10 frames in the sequence (1001..1010 inclusive).
+            # 10 master frames in the layer (0..9 inclusive).
             assert total == 10
-            # Only the real entry at 1001 counts. The 1002 placeholder
-            # is in ``_missing`` so it's excluded.
+            # Only the real entry counts. The placeholder is in
+            # ``_missing`` so it's excluded.
             assert cached == 1, (
                 f"expected 1 real cached frame, got {cached} — "
                 "missing-frame placeholder leaked into progress count"
@@ -472,11 +490,14 @@ class TestAltChannelProgress:
         stack.add(layer)
         cache = MasterFrameCache(stack, num_workers=1)
         try:
-            sig_rgb = cache._signature_at(1001)
+            # Master-frame numbering (not source 1001..1010) — see
+            # ``test_missing_placeholders_excluded_from_progress`` for
+            # the rationale.
+            sig_rgb = cache._signature_at(0)
             real_arr = np.zeros((4, 4, 3), dtype=np.float32)
             with cache._lock:
-                cache._frames[(1001, sig_rgb)] = real_arr
-                cache._frames[(1005, sig_rgb)] = real_arr
+                cache._frames[(0, sig_rgb)] = real_arr
+                cache._frames[(4, sig_rgb)] = real_arr
 
             progress = cache.alt_channel_progress()
             cached, total = progress["RGB"]
@@ -541,21 +562,27 @@ class TestEvictionOrdering:
         stack.add(layer)
         cache = MasterFrameCache(stack, num_workers=1)
         try:
+            # Master frame numbering (0..9) — ``Layer.from_sequence``
+            # remaps the source-frame numbers (1001..1010) to a fresh
+            # master timeline starting at 0. ``_signature_at_with_override``
+            # only produces a non-empty signature for a master frame
+            # the layer actually covers.
+            mf_a, mf_b, mf_c = 0, 1, 2
             sig_rgba = cache._signature_at_with_override(
-                1001, layer.id, "RGBA",
+                mf_a, layer.id, "RGBA",
             )
             sig_albedo = cache._signature_at_with_override(
-                1001, layer.id, "albedo",
+                mf_a, layer.id, "albedo",
             )
             sig_emission = cache._signature_at_with_override(
-                1001, layer.id, "emission",
+                mf_a, layer.id, "emission",
             )
             arr = np.zeros((100, 100, 3), dtype=np.float32)  # ~120 KB
             nbytes_per = arr.nbytes
             # Inject 3 frames per channel — enough to verify "whole
             # channel clumped" vs "spread across channels".
             with cache._lock:
-                for mf in (1001, 1002, 1003):
+                for mf in (mf_a, mf_b, mf_c):
                     cache._frames[(mf, sig_rgba)] = arr
                     cache._frames[(mf, sig_albedo)] = arr
                     cache._frames[(mf, sig_emission)] = arr
@@ -609,16 +636,19 @@ class TestEvictionOrdering:
         stack.add(layer)
         cache = MasterFrameCache(stack, num_workers=1)
         try:
+            # Master-frame numbering (0..9) — see
+            # ``test_evicts_oldest_non_beauty_channel_first`` for the
+            # rationale.
             sig_albedo = cache._signature_at_with_override(
-                1001, layer.id, "albedo",
+                0, layer.id, "albedo",
             )
             sig_emission = cache._signature_at_with_override(
-                1001, layer.id, "emission",
+                0, layer.id, "emission",
             )
             arr = np.zeros((100, 100, 3), dtype=np.float32)
             nbytes_per = arr.nbytes
             with cache._lock:
-                for mf in (1001, 1002, 1003, 1004):
+                for mf in (0, 1, 2, 3):
                     cache._frames[(mf, sig_albedo)] = arr
                     cache._frames[(mf, sig_emission)] = arr
                     cache._bytes_used += 2 * nbytes_per

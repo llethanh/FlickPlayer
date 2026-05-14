@@ -315,6 +315,7 @@ def _render_pixmap(name: str, color: str, size: int) -> QPixmap:
     return pixmap
 
 
+@lru_cache(maxsize=64)
 def make_icon(
     name: str,
     color: str = H.TEXT_PRIMARY,
@@ -341,9 +342,13 @@ def make_icon(
         ``H.ACCENT_DIM`` to keep a coloured silhouette when disabled
         instead of losing the icon's identity to grayscale.
 
-    Caching: the icon is memoized on ``(name, color, size,
-    disabled_color)``. We expect at most a few dozen unique
-    combinations across the whole app.
+    Caching: the icon **and** its underlying pixmap are both memoized
+    on ``(name, color, size, disabled_color)``. We expect at most a
+    few dozen unique combinations across the whole app — callers
+    that pass identical args get the **same** ``QIcon`` instance back
+    (``is``-equal), which saves both the SVG render and the icon
+    construction. Don't ``addPixmap`` to a returned icon — you'd
+    mutate the shared instance.
     """
     pixmap = _render_pixmap(name, color, size)
     icon = QIcon(pixmap)

@@ -54,11 +54,12 @@ conda activate img_player
 pytest tests/
 ```
 
-**Tests deselectés (pré-existants, pas régressions)** — ignorer si
-ils tombent :
-- `tests/integration/test_controller.py::test_set_in_out_clamps_current`
-- `tests/unit/test_layer_panel.py::TestReorderButtons` (le module entier)
-- `tests/unit/test_worker_pool.py::test_clear_drops_pending_tasks`
+**Toute la suite doit passer au vert** (971 tests, ~20 s en local).
+Pas de deselects pré-existants : la dette d'anciens tests obsolètes
+qui traînait jusqu'à mai 2026 a été nettoyée dans le pass
+"Mock-fragility + behavior-drift" — voir le commit `tests: revive 36
+broken tests` pour le détail (FrameCache duck-typing + master-frame
+vs source-frame confusion + obsolete UI feature removed).
 
 ## Builder un bundle
 

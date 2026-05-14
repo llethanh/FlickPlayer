@@ -106,8 +106,18 @@ def test_clear_drops_pending_tasks() -> None:
 
         dropped = pool.clear()
         assert dropped == 5
-        assert pool.pending() == 1  # only the blocker is still "in flight"
+        # ``clear()`` wipes the ENTIRE ``_pending`` set — including the
+        # in-flight blocker's key — so future re-submissions for the
+        # same key aren't silently dropped while the old (about-to-be-
+        # ghosted) decode finishes. See :meth:`WorkerPool.clear`
+        # docstring for the rationale. ``pending()`` therefore reads
+        # 0 here even though one task is still executing.
+        assert pool.pending() == 0
 
+        # The blocker still runs to completion — clear() doesn't
+        # interrupt in-flight work. Releasing the gate lets it
+        # finish; ``_pending.discard("blocker")`` in the worker's
+        # ``finally`` is a safe no-op (the key was already removed).
         gate.set()
         deadline = time.monotonic() + 1.0
         while time.monotonic() < deadline and pool.pending() > 0:

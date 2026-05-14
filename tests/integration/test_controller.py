@@ -205,10 +205,23 @@ def test_set_fps_updates_state(controller: PlayerController) -> None:
     assert controller.state.fps > 0.0
 
 
-def test_set_in_out_clamps_current(controller: PlayerController) -> None:
+def test_set_in_out_does_not_clamp_current(controller: PlayerController) -> None:
+    """``set_in_out`` deliberately leaves ``current_frame`` alone even
+    when it falls outside the new range.
+
+    Previously auto-snapped to within [in, out]; the contract changed
+    so the user can park the cursor anywhere (e.g. to bookmark a
+    frame for reference) without it being yanked back into the loop
+    range on every in/out edit. Only :meth:`_tick` snaps, and only
+    when playback is actually running.
+    """
     controller.seek(8)
     controller.set_in_out(in_frame=2, out_frame=4)
-    assert 2 <= controller.state.current_frame <= 4
+    # No auto-snap → cursor stays at 8.
+    assert controller.state.current_frame == 8
+    # The in/out markers themselves are applied.
+    assert controller.state.in_frame == 2
+    assert controller.state.out_frame == 4
 
 
 def test_dropped_frames_counted_on_miss(controller: PlayerController) -> None:

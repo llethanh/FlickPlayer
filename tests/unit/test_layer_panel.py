@@ -125,46 +125,19 @@ class TestVisibility:
 
 
 # ============================================================================
-# Reorder buttons
+# Reorder
 # ============================================================================
-
-
-class TestReorderButtons:
-    def test_move_up(self, qtbot) -> None:
-        stack = LayerStack()
-        a = _layer(name="A")
-        b = _layer(name="B")
-        stack.add(a, position=0)  # top
-        stack.add(b, position=1)  # bottom
-        panel = LayerPanel(stack)
-        qtbot.addWidget(panel)
-        # Click "↑" on B (currently at index 1) → it goes to 0.
-        panel._rows[b.id]._up_btn.click()  # type: ignore[attr-defined]
-        assert [layer.name for layer in stack] == ["B", "A"]
-
-    def test_move_down(self, qtbot) -> None:
-        stack = LayerStack()
-        a = _layer(name="A")
-        b = _layer(name="B")
-        stack.add(a, position=0)
-        stack.add(b, position=1)
-        panel = LayerPanel(stack)
-        qtbot.addWidget(panel)
-        panel._rows[a.id]._down_btn.click()  # type: ignore[attr-defined]
-        assert [layer.name for layer in stack] == ["B", "A"]
-
-    def test_topmost_cant_move_up(self, qtbot) -> None:
-        stack = LayerStack()
-        a = _layer(name="A")
-        b = _layer(name="B")
-        stack.add(a, position=0)
-        stack.add(b, position=1)
-        panel = LayerPanel(stack)
-        qtbot.addWidget(panel)
-        # The top layer's ↑ should be disabled.
-        assert panel._rows[a.id]._up_btn.isEnabled() is False  # type: ignore[attr-defined]
-        # The bottom layer's ↓ should also be disabled.
-        assert panel._rows[b.id]._down_btn.isEnabled() is False  # type: ignore[attr-defined]
+#
+# The ``↑`` / ``↓`` buttons that used to live on each row were
+# replaced by drag-and-drop reordering (see
+# :data:`~img_player.ui.layer_panel._REORDER_MIME` and the
+# ``reorder_drag_*`` signals on :class:`LayerRow`). The model-level
+# reorder semantics (``LayerStack.reorder``) are still exhaustively
+# covered by :mod:`tests.unit.test_layer_stack`. The UI-level
+# drag-and-drop is intentionally not unit-tested here because Qt's
+# drag machinery requires a real event-loop spin to deliver
+# ``QDragMoveEvent`` / ``dropEvent`` reliably — those tests live in
+# ``tests/integration`` if/when we add them.
 
 
 # ============================================================================
