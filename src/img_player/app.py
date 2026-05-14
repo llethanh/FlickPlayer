@@ -1614,38 +1614,15 @@ class ImgPlayerApp:
         # (layer ids are UUIDs, regenerated at construction) so we
         # don't push these to QSettings; ``per_layer_offsets`` lives
         # only on the in-memory state.
-        # Tell the GL viewport about (or clear) the active grid so
-        # its drag-to-scrub path routes mouse drags to per-tile
-        # scrub instead of the master timeline. Set BEFORE the
-        # re-render call below so the grid is in place when the user
-        # presses their first scrub.
-        gl = self._window.viewer.gl
-        if new_enabled:
-            # Resolve the effective grid now so the viewport has
-            # accurate (cols, rows). Match the same image_aspect /
-            # canvas_aspect inputs the renderer uses.
-            try:
-                layers = [
-                    layer for layer in self._layer_stack.layers()
-                    if layer.visible
-                ]
-                if layers and layers[0].sequence.width:
-                    src_w = layers[0].sequence.width or 1920
-                    src_h = layers[0].sequence.height or 1080
-                else:
-                    src_w, src_h = 1920, 1080
-                vp_w = max(1, gl.width())
-                vp_h = max(1, gl.height())
-                cols, rows = self._contact_sheet_state.effective_grid(
-                    max(1, len(layers)),
-                    image_aspect=src_w / max(1, src_h),
-                    canvas_aspect=vp_w / vp_h,
-                )
-                gl.set_contact_sheet_grid((cols, rows))
-            except Exception:  # pragma: no cover — defensive
-                log.exception("[contact_sheet] failed to push grid to viewport")
-        else:
-            gl.set_contact_sheet_grid(None)
+        # Clear the GL viewport's grid on exit so subsequent mouse
+        # drags route to the master timeline again. On entry we
+        # don't push here — ``_render_contact_sheet`` (called below
+        # via ``_on_frame_changed``) pushes the grid every render,
+        # which also covers boot-from-prefs, viewport resizes that
+        # flip an auto grid, and manual grid changes via the menu
+        # without each call site needing its own re-push.
+        if not new_enabled:
+            self._window.viewer.gl.set_contact_sheet_grid(None)
         # Persist + re-render at the current frame so the user sees
         # the change immediately.
         self._prefs.contact_sheet_state = self._contact_sheet_state.to_dict()
@@ -1790,6 +1767,17 @@ class ImgPlayerApp:
         cols, rows = self._contact_sheet_state.effective_grid(
             len(layers), image_aspect, canvas_aspect=canvas_aspect,
         )
+
+        # Always push the live grid to the GL viewport. The viewport
+        # needs ``(cols, rows)`` to route mouse drags to per-tile
+        # scrub rather than master-timeline scrub. Pushing on every
+        # render means boot-from-prefs, manual grid changes via the
+        # menu, and even viewport resizes (which can flip an auto
+        # grid via the smart-grid logic) all keep the viewport in
+        # sync without a dedicated re-push at each call site.
+        # ``set_contact_sheet_grid`` short-circuits when the grid
+        # hasn't changed — safe to call every frame.
+        gl_widget.set_contact_sheet_grid((cols, rows))
 
         # Compose target size: each tile gets ~source resolution
         # divided by the user's chosen ``output_divisor`` (1, 2, 3,

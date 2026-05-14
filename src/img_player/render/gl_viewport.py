@@ -666,12 +666,23 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
         small residual letterbox at the composite edges is at most
         a few percent and doesn't break tile mapping in practice.
         """
-        if grid is None or grid[0] <= 0 or grid[1] <= 0:
-            self._cs_grid = None
-        else:
-            self._cs_grid = (int(grid[0]), int(grid[1]))
-        # Any in-progress drag should be discarded — switching mode
-        # mid-gesture would emit the wrong signal type otherwise.
+        new_grid = (
+            None
+            if grid is None or grid[0] <= 0 or grid[1] <= 0
+            else (int(grid[0]), int(grid[1]))
+        )
+        # Short-circuit unchanged grids so calling this every render
+        # (from ``ImgPlayerApp._render_contact_sheet``) doesn't reset
+        # an in-progress drag every time the contact sheet repaints.
+        # Without this guard, the user's per-tile scrub-drag would be
+        # cancelled mid-gesture by the re-render the drag itself
+        # triggered.
+        if new_grid == self._cs_grid:
+            return
+        self._cs_grid = new_grid
+        # Mode change — any in-progress drag should be discarded
+        # because the signal type the press started would be wrong
+        # for the new mode.
         self._cs_drag_tile = None
         self._drag_base_frame = None
 
