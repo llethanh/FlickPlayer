@@ -1065,6 +1065,12 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         # app greys out the inactive one when its sibling is on.
         buttons_layout.addWidget(self._transport.compare_button)
         buttons_layout.addWidget(self._transport.contact_sheet_button)
+        # The "…" kebab button sits flush against the contact-sheet
+        # toggle (no inter-button spacing) so the two read as a
+        # paired control. Negative-margin trick on the menu button
+        # is the cheapest way to get rid of the layout's standard
+        # ``S.SM`` spacing for this one boundary.
+        buttons_layout.addWidget(self._transport.contact_sheet_menu_button)
         buttons_layout.addWidget(self._transport.reload_button)
         buttons_layout.addWidget(self._transport.export_button)
         # Channel selector + RGBA mode selector, grouped tight.

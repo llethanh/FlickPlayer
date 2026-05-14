@@ -192,6 +192,11 @@ class PlayerController(QObject):  # type: ignore[misc]  # mypy: QObject is Any
         playback behaviour.
         """
         self._always_advance = bool(enabled)
+        log.info(
+            "[controller] always_advance = %s (cache-stall guard %s)",
+            self._always_advance,
+            "DISABLED" if self._always_advance else "enabled",
+        )
 
     def set_prefetch_ahead(self, value: int) -> None:
         """Adjust the prefetch window at runtime.
@@ -572,6 +577,11 @@ class PlayerController(QObject):  # type: ignore[misc]  # mypy: QObject is Any
             and not self._always_advance
             and not self._cache.contains(next_frame)
         ):
+            log.debug(
+                "[controller] tick stall at master=%d (cache miss, not gap, "
+                "always_advance=%s)",
+                next_frame, self._always_advance,
+            )
             # Stay on the current frame. Re-issue the prefetch so the
             # worker pool keeps loading toward the would-be next
             # frame. Direction matters for the prefetch heuristic.

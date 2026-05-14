@@ -1540,11 +1540,25 @@ class ImgPlayerApp:
             if layer.visible
         ]
         if not layers:
+            log.debug(
+                "[contact_sheet] render skipped at master=%d: no visible layers",
+                master_frame,
+            )
             return False
         decodes = self._contact_sheet_decoder.decode_all(layers, master_frame)
         tiles = [arr for _, arr in decodes]
         if all(arr is None for arr in tiles):
+            log.warning(
+                "[contact_sheet] render skipped at master=%d: every layer's "
+                "decode returned None (n_layers=%d)",
+                master_frame, len(layers),
+            )
             return False
+        log.debug(
+            "[contact_sheet] render master=%d, %d tiles (%d decoded)",
+            master_frame, len(layers),
+            sum(1 for t in tiles if t is not None),
+        )
 
         # Reference tile = first decoded layer. Drives both the
         # "image_aspect" hint for the smart grid (per-tile aspect)
