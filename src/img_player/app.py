@@ -6,6 +6,7 @@ import argparse
 import gc
 import logging
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QTimer
@@ -2073,8 +2074,8 @@ class ImgPlayerApp:
                         "[comment] save failed at close — "
                         "underlying error already logged."
                     )
-        # discard_btn or save_btn (success or fail): allow close.
-        _ = discard_btn  # named binding kept for dialog readability
+        # Falls through for discard_btn or save_btn (success or fail):
+        # in either case we allow the close to proceed.
         return True
 
     def _on_channel_mask_changed(self, mask: tuple) -> None:
@@ -3203,9 +3204,7 @@ class ImgPlayerApp:
         if not seq.frames:
             return seq
         try:
-            from dataclasses import replace
-
-            from img_player.io.reader import read_header
+            from img_player.io.reader import read_header  # noqa: PLC0415 — lazy: OIIO is heavy
 
             spec = read_header(seq.frames[0].path)
             channels = tuple(spec.channelnames or ())

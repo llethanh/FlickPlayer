@@ -30,6 +30,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from OpenGL import GL
+from OpenGL.error import GLError
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QMouseEvent, QSurfaceFormat, QWheelEvent
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
@@ -243,13 +244,17 @@ class _PboRing:
             if fence is not None:
                 try:
                     GL.glDeleteSync(fence)
-                except Exception:  # pragma: no cover — best effort
+                except (GLError, RuntimeError, TypeError):  # pragma: no cover — best effort
+                    # GL context may already be torn down (RuntimeError),
+                    # the fence pointer may be stale (GLError), or
+                    # PyOpenGL may have unbound the call (TypeError on
+                    # shutdown). Best-effort cleanup either way.
                     pass
         self._fences = [None] * _PBO_RING_SIZE
         if self._pbo_ids:
             try:
                 GL.glDeleteBuffers(len(self._pbo_ids), self._pbo_ids)
-            except Exception:  # pragma: no cover
+            except (GLError, RuntimeError, TypeError):  # pragma: no cover
                 pass
             self._pbo_ids = []
         self._capacity_bytes = 0
@@ -1087,7 +1092,11 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
                 # session. The user can restart the app to retry.
                 try:
                     self._pbo_ring.cleanup()
-                except Exception:  # pragma: no cover
+                except (GLError, RuntimeError, TypeError):  # pragma: no cover
+                    # Cleanup is best-effort: the ring is already being
+                    # abandoned, we just don't want a tertiary GL error
+                    # to mask the original PBO failure that triggered
+                    # this fallback.
                     pass
                 self._pbo_ring = None
                 self._last_upload_gpu_us = None

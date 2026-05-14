@@ -149,18 +149,23 @@ class AudioOutput:
             self._feeder_thread.join(timeout=1.0)
             self._feeder_thread = None
         if self._stream is not None:
+            # ``PortAudioError`` is the only typed exception sounddevice
+            # raises here; everything else (AttributeError on a half-
+            # constructed stream, etc.) is unexpected and still logged.
             try:
                 self._stream.stop()
                 self._stream.close()
-            except Exception:
-                log.exception("[audio] error closing stream")
+            except (OSError, RuntimeError) as exc:
+                log.warning("[audio] stream close failed: %s", exc)
+            except Exception:  # pragma: no cover — defensive
+                log.exception("[audio] unexpected error closing stream")
             self._stream = None
         with self._source_lock:
             if self._active_source is not None:
                 try:
                     self._active_source.close()
-                except Exception:
-                    pass
+                except (OSError, RuntimeError) as exc:
+                    log.debug("[audio] source close failed (ignored): %s", exc)
                 self._active_source = None
                 self._active_layer_id = None
 
@@ -181,8 +186,13 @@ class AudioOutput:
             if self._active_source is not None:
                 try:
                     self._active_source.close()
-                except Exception:
-                    pass
+                except (OSError, RuntimeError) as exc:
+                    # Previous source already torn down or never opened.
+                    # Log at debug so a flaky disk surfaces something
+                    # rather than silently swallowing the error.
+                    log.debug(
+                        "[audio] previous source close failed: %s", exc,
+                    )
             self._active_source = source
             self._active_layer_id = layer_id
         # Flush the ring buffer so the user hears the new source's
@@ -204,8 +214,10 @@ class AudioOutput:
             if self._active_source is not None:
                 try:
                     self._active_source.seek(max(0.0, t_seconds))
-                except Exception:
-                    log.exception("[audio] seek failed")
+                except (OSError, RuntimeError, ValueError) as exc:
+                    log.warning("[audio] seek failed: %s", exc)
+                except Exception:  # pragma: no cover — defensive
+                    log.exception("[audio] unexpected error during seek")
         self._flush_ring()
 
     def set_speed(self, speed: float) -> None:
@@ -277,8 +289,17 @@ class AudioOutput:
                 continue
             try:
                 block = source.read(_FEED_BLOCK_SAMPLES)
-            except Exception:
-                log.exception("[audio] feeder read failed")
+            except (OSError, RuntimeError) as exc:
+                # Decoder hiccup (codec error, network-mounted file
+                # going away, …) — sleep and let the controller
+                # decide to seek / drop the layer. Logged at WARNING
+                # because a sustained stream of these usually means a
+                # bad source rather than a transient blip.
+                log.warning("[audio] feeder read failed: %s", exc)
+                self._feeder_stop.wait(timeout=0.05)
+                continue
+            except Exception:  # pragma: no cover — defensive
+                log.exception("[audio] unexpected error in feeder read")
                 self._feeder_stop.wait(timeout=0.05)
                 continue
             if block.shape[0] == 0:

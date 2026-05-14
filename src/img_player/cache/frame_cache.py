@@ -313,6 +313,14 @@ class FrameCache:
         """Drop only the pending decode queue (keep cached frames)."""
         return self._pool.clear()
 
+    def pending_decodes(self) -> int:
+        """Number of decode tasks queued or in flight in the worker
+        pool. Bench/diagnostic accessor — surfaced as a public method
+        so callers don't have to reach into ``_pool`` (the bench
+        recorder used to do exactly that with a ``# noqa: SLF001``).
+        """
+        return self._pool.pending()
+
     def shutdown(self) -> None:
         """Stop the worker pool. The cache must not be used after this."""
         self._pool.shutdown()

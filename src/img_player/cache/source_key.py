@@ -103,12 +103,13 @@ def source_key_for_layer_frame(
     if canonical and canonical[1:2] == ":":  # "C:/Users/..." → windows-ish
         canonical = canonical.lower()
     # Version prefix bumped to ``v2`` when we fixed the channel-key
-    # mismatch in 1.5.1 (the live-state read in ``_source_key_at``
+    # mismatch in 1.5.1: live-state reads of the disk-cache key
     # caused alt-channel decodes to write blobs under the wrong key,
-    # mixing channels in the disk cache). Old v1 blobs stay on disk
-    # but are effectively orphaned — LRU eviction sweeps them on the
-    # next budget overrun, or the user clears manually via
-    # Preferences > Disk cache > Clear cache now.
+    # mixing channels in the disk cache. The fix was to capture key
+    # state at submit time via :func:`source_key_for_layer_frame`.
+    # Old v1 blobs stay on disk but are effectively orphaned — LRU
+    # eviction sweeps them on the next budget overrun, or the user
+    # clears manually via Preferences > Disk cache > Clear cache now.
     payload = (
         f"v2|{canonical}|{int(mtime * 1000)}|{int(size)}|"
         f"{channel_str}|{int(alpha_composite)}{int(alpha_is_straight)}"

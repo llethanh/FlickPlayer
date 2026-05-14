@@ -15,6 +15,8 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 
+from img_player._value_coerce import qsettings_bool
+
 
 class ExportSettingsError(ValueError):
     """Raised by :meth:`ExportSettings.validate` on bad config."""
@@ -490,27 +492,9 @@ class ExportSettings:
                 return default
             return s
 
-        def _safe_bool(v: object, default: bool) -> bool:
-            """Coerce a QSettings round-trip value to bool.
-
-            QSettings on Windows stores booleans as the strings
-            ``"true"`` / ``"false"`` (or sometimes ``"0"``/``"1"``).
-            A naive ``bool(v)`` then returns ``True`` for *any*
-            non-empty string — including ``"false"`` — so unchecked
-            options re-check themselves on the next dialog open.
-            Parse strings explicitly here.
-            """
-            if isinstance(v, bool):
-                return v
-            if isinstance(v, (int, float)):
-                return bool(v)
-            if isinstance(v, str):
-                s = v.strip().lower()
-                if s in ("true", "1", "yes", "on"):
-                    return True
-                if s in ("false", "0", "no", "off", ""):
-                    return False
-            return default
+        # ``qsettings_bool`` is shared with :mod:`preferences` via
+        # :mod:`_value_coerce` — see that module for the rationale.
+        _safe_bool = qsettings_bool
 
         # Normalise basename: empty string → None so the engine falls
         # back to the source sequence's base_name (= legacy behaviour

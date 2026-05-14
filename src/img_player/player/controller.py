@@ -574,7 +574,7 @@ class PlayerController(QObject):  # type: ignore[misc]  # mypy: QObject is Any
                 recorder.record_tick(
                     requested_frame=next_frame,
                     cache_hit=False,
-                    pending_decodes=self._cache._pool.pending(),
+                    pending_decodes=self._cache.pending_decodes(),
                 )
             # Live metric emit still runs — status bar's effective
             # fps drops naturally when stalls dominate.
@@ -602,7 +602,7 @@ class PlayerController(QObject):  # type: ignore[misc]  # mypy: QObject is Any
             recorder.record_tick(
                 requested_frame=next_frame,
                 cache_hit=cache_hit,
-                pending_decodes=self._cache._pool.pending(),
+                pending_decodes=self._cache.pending_decodes(),
             )
         self.frame_changed.emit(next_frame)
 

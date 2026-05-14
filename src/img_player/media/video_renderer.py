@@ -244,8 +244,12 @@ class VideoSourceManager:
 
     # Backwards-compat alias used by tests written against the old
     # ``_sources`` attribute name. New code should use ``_decoders``.
+    #
+    # .. deprecated:: v1.5.13
+    #    Scheduled for removal in v1.7. Tests should refer to
+    #    ``_decoders`` directly.
     @property
-    def _sources(self) -> dict[str, _ThreadedDecoder]:
+    def _sources(self) -> dict[str, _ThreadedDecoder]:  # pragma: no cover — back-compat shim
         return self._decoders
 
     # ------------------------------------------------------------------

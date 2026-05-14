@@ -184,32 +184,50 @@ class OCIOManager:
             return cfg, OCIOSource("builtin", DEFAULT_BUILTIN_URI)
 
     @staticmethod
-    def _read_pref_override() -> tuple[str | None, str | None]:
-        """Return ``(mode, custom_path)`` from QSettings, or ``(None, None)``
-        if Preferences can't be read (no QApplication, import error, …).
+    def _read_prefs() -> "Preferences | None":  # type: ignore[name-defined]  # noqa: F821
+        """Return a :class:`Preferences` instance, or ``None`` if the
+        prefs store can't be read (no QApplication, import error, …).
 
-        Kept defensive on purpose: the OCIO config is loaded very early
-        in the boot sequence and we don't want any setting-store hiccup
-        to take the app down before the splash even appears.
+        Kept defensive on purpose: the OCIO config is loaded very
+        early in the boot sequence and we don't want any setting-store
+        hiccup to take the app down before the splash even appears.
+        Both ``_read_pref_override`` and ``_read_pref_builtin_uri``
+        funnel through here so we don't pay the lazy-import + Qt
+        round-trip twice when both are needed.
         """
         try:
-            from img_player.preferences import Preferences
+            from img_player.preferences import Preferences  # noqa: PLC0415
 
-            prefs = Preferences()
+            return Preferences()
+        except Exception as err:  # pragma: no cover — defensive
+            log.debug("Could not read OCIO prefs (%s).", err)
+            return None
+
+    @staticmethod
+    def _read_pref_override() -> tuple[str | None, str | None]:
+        """Return ``(mode, custom_path)`` from QSettings, or
+        ``(None, None)`` if Preferences can't be read."""
+        prefs = OCIOManager._read_prefs()
+        if prefs is None:
+            return None, None
+        try:
             return prefs.ocio_config_mode, prefs.ocio_config_path
         except Exception as err:  # pragma: no cover — defensive
-            log.debug("Could not read OCIO prefs (%s). Using legacy resolution.", err)
+            log.debug(
+                "Could not read OCIO mode/path (%s). Using legacy resolution.", err,
+            )
             return None, None
 
     @staticmethod
     def _read_pref_builtin_uri() -> str | None:
-        """Return the user's preferred builtin URI (or ``None`` if prefs
-        can't be read). Used by :meth:`_resolve_default` when
+        """Return the user's preferred builtin URI (or ``None`` if
+        prefs can't be read). Used by :meth:`_resolve_default` when
         ``mode == 'default'``."""
+        prefs = OCIOManager._read_prefs()
+        if prefs is None:
+            return None
         try:
-            from img_player.preferences import Preferences
-
-            return Preferences().ocio_builtin_uri
+            return prefs.ocio_builtin_uri
         except Exception as err:  # pragma: no cover — defensive
             log.debug("Could not read OCIO builtin URI pref (%s).", err)
             return None

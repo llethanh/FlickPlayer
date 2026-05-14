@@ -29,7 +29,7 @@ _INPUT_PIX_FMT_RGBA = "rgba"
 class VideoWriter(BaseWriter):
     """Writes a single container file with one video stream."""
 
-    def __init__(self) -> None:
+    def __init__(self, output_file: Path | None = None) -> None:
         # PyAV is imported lazily so the rest of the export module
         # remains importable without PyAV (e.g. on a tests run that
         # only exercises the image-sequence path or the settings).
@@ -43,7 +43,10 @@ class VideoWriter(BaseWriter):
         self._has_alpha_input = False
         self._closed = False
         self._aborted = False
-        self._output_file: Path | None = None
+        # If the engine pre-computed the output path (the normal flow
+        # via :func:`build_writer`), keep it. ``open()`` will fall
+        # back to ``<out_dir>/export<ext>`` if left at ``None``.
+        self._output_file: Path | None = output_file
         self._frames_written = 0
 
     # ------------------------------------------------------------------ Lifecycle
@@ -82,8 +85,9 @@ class VideoWriter(BaseWriter):
         out_dir.mkdir(parents=True, exist_ok=True)
         # The basename is plumbed by the engine via the renderer's
         # source sequence — for the writer's purpose, default to
-        # "export". The engine overrides it via ``set_output_basename``
-        # before ``open()``.
+        # "export". The factory :func:`build_writer` sets the final
+        # path through the constructor, but tests can instantiate
+        # ``VideoWriter()`` directly and rely on this fallback.
         if self._output_file is None:
             self._output_file = out_dir / f"export{ext}"
 
@@ -188,16 +192,6 @@ class VideoWriter(BaseWriter):
     def output_path(self) -> Path:
         return self._output_file or Path(".")
 
-    # ------------------------------------------------------------------ Public extras
-
-    def set_output_basename(self, basename: str) -> None:
-        """Engine calls this BEFORE ``open()`` so the file inherits
-        the source sequence's name."""
-        if self._settings is None:
-            # Stash for ``open()`` to consume.
-            object.__setattr__(self, "_pending_basename", basename)
-        # Either way, compute the output_file when settings is known.
-
     # ------------------------------------------------------------------ Internals
 
     def _configure_codec_options(self, stream, settings: ExportSettings) -> None:
@@ -253,9 +247,8 @@ def build_writer(settings: ExportSettings, *, basename: str = "export") -> BaseW
     """Factory: pick the right writer for the requested format."""
     if settings.is_image_sequence:
         return ImageSequenceWriter(basename=basename)
-    writer = VideoWriter()
-    # Set the file path before ``open()`` so abort()/output_path()
-    # have it in case ``open()`` itself raises.
+    # Pre-compute the file path before ``open()`` so abort() /
+    # output_path() have it in case ``open()`` itself raises.
     ext = settings.fmt.extension
-    writer._output_file = settings.output_dir / f"{basename}{ext}"  # noqa: SLF001
-    return writer
+    output_file = settings.output_dir / f"{basename}{ext}"
+    return VideoWriter(output_file=output_file)

@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
 
 import OpenImageIO as oiio
 
 
-@lru_cache(maxsize=1)
+@cache
 def supported_extensions() -> frozenset[str]:
     """Return the set of extensions OIIO can read, lowercase with leading dot.
 

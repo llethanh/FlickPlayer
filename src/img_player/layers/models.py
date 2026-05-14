@@ -71,10 +71,12 @@ class Layer:
     # alpha=1 everywhere, so the composite path no-ops on them and
     # there's no penalty.
     alpha_composite: bool = True
-    # Alpha encoding convention of the source pixels. Auto-detected
-    # from the file extension at ``from_sequence`` time (PNG / TGA /
-    # JPG → straight, EXR / DPX / TIFF → premult); the user can
-    # still flip the αS button to override per-layer if needed.
+    # Alpha encoding convention of the source pixels. Defaults to
+    # ``False`` (premultiplied — the VFX rendering standard).
+    # Per-format auto-detection used to live in :meth:`from_sequence`
+    # but turned out to be wrong as often as right (EXR can be
+    # straight, PNG can come out of compositors with premult baked
+    # in). The user toggles αS per-layer when the default is off.
     alpha_is_straight: bool = False
 
     # Sidecar paths for annotations + comments. Resolved at

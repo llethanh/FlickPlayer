@@ -2,8 +2,17 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable
 from pathlib import Path
+
+# Mirror the guard from :mod:`img_player.io.reader` so OIIO doesn't
+# scan PATH for DLL deps when imported from the tests — otherwise a
+# workstation that has other VFX tooling on PATH (Maya, Perforce,
+# Nuke runtime, …) breaks the OIIO import with the dreaded "La
+# procédure spécifiée est introuvable". Must be set BEFORE
+# ``import OpenImageIO``.
+os.environ.setdefault("OIIO_LOAD_DLLS_FROM_PATH", "0")
 
 import numpy as np
 import OpenImageIO as oiio

@@ -227,10 +227,23 @@ class VideoSource:
                     f"No decodable frame found at t={t} in {self._path}"
                 ) from None
             except Exception as exc:  # PyAV EOFError, codec hiccups
-                # PyAV occasionally raises av.error.EOFError on the
+                # PyAV occasionally raises ``av.error.EOFError`` on the
                 # final packet of a short clip — treat as end of
-                # stream, same recovery as StopIteration above.
-                if "End of file" in str(exc) or "EOF" in type(exc).__name__:
+                # stream, same recovery as StopIteration above. We
+                # prefer the typed isinstance check (robust to PyAV
+                # version bumps) and keep a string-match fallback for
+                # exotic builds where the class hierarchy changed.
+                is_eof = False
+                try:
+                    import av.error  # noqa: PLC0415 — lazy, optional
+                    is_eof = isinstance(exc, av.error.EOFError)
+                except (ImportError, AttributeError):  # pragma: no cover
+                    pass
+                if not is_eof:
+                    is_eof = (
+                        "End of file" in str(exc) or "EOF" in type(exc).__name__
+                    )
+                if is_eof:
                     if self._last_frame is not None:
                         return self._last_frame
                     raise RuntimeError(

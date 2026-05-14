@@ -76,9 +76,17 @@ def compose(
     if mode == MODE_OPACITY:
         t = max(0.0, min(1.0, float(seam)))
         # Cast float32 explicitly so an uint8 input doesn't get
-        # truncated by integer arithmetic.
-        return (a.astype(np.float32) * (1.0 - t)
-                + b.astype(np.float32) * t).astype(a.dtype)
+        # truncated by integer arithmetic. The naive expression
+        # ``a*(1-t) + b*t`` allocates 3 intermediates; we write to
+        # an explicit ``out=`` buffer to avoid two of them. Matters
+        # at 4K where each intermediate is ~64 MiB.
+        out_f32 = np.empty(a.shape, dtype=np.float32)
+        np.multiply(a, 1.0 - t, out=out_f32, dtype=np.float32, casting="unsafe")
+        if t > 0.0:
+            out_f32 += b * t  # one allocation here is unavoidable; ``+=`` is in-place on out_f32
+        if a.dtype == np.float32:
+            return out_f32
+        return out_f32.astype(a.dtype)
     if mode == MODE_VERTICAL:
         # ``np.empty_like`` + two half-writes is ~50 % less memory
         # traffic than the more obvious ``out = a.copy(); out[..] = b[..]``
@@ -147,9 +155,11 @@ def _to_channel_count(arr: np.ndarray, target: int) -> np.ndarray:
         )
         return np.concatenate([arr, alpha], axis=2)
     if c > target:
-        # Caller asked for fewer channels — drop trailing ones.
-        # Doesn't happen on the live path (max() above) but defensive
-        # for tests that pass exotic shapes.
+        # Defensive: tests sometimes pass exotic shapes (e.g. 5
+        # channels). On the live path :func:`_match_channels` calls
+        # us with ``target = max(ca, cb)`` so this branch is
+        # unreachable from production code — but keeping it makes
+        # the function safer to call directly.
         return arr[..., :target]
     raise ValueError(f"Cannot reshape {c}-channel array to {target} channels")
 

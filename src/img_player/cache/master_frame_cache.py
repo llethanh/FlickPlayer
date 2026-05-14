@@ -458,6 +458,12 @@ class MasterFrameCache:
         :meth:`FrameCache.clear_pending` for controller compat."""
         return self._pool.clear()
 
+    def pending_decodes(self) -> int:
+        """Number of decode tasks queued or in flight. Mirrors
+        :meth:`FrameCache.pending_decodes` so :class:`PlayerController`
+        can duck-type both cache flavours."""
+        return self._pool.pending()
+
     def reload(self, new_sequence) -> tuple[int, int, int]:  # type: ignore[no-untyped-def]
         """Drop-in replacement for :meth:`FrameCache.reload`.
 
@@ -1473,76 +1479,6 @@ class MasterFrameCache:
             alpha_composite=bool(layer.alpha_composite),
             alpha_is_straight=bool(layer.alpha_is_straight),
         )
-
-    def _source_key_at(self, master_frame: int) -> str | None:
-        """Compute the **session-independent** disk-cache key for the
-        live chain at ``master_frame``.
-
-        Mirrors :meth:`_signature_at` (same chain walk, same channel
-        rules) but swaps each layer's session-local ``id`` for a
-        canonical ``(path, mtime, channels, alpha flags)`` tuple. Two
-        sessions opening the same EXR with the same channel selection
-        get the same key — that's the whole point of the disk tier.
-
-        .. warning::
-           Uses **live state**. At decode time the live state may
-           differ from the state-at-submit (alt-channel prefetch,
-           mid-decode user toggle, …). Decode workers should compute
-           and pass the key from submit-time state via
-           :meth:`_source_key_for_single_layer` instead; this helper
-           is for code paths that need the key from a synchronous
-           read context (none today, kept for completeness / future
-           use cases).
-
-        Returns ``None`` when the key can't be meaningfully built:
-          * no visible layer covers this frame (= gap, nothing to
-            cache),
-          * any contributing layer has no resolved source path at
-            this frame (= sparse hole — we don't disk-cache missing
-            frame placeholders; they're cheap to regenerate),
-          * mtime info isn't yet indexed for some layer (defensive —
-            triggers a fresh decode + cache fill).
-        """
-        if self._disk_cache is None:
-            return None
-        per_layer: list[str] = []
-        for layer in self._stack.layers():
-            if not layer.visible or not layer.covers(master_frame):
-                continue
-            source_frame = layer.source_frame_at(master_frame)
-            path_map = self._path_index.get(layer.id)
-            mtime_map = self._mtime_index.get(layer.id)
-            if path_map is None or mtime_map is None:
-                return None
-            path = path_map.get(source_frame)
-            mtime = mtime_map.get(source_frame)
-            if path is None or mtime is None:
-                return None
-            # ``size`` is left at 0 — we don't store file size in the
-            # path index today and the extra ``stat`` per frame would
-            # halve the prefetch throughput. mtime + path collision is
-            # already astronomically unlikely; size is belt-and-braces
-            # we can add later if needed.
-            channels = self._channels_for(layer)
-            key = source_key_for_layer_frame(
-                source_path=path,
-                mtime=float(mtime),
-                size=0,
-                channels=channels,
-                alpha_composite=bool(layer.alpha_composite),
-                alpha_is_straight=bool(layer.alpha_is_straight),
-            )
-            per_layer.append(key)
-            if not layer.alpha_composite:
-                # Opaque-floor layer: the over-walk stops here, same
-                # as in :meth:`_signature_at`. The composite key is
-                # built from what actually contributes.
-                break
-        if not per_layer:
-            return None
-        if len(per_layer) == 1:
-            return per_layer[0]
-        return composite_source_key(per_layer)
 
     def _signature_at_with_override(
         self,

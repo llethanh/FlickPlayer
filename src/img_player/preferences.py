@@ -13,6 +13,7 @@ from typing import Any
 
 from PySide6.QtCore import QSettings
 
+from img_player._value_coerce import qsettings_bool
 from img_player.site_config import site_config
 from img_player.user_prefs import user_prefs
 
@@ -61,26 +62,10 @@ def _set_user_pref(dotted_key: str, value: Any) -> None:
     user_prefs().set(dotted_key, value)
 
 
-def _qbool(raw: object, default: bool = False) -> bool:
-    """Coerce a ``QSettings.value()`` return into a :class:`bool`.
-
-    QSettings on Windows returns ``int`` 0/1 from REG_DWORD-stored
-    values, while on macOS/Linux .conf files round-trip booleans as
-    the strings ``"true"``/``"false"``. This helper folds both into
-    a real Python bool, with ``default`` taking over when the key is
-    missing (raw is ``None``). Centralised so the five callers below
-    stop reimplementing the same little ``isinstance(raw, str)``
-    cascade.
-    """
-    if raw is None:
-        return default
-    if isinstance(raw, bool):
-        return raw
-    if isinstance(raw, str):
-        return raw.strip().lower() in ("true", "1", "yes", "on")
-    if isinstance(raw, (int, float)):
-        return bool(raw)
-    return default
+# Local alias kept for backwards-compat inside this file. The canonical
+# implementation lives in :mod:`_value_coerce` so that pure modules
+# (e.g. :mod:`export.settings`) can share it without pulling in Qt.
+_qbool = qsettings_bool
 
 
 # Keys migrated from QSettings to the user TOML in v1.5.8. The mapping

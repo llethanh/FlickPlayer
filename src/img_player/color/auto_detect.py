@@ -210,6 +210,11 @@ def detect_source_colorspace(
             return DetectionResult(cs, f"file metadata: {key}={raw!r}")
         # The file claims a colorspace that isn't in our config —
         # surface that, the user might want to fix their config.
+        # An earlier audit suggested falling through to step 2-4 here,
+        # but ``test_unknown_explicit_tag_returns_none_with_reason``
+        # pins the original behaviour deliberately: an explicit tag
+        # the user wrote should not be silently swapped for a
+        # heuristic fallback. Keep the short-circuit.
         return DetectionResult(None, f"file metadata claims {raw!r} but it is not in the config")
 
     # 2. OIIO's normalised tag.

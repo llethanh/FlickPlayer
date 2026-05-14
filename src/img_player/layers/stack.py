@@ -112,8 +112,6 @@ class LayerStack(QObject):  # type: ignore[misc]
         # vs end states.
         self._batch_layers_changed_pending: bool = False
 
-    # ------------------------------------------------------------------ Mutation
-
     # ------------------------------------------------------------------ History API
 
     def can_undo(self) -> bool:
