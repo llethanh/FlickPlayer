@@ -110,6 +110,13 @@ def open_save_frame_dialog(app: ImgPlayerApp) -> None:
     source_w = int(seq.width or 1920)
     source_h = int(seq.height or 1080)
 
+    # Contact-sheet composite size — surfaced as an extra preset at
+    # the top of the dialog's resolution combo when CS mode is
+    # active, so the user can one-click "save the current contact
+    # sheet at its native composite size" rather than typing the
+    # dims into Custom mode themselves.
+    contact_sheet_size = _current_contact_sheet_size(app)
+
     dialog = SaveFrameDialog(
         suggested_filename=suggested_filename,
         suggested_dir=suggested_dir,
@@ -121,6 +128,7 @@ def open_save_frame_dialog(app: ImgPlayerApp) -> None:
         last_width=last_width,
         last_height=last_height,
         compare_active=compare_active,
+        contact_sheet_size=contact_sheet_size,
         parent=app._window,
     )
     if dialog.exec() != dialog.DialogCode.Accepted:
@@ -559,6 +567,51 @@ def _write_image(image: QImage, settings: SaveFrameSettings) -> bool:
 # ============================================================================
 # Misc helpers
 # ============================================================================
+
+
+def _current_contact_sheet_size(
+    app: ImgPlayerApp,
+) -> tuple[int, int] | None:
+    """Compute the live contact-sheet composite size, or ``None``.
+
+    Returns ``None`` when contact-sheet mode is off OR when there's
+    not enough info to size the grid (no visible layers, no source
+    dims). The dialog uses this to decide whether to inject a
+    "Contact sheet (W×H)" preset — when ``None``, the dialog falls
+    back to the regular Source/preset/Custom list.
+
+    Mirrors :meth:`ImgPlayerApp._render_contact_sheet`'s sizing
+    math so the preset's dims match what the user actually gets
+    when they pick it: ``(cols × src_w // divisor, rows × src_h //
+    divisor)``. The grid is resolved against the current viewport
+    aspect (= what the live render uses) so the preset value tracks
+    the on-screen composite rather than a hypothetical at-save-
+    time computation.
+    """
+    cs_state = getattr(app, "_contact_sheet_state", None)
+    if cs_state is None or not cs_state.is_active():
+        return None
+    layers = [layer for layer in app._layer_stack.layers() if layer.visible]
+    if not layers:
+        return None
+    # Pull source dims from the first visible layer's sequence —
+    # same convention as the live render (which uses the first
+    # decoded tile's array shape; for the dialog this is good
+    # enough since the dialog opens BEFORE any tile is decoded).
+    src_w = int(layers[0].sequence.width or app._controller.sequence.width or 1920)
+    src_h = int(layers[0].sequence.height or app._controller.sequence.height or 1080)
+    image_aspect = src_w / max(1, src_h)
+    gl_widget = app._window.viewer.gl
+    vp_w = max(1, gl_widget.width())
+    vp_h = max(1, gl_widget.height())
+    canvas_aspect = vp_w / vp_h
+    cols, rows = cs_state.effective_grid(
+        max(1, len(layers)), image_aspect, canvas_aspect=canvas_aspect,
+    )
+    div = max(1, cs_state.output_divisor)
+    out_w = max(1, (cols * src_w) // div)
+    out_h = max(1, (rows * src_h) // div)
+    return (out_w, out_h)
 
 
 def _opt_pos_int(value: object) -> int | None:

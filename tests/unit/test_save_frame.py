@@ -274,6 +274,100 @@ class TestResolutionPicker:
 
 
 # ============================================================================
+# Contact-sheet preset — injected at the top of the combo when CS is active
+# ============================================================================
+
+
+class TestContactSheetPreset:
+    def test_cs_preset_absent_when_not_passed(
+        self, qtbot, tmp_path: Path,
+    ) -> None:
+        """Without ``contact_sheet_size`` the combo holds only the
+        export's RESOLUTION_PRESETS — no Contact sheet entry."""
+        dialog = SaveFrameDialog(
+            suggested_filename="x",
+            suggested_dir=tmp_path,
+            **_DIALOG_DEFAULTS,
+        )
+        qtbot.addWidget(dialog)
+        labels = [
+            dialog._res_combo.itemText(i)
+            for i in range(dialog._res_combo.count())
+        ]
+        assert not any(label.startswith("Contact sheet") for label in labels)
+        # Source still sits at index 0 in the regular case.
+        assert dialog._source_idx == 0
+
+    def test_cs_preset_prepended_and_default(
+        self, qtbot, tmp_path: Path,
+    ) -> None:
+        """When CS mode is active, the dialog injects a "Contact sheet
+        (W×H)" entry AT INDEX 0 and selects it by default — the user
+        gets the current composite size in one click."""
+        dialog = SaveFrameDialog(
+            suggested_filename="x",
+            suggested_dir=tmp_path,
+            source_width=1920,
+            source_height=1080,
+            contact_sheet_size=(4800, 2700),
+        )
+        qtbot.addWidget(dialog)
+        assert dialog._res_combo.itemText(0).startswith("Contact sheet")
+        assert "4800" in dialog._res_combo.itemText(0)
+        assert "2700" in dialog._res_combo.itemText(0)
+        # Default selection is the CS preset, not Source.
+        assert dialog._res_combo.currentIndex() == 0
+        # Source shifted by one because CS preset is at idx 0.
+        assert dialog._source_idx == 1
+        # settings() returns the CS preset's exact dims (not None).
+        s = dialog.settings()
+        assert s.width == 4800
+        assert s.height == 2700
+
+    def test_cs_preset_with_zero_dims_is_ignored(
+        self, qtbot, tmp_path: Path,
+    ) -> None:
+        """Zero / negative CS dims (= caller couldn't resolve the size)
+        are dropped silently — falls back to the regular preset list."""
+        dialog = SaveFrameDialog(
+            suggested_filename="x",
+            suggested_dir=tmp_path,
+            source_width=1920,
+            source_height=1080,
+            contact_sheet_size=(0, 1080),
+        )
+        qtbot.addWidget(dialog)
+        labels = [
+            dialog._res_combo.itemText(i)
+            for i in range(dialog._res_combo.count())
+        ]
+        assert not any(label.startswith("Contact sheet") for label in labels)
+
+    def test_cs_preset_overrides_stored_last_dims(
+        self, qtbot, tmp_path: Path,
+    ) -> None:
+        """The CS preset's "this is the snapshot the user wants right
+        now" semantics outrank a previously-stored Custom W×H — the
+        prior pick belongs to a different mode."""
+        dialog = SaveFrameDialog(
+            suggested_filename="x",
+            suggested_dir=tmp_path,
+            source_width=1920,
+            source_height=1080,
+            last_width=999,
+            last_height=555,  # arbitrary stored dims
+            contact_sheet_size=(4800, 2700),
+        )
+        qtbot.addWidget(dialog)
+        # Default = CS preset (idx 0), NOT the last_width / last_height
+        # round-trip that would land on Custom.
+        assert dialog._res_combo.currentIndex() == 0
+        s = dialog.settings()
+        assert s.width == 4800
+        assert s.height == 2700
+
+
+# ============================================================================
 # _write_image
 # ============================================================================
 

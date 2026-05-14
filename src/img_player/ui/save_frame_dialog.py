@@ -99,6 +99,7 @@ class SaveFrameDialog(QDialog):
         last_width: int | None = None,
         last_height: int | None = None,
         compare_active: bool = False,
+        contact_sheet_size: tuple[int, int] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -162,10 +163,39 @@ class SaveFrameDialog(QDialog):
         # sizes; "Custom…" enables the W/H spinboxes for a manual
         # pick. "Lock aspect" mirrors the source W:H ratio while the
         # user types Custom values.
+        #
+        # Contact-sheet entry: when the caller passes the live grid
+        # composite size, we prepend a "Contact sheet (W×H)" preset
+        # at the top of the list — it's the natural default for a
+        # snapshot of the current contact-sheet view, exposed as a
+        # one-click pick rather than forcing the user into Custom
+        # mode and typing the dims themselves. The dialog stores a
+        # local ``_presets`` list (= RESOLUTION_PRESETS optionally
+        # prepended) and tracks the live indices of Source / Custom
+        # so the rest of the slot logic doesn't assume hardcoded
+        # positions any more.
+        self._presets: list[tuple[str, int | None, int | None]] = []
+        if contact_sheet_size is not None:
+            cs_w, cs_h = int(contact_sheet_size[0]), int(contact_sheet_size[1])
+            if cs_w > 0 and cs_h > 0:
+                self._presets.append(
+                    (f"Contact sheet ({cs_w}×{cs_h})", cs_w, cs_h),
+                )
+        self._presets.extend(RESOLUTION_PRESETS)
+        # Source = the entry with both dims None; Custom = the last
+        # entry (sentinel zeros). These indices drive the
+        # preset-vs-Source-vs-Custom branching in the slots below
+        # — never hardcode 0 / -1 there.
+        self._source_idx: int = next(
+            i for i, (_l, w, h) in enumerate(self._presets)
+            if w is None and h is None
+        )
+        self._custom_idx: int = len(self._presets) - 1
+
         res_box = QGroupBox("Resolution")
         res_form = QFormLayout(res_box)
         self._res_combo = QComboBox()
-        for label, _w, _h in RESOLUTION_PRESETS:
+        for label, _w, _h in self._presets:
             self._res_combo.addItem(label)
         res_form.addRow("Preset:", self._res_combo)
         wh_row = QHBoxLayout()
@@ -269,28 +299,64 @@ class SaveFrameDialog(QDialog):
     def _init_resolution(
         self, last_width: int | None, last_height: int | None,
     ) -> None:
-        """Pre-fill the resolution combo + spinboxes from prefs.
+        """Pre-fill the resolution combo + spinboxes.
 
-        Treats both ``None`` as "Source"; otherwise tries to match a
-        named preset on the stored dims and falls back to Custom.
+        Preference order:
+
+        1. If a contact-sheet preset was injected (= we're saving from
+           contact-sheet mode), select it by default. The current grid
+           composite is the natural snapshot target — one click and
+           the user gets exactly what's on screen at full res.
+        2. Otherwise, if the stored ``last_width`` / ``last_height``
+           match a named preset (including the optional contact-sheet
+           one), select it.
+        3. If both stored dims are ``None`` (= "Source" semantically),
+           select the Source entry.
+        4. Else fall back to Custom with the stored dims written into
+           the spinboxes.
         """
+        # 1. Contact-sheet preset present → default to it.
+        cs_idx = self._contact_sheet_idx()
+        if cs_idx is not None:
+            self._res_combo.setCurrentIndex(cs_idx)
+            return
+
+        # 2. + 3. Source case — both None.
         if last_width is None or last_height is None:
-            self._res_combo.setCurrentIndex(0)  # Source
+            self._res_combo.setCurrentIndex(self._source_idx)
             # Force the preset's side-effects (spin values + enabled)
             # by re-firing the slot — setCurrentIndex on an already-
             # selected index is a no-op so we call directly.
-            self._on_res_preset(0)
+            self._on_res_preset(self._source_idx)
             return
-        for i, (_label, w, h) in enumerate(RESOLUTION_PRESETS):
+
+        # 2. Named-preset match (including the CS one if it slipped
+        # past the cs_idx default — defensive in case CS dims happen
+        # to equal the user's prior pick).
+        for i, (_label, w, h) in enumerate(self._presets):
             if w == last_width and h == last_height:
                 self._res_combo.setCurrentIndex(i)
                 return
-        # Custom path — write the stored dims into the spinboxes and
-        # select the Custom preset so they're editable.
-        custom_idx = len(RESOLUTION_PRESETS) - 1
-        self._res_combo.setCurrentIndex(custom_idx)
+
+        # 4. Custom path — write the stored dims into the spinboxes
+        # and select Custom so they're editable.
+        self._res_combo.setCurrentIndex(self._custom_idx)
         self._width_spin.setValue(int(last_width))
         self._height_spin.setValue(int(last_height))
+
+    def _contact_sheet_idx(self) -> int | None:
+        """Index of the "Contact sheet (W×H)" preset, or ``None`` if
+        the dialog wasn't opened in contact-sheet mode.
+
+        The CS entry sits at index 0 when present — the constructor
+        prepends it before extending with ``RESOLUTION_PRESETS``. We
+        identify it by label rather than position so a future re-
+        order of the preset list doesn't silently break this default.
+        """
+        for i, (label, _w, _h) in enumerate(self._presets):
+            if label.startswith("Contact sheet"):
+                return i
+        return None
 
     # ------------------------------------------------------------------ Slots
 
@@ -316,27 +382,27 @@ class SaveFrameDialog(QDialog):
         """Drive the W/H spins from the preset combo.
 
         * **Source** → fill source dims, disable spins.
-        * **Named preset** → fill preset dims, disable spins.
+        * **Named preset** (including the optional Contact sheet
+          entry) → fill preset dims, disable spins.
         * **Custom…** → leave spins editable (no auto-fill).
         """
-        custom_idx = len(RESOLUTION_PRESETS) - 1
-        if idx == 0:  # Source
+        if idx == self._source_idx:
             self._width_spin.setValue(self._source_w)
             self._height_spin.setValue(self._source_h)
             self._width_spin.setEnabled(False)
             self._height_spin.setEnabled(False)
-        elif idx == custom_idx:
+        elif idx == self._custom_idx:
             self._width_spin.setEnabled(True)
             self._height_spin.setEnabled(True)
         else:
-            _label, w, h = RESOLUTION_PRESETS[idx]
+            _label, w, h = self._presets[idx]
             self._width_spin.setValue(int(w) if w else self._source_w)
             self._height_spin.setValue(int(h) if h else self._source_h)
             self._width_spin.setEnabled(False)
             self._height_spin.setEnabled(False)
         # Lock-aspect only matters in Custom mode — disable the box
         # elsewhere so its state can't influence presets.
-        self._lock_aspect_chk.setEnabled(idx == custom_idx)
+        self._lock_aspect_chk.setEnabled(idx == self._custom_idx)
 
     def _on_lock_aspect_toggled(self, on: bool) -> None:
         """Capture the current W:H as the reference ratio when the
@@ -362,7 +428,7 @@ class SaveFrameDialog(QDialog):
             return
         if not self._lock_aspect_chk.isChecked():
             return
-        if self._res_combo.currentIndex() != len(RESOLUTION_PRESETS) - 1:
+        if self._res_combo.currentIndex() != self._custom_idx:
             return
         if self._aspect_ratio <= 0:
             return
@@ -379,7 +445,7 @@ class SaveFrameDialog(QDialog):
             return
         if not self._lock_aspect_chk.isChecked():
             return
-        if self._res_combo.currentIndex() != len(RESOLUTION_PRESETS) - 1:
+        if self._res_combo.currentIndex() != self._custom_idx:
             return
         if self._aspect_ratio <= 0:
             return
@@ -414,14 +480,14 @@ class SaveFrameDialog(QDialog):
         path = self._dir / f"{stem}.{ext}"
 
         res_idx = self._res_combo.currentIndex()
-        if res_idx == 0:  # Source
+        if res_idx == self._source_idx:
             width: int | None = None
             height: int | None = None
-        elif res_idx == len(RESOLUTION_PRESETS) - 1:  # Custom
+        elif res_idx == self._custom_idx:
             width = int(self._width_spin.value())
             height = int(self._height_spin.value())
         else:
-            _label, w, h = RESOLUTION_PRESETS[res_idx]
+            _label, w, h = self._presets[res_idx]
             width = int(w) if w else None
             height = int(h) if h else None
 
