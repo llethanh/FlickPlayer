@@ -319,7 +319,15 @@ class TestContactSheetPreset:
         assert dialog._res_combo.currentIndex() == 0
         # Source shifted by one because CS preset is at idx 0.
         assert dialog._source_idx == 1
-        # settings() returns the CS preset's exact dims (not None).
+        # Spinboxes show the CS dims. Without an explicit
+        # ``_on_res_preset`` call from ``_init_resolution`` they'd
+        # sit at QSpinBox's minimum (2) because Qt skips
+        # ``currentIndexChanged`` when ``setCurrentIndex`` is called
+        # with the already-selected index — covered against
+        # regression here.
+        assert dialog._width_spin.value() == 4800
+        assert dialog._height_spin.value() == 2700
+        # And settings() returns the CS preset's exact dims.
         s = dialog.settings()
         assert s.width == 4800
         assert s.height == 2700

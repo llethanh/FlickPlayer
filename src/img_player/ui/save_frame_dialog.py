@@ -319,6 +319,14 @@ class SaveFrameDialog(QDialog):
         cs_idx = self._contact_sheet_idx()
         if cs_idx is not None:
             self._res_combo.setCurrentIndex(cs_idx)
+            # Force the slot's side-effect (fill the W/H spinboxes
+            # with the preset's dims + disable them). Without this
+            # explicit call the spins stay at their QSpinBox minimum
+            # (= 2) when the combo was already at ``cs_idx`` on
+            # construction — Qt's ``setCurrentIndex`` is a no-op when
+            # the value didn't change, so ``currentIndexChanged``
+            # never fires and the slot never runs.
+            self._on_res_preset(cs_idx)
             return
 
         # 2. + 3. Source case — both None.
