@@ -307,7 +307,18 @@ class PlayerController(QObject):  # type: ignore[misc]  # mypy: QObject is Any
 
     def play(self) -> None:
         if self._sequence is None or self._state.is_playing:
+            log.info(
+                "[controller] play() no-op — sequence=%s, is_playing=%s",
+                self._sequence is not None, self._state.is_playing,
+            )
             return
+        log.info(
+            "[controller] play() starting at frame=%d, fps=%s, always_advance=%s",
+            self._state.current_frame, self._state.fps, self._always_advance,
+        )
+        # Refill the advance-log budget so each play burst gets 5
+        # diagnostic INFO lines.
+        self._advance_log_budget = 5
         # If the user parked the cursor outside the in/out range
         # while paused (allowed since v0.5.2), snap it back inside
         # NOW so playback starts on a frame that's actually part of
@@ -577,8 +588,8 @@ class PlayerController(QObject):  # type: ignore[misc]  # mypy: QObject is Any
             and not self._always_advance
             and not self._cache.contains(next_frame)
         ):
-            log.debug(
-                "[controller] tick stall at master=%d (cache miss, not gap, "
+            log.info(
+                "[controller] tick STALL at master=%d (cache miss, not gap, "
                 "always_advance=%s)",
                 next_frame, self._always_advance,
             )
@@ -640,6 +651,23 @@ class PlayerController(QObject):  # type: ignore[misc]  # mypy: QObject is Any
                 cache_hit=cache_hit,
                 pending_decodes=self._cache.pending_decodes(),
             )
+        # Trace once per advance — useful when diagnosing "play
+        # doesn't move forward" reports (the user's flick.log will
+        # show whether the tick made it here or stalled / returned
+        # earlier).
+        # First-advance trace: when ``_always_advance`` is on (=
+        # contact-sheet mode), log the first 5 advances of a play
+        # burst at INFO so the user's flick.log shows whether the
+        # tick is moving at all. Subsequent ticks stay quiet to
+        # avoid flooding the log at 24 Hz.
+        if self._always_advance:
+            self._advance_log_budget = getattr(self, "_advance_log_budget", 5)
+            if self._advance_log_budget > 0:
+                log.info(
+                    "[controller] tick advance master=%d → %d (always_advance)",
+                    self._state.current_frame, next_frame,
+                )
+                self._advance_log_budget -= 1
         self.frame_changed.emit(next_frame)
 
         self._maybe_emit_metrics()

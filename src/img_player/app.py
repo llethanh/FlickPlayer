@@ -1540,7 +1540,7 @@ class ImgPlayerApp:
             if layer.visible
         ]
         if not layers:
-            log.debug(
+            log.info(
                 "[contact_sheet] render skipped at master=%d: no visible layers",
                 master_frame,
             )
@@ -1554,7 +1554,7 @@ class ImgPlayerApp:
                 master_frame, len(layers),
             )
             return False
-        log.debug(
+        log.info(
             "[contact_sheet] render master=%d, %d tiles (%d decoded)",
             master_frame, len(layers),
             sum(1 for t in tiles if t is not None),
