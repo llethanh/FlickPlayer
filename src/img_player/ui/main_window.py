@@ -1332,12 +1332,13 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
 
         Three sections:
 
-        1. **Grid** — Auto + a fixed set of common dims
-           (1×N up to 4×4). Picking one emits
-           :attr:`contact_sheet_grid_changed(cols, rows)` with
-           ``cols == rows == -1`` for the auto entry.
+        1. **Grid** — Auto + per-axis presets ("N rows", "N
+           columns"). Picking one emits
+           :attr:`contact_sheet_grid_changed(cols, rows)` with one
+           dim pinned and the other set to ``-1`` (= "auto-fit so
+           every layer has a tile"). ``-1 / -1`` means full auto.
         2. **Custom grid…** — opens a QInputDialog pair so the user
-           can pick any positive integer.
+           can pick any positive integer for both dims.
         3. **Show labels** — checkable toggle that fires
            :attr:`contact_sheet_labels_toggled`.
         """
@@ -1354,26 +1355,31 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         menu.addAction(auto_act)
         menu.addSeparator()
 
-        # Common presets — chosen to cover the typical review setups
-        # (2-row × 2-col contact sheet, single-column "stack" view,
-        # wide 1×N for side-by-side compare-like layouts).
-        presets: tuple[tuple[str, int, int], ...] = (
-            ("1 × 2", 1, 2),
-            ("1 × 3", 1, 3),
-            ("1 × 4", 1, 4),
-            ("2 × 1", 2, 1),
-            ("2 × 2", 2, 2),
-            ("2 × 3", 2, 3),
-            ("3 × 2", 3, 2),
-            ("3 × 3", 3, 3),
-            ("4 × 4", 4, 4),
-        )
-        for label, cols, rows in presets:
+        # Axis presets: pin ONE dimension and let the other auto-fit
+        # the visible layer count. ``ContactSheetState.effective_grid``
+        # then computes the missing dim as ``ceil(n_layers / fixed)``
+        # — so "2 rows" with 5 layers becomes a 3×2 grid (one tile
+        # short on the second row) rather than a 2×N that silently
+        # drops layers past 2 × N. The old "1×2 / 2×3 / 4×4" fixed
+        # grids made sense only when N matched the preset exactly;
+        # axis-presets adapt to whatever the stack size is.
+        for r in (1, 2, 3, 4):
+            label = "1 row" if r == 1 else f"{r} rows"
             act = QAction(label, self, checkable=True)
-            act.setChecked(cur_cols == cols and cur_rows == rows)
+            act.setChecked(cur_rows == r and cur_cols is None)
             act.triggered.connect(
-                lambda _checked, c=cols, r=rows: (
-                    self.contact_sheet_grid_changed.emit(c, r)
+                lambda _checked, rr=r: (
+                    self.contact_sheet_grid_changed.emit(-1, rr)
+                ),
+            )
+            menu.addAction(act)
+        for c in (1, 2, 3, 4):
+            label = "1 column" if c == 1 else f"{c} columns"
+            act = QAction(label, self, checkable=True)
+            act.setChecked(cur_cols == c and cur_rows is None)
+            act.triggered.connect(
+                lambda _checked, cc=c: (
+                    self.contact_sheet_grid_changed.emit(cc, -1)
                 ),
             )
             menu.addAction(act)

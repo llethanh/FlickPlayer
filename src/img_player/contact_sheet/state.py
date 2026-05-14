@@ -73,29 +73,46 @@ class ContactSheetState:
     ) -> tuple[int, int]:
         """Resolve the active ``(cols, rows)`` pair.
 
-        When the user picked a manual grid (both ``cols`` and ``rows``
-        set to positives) returns that. Otherwise computes an auto
-        grid via :func:`auto_grid_dimensions`:
+        Three cases, in order of precedence:
 
-        * If ``canvas_aspect`` is given, runs
-          :func:`smart_grid_dimensions` — picks the grid that
-          maximises composite efficiency given the tile aspect AND
-          the target canvas aspect (= GL viewport size).
-        * Without a canvas hint, falls back to the classic
-          ``ceil(sqrt(n))`` square grid.
+        * **Both ``cols`` and ``rows`` set** — manual grid; returned
+          verbatim. With ``n_layers > cols * rows`` the trailing
+          layers don't get a tile; this is the "I want exactly this
+          layout" mode the user opts into.
+        * **One dimension set, the other ``None``** — partial pick.
+          The set dimension is honoured and the other is computed
+          to fit every layer: ``cols = ceil(n / rows)`` (when rows
+          is fixed) or symmetrically for cols. This is the menu
+          preset's "N rows" / "N columns" mode — the user picks the
+          axis that matters and we expand the other to accommodate
+          the whole stack.
+        * **Both ``None``** — auto. Routes to
+          :func:`auto_grid_dimensions`:
+          * with ``canvas_aspect`` — :func:`smart_grid_dimensions`
+            picks the grid maximising per-tile area inside a canvas
+            of that aspect;
+          * without it — classic ``ceil(sqrt(n))`` square grid.
 
         Clamps to at least ``(1, 1)`` so the caller never has to
         guard against zero.
         """
         from img_player.contact_sheet.compose import auto_grid_dimensions  # noqa: PLC0415 — avoid cycle
-        if (
-            self.cols is not None and self.cols > 0
-            and self.rows is not None and self.rows > 0
-        ):
-            return (self.cols, self.rows)
-        return auto_grid_dimensions(
-            max(1, n_layers), image_aspect, canvas_aspect,
-        )
+        n = max(1, n_layers)
+        cols_set = self.cols is not None and self.cols > 0
+        rows_set = self.rows is not None and self.rows > 0
+        if cols_set and rows_set:
+            return (self.cols, self.rows)  # type: ignore[return-value]
+        if rows_set:
+            # rows fixed → cols = ceil(n / rows). Integer-only math:
+            # ``(n + rows - 1) // rows`` avoids a float division.
+            rows = self.rows  # type: ignore[assignment]
+            cols = max(1, (n + rows - 1) // rows)
+            return (cols, rows)
+        if cols_set:
+            cols = self.cols  # type: ignore[assignment]
+            rows = max(1, (n + cols - 1) // cols)
+            return (cols, rows)
+        return auto_grid_dimensions(n, image_aspect, canvas_aspect)
 
     def to_dict(self) -> dict[str, object]:
         """JSON-friendly dump for prefs persistence."""

@@ -1393,23 +1393,37 @@ class ImgPlayerApp:
         menu.addAction(toggle_act)
         menu.addSeparator()
 
-        # Auto + grid presets.
+        # Auto + axis presets. Picking "N rows" stores rows=N
+        # cols=None — :meth:`ContactSheetState.effective_grid`
+        # then computes cols = ceil(n_layers / N) so every visible
+        # layer gets a tile, with the trailing row partially filled
+        # when n_layers isn't a multiple of N. Same shape for "N
+        # columns". Replaces the old fixed "1×2 / 2×3 / 4×4" presets
+        # which silently dropped layers past cols × rows when the
+        # stack had more than the preset's cell count.
         auto_act = QAction("Auto (smart)", self._window, checkable=True)
         auto_act.setChecked(cs.cols is None and cs.rows is None)
         auto_act.triggered.connect(
             lambda: self._on_contact_sheet_grid_changed(-1, -1),
         )
         menu.addAction(auto_act)
-        presets = (
-            ("1 × 2", 1, 2), ("1 × 3", 1, 3), ("1 × 4", 1, 4),
-            ("2 × 1", 2, 1), ("2 × 2", 2, 2), ("2 × 3", 2, 3),
-            ("3 × 2", 3, 2), ("3 × 3", 3, 3), ("4 × 4", 4, 4),
-        )
-        for label, c, r in presets:
+        for r in (1, 2, 3, 4):
+            label = "1 row" if r == 1 else f"{r} rows"
             act = QAction(label, self._window, checkable=True)
-            act.setChecked(cs.cols == c and cs.rows == r)
+            # Checked when rows is pinned to this preset and cols is
+            # auto — distinguishes "2 rows" (= rows=2, cols=None) from
+            # a manual 2×N picked via Custom grid (= both set).
+            act.setChecked(cs.rows == r and cs.cols is None)
             act.triggered.connect(
-                lambda _chk, cc=c, rr=r: self._on_contact_sheet_grid_changed(cc, rr),
+                lambda _chk, rr=r: self._on_contact_sheet_grid_changed(-1, rr),
+            )
+            menu.addAction(act)
+        for c in (1, 2, 3, 4):
+            label = "1 column" if c == 1 else f"{c} columns"
+            act = QAction(label, self._window, checkable=True)
+            act.setChecked(cs.cols == c and cs.rows is None)
+            act.triggered.connect(
+                lambda _chk, cc=c: self._on_contact_sheet_grid_changed(cc, -1),
             )
             menu.addAction(act)
 
