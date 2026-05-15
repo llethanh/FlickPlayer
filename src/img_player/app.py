@@ -2765,32 +2765,72 @@ class ImgPlayerApp:
             # partial failure (e.g. read-only dossier corrupted
             # halfway) leaves the other store's dirty flag intact
             # and the user can re-try.
-            if annotations_dirty:
-                ok_anno = save_annotations(
-                    self._annotations_path,
-                    self._annotation_store,
-                    basename=self._annotations_basename,
+            # v2 sidecar — save every layer that has at least one
+            # stroke / comment. The persistence layer keeps the
+            # merge-on-read pattern so two consecutive saves (one
+            # for annotations, one for comments) don't clobber each
+            # other.
+            saved_anno_ok = True
+            saved_com_ok = True
+            anno_layer_ids = self._annotation_store.layers_with_strokes() if annotations_dirty else frozenset()
+            com_layer_ids = self._comment_store.layers_with_comments() if comments_dirty else frozenset()
+            touched_layers = anno_layer_ids | com_layer_ids
+            for layer_id in touched_layers:
+                layer = self._layer_stack.find(layer_id)
+                # ``name_hint`` falls back to the close-time basename
+                # when the layer has been removed mid-session but
+                # still has unsaved strokes (= the user deleted a
+                # row right before quitting). Better to write under
+                # the synthetic id than to lose the data.
+                name_hint = (
+                    layer.sequence.base_name.rstrip("._-") or layer.sequence.base_name
+                    if layer is not None and layer.sequence is not None
+                    else self._annotations_basename or ""
                 )
-                if ok_anno:
-                    self._annotation_store.mark_clean()
-                else:
-                    log.warning(
-                        "[annotations] save failed at close — "
-                        "underlying error already logged."
-                    )
-            if comments_dirty:
-                ok_com = save_comments(
-                    self._annotations_path,
-                    self._comment_store,
-                    basename=self._annotations_basename,
+                source_path_hint = (
+                    str(layer.sequence.directory)
+                    if layer is not None and layer.sequence is not None
+                    else ""
                 )
-                if ok_com:
-                    self._comment_store.mark_clean()
-                else:
-                    log.warning(
-                        "[comment] save failed at close — "
-                        "underlying error already logged."
+                if layer_id in anno_layer_ids:
+                    # Make sure the store's current layer slot points
+                    # at this id before reading (to_dict() reads the
+                    # current layer's slice).
+                    self._annotation_store.set_current_layer_id(layer_id)
+                    ok = save_annotations(
+                        self._annotations_path,
+                        self._annotation_store,
+                        layer_id=layer_id,
+                        name_hint=name_hint,
+                        source_path_hint=source_path_hint,
                     )
+                    if not ok:
+                        saved_anno_ok = False
+                if layer_id in com_layer_ids:
+                    self._comment_store.set_current_layer_id(layer_id)
+                    ok = save_comments(
+                        self._annotations_path,
+                        self._comment_store,
+                        layer_id=layer_id,
+                        name_hint=name_hint,
+                        source_path_hint=source_path_hint,
+                    )
+                    if not ok:
+                        saved_com_ok = False
+            if annotations_dirty and saved_anno_ok:
+                self._annotation_store.mark_clean()
+            elif annotations_dirty:
+                log.warning(
+                    "[annotations] save failed at close — "
+                    "underlying error already logged."
+                )
+            if comments_dirty and saved_com_ok:
+                self._comment_store.mark_clean()
+            elif comments_dirty:
+                log.warning(
+                    "[comment] save failed at close — "
+                    "underlying error already logged."
+                )
         # Falls through for discard_btn or save_btn (success or fail):
         # in either case we allow the close to proceed.
         return True

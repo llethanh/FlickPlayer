@@ -546,22 +546,51 @@ def apply_scan_result(app: ImgPlayerApp, path: Path, result: object) -> None:
     # change in the scanner.
     app._annotations_path = sidecar_path(seq.directory)
     app._annotations_basename = seq.base_name.rstrip("._-") or seq.base_name
+
+    # Resolve the layer that owns ``seq`` so we can load its v2
+    # entry by layer.id. The freshly-added layer (= the one that
+    # corresponds to this open) is the most-recently focused, which
+    # the layer panel handles automatically when ``add`` is called.
+    # Fall back to the topmost visible layer if focus didn't shift
+    # (rare — e.g. focus was held on a different row before the
+    # new layer was inserted at the bottom of the stack).
+    target_layer = app._layer_stack.focused() or app._layer_stack.topmost_visible_at(
+        app._controller.state.current_frame
+    )
+    target_layer_id = target_layer.id if target_layer is not None else ""
+
+    # Push the live layer's id to the stores BEFORE the load so the
+    # incoming frames land under the right partition. The
+    # focus_changed signal that the ``add`` above fires already
+    # does this in most paths, but being explicit here makes the
+    # load fully order-independent.
+    app._annotation_store.set_current_layer_id(target_layer_id)
+    app._comment_store.set_current_layer_id(target_layer_id)
+
     loaded = load_annotations(
         app._annotations_path,
-        basename=app._annotations_basename,
+        layer_id=target_layer_id,
+        name_hint=app._annotations_basename,
     )
     if loaded is not None:
         # Replace the in-memory store contents (reuse the live
-        # store object so its signal subscribers stay wired).
+        # store object so its signal subscribers stay wired). The
+        # loaded data is already keyed on ``target_layer_id`` by the
+        # v2 loader, so a load_from_dict here writes into the right
+        # partition.
         app._annotation_store.load_from_dict(loaded.to_dict()["frames"])
         log.info(
-            "[annotations] loaded %d annotated frames from %s",
+            "[annotations] loaded %d annotated frames from %s "
+            "(layer=%s)",
             len(app._annotation_store.annotated_frames()),
             app._annotations_path,
+            target_layer_id or "<no-focus>",
         )
     else:
         # Fresh start — clear any leftover state from a previous
-        # sequence in this session.
+        # sequence in this session (only the current layer's slot;
+        # other layers' data stays intact in case the user has a
+        # multi-layer session open).
         app._annotation_store.load_from_dict({})
 
     # Comments share the same sidecar — reload them too. Same
@@ -569,14 +598,17 @@ def apply_scan_result(app: ImgPlayerApp, path: Path, result: object) -> None:
     # yields None, and we just clear the in-memory store.
     loaded_comments = load_comments(
         app._annotations_path,
-        basename=app._annotations_basename,
+        layer_id=target_layer_id,
+        name_hint=app._annotations_basename,
     )
     if loaded_comments is not None:
         app._comment_store.load_from_dict(loaded_comments.to_dict())
         log.info(
-            "[comment] loaded %d commented frames from %s",
+            "[comment] loaded %d commented frames from %s "
+            "(layer=%s)",
             len(app._comment_store.commented_frames()),
             app._annotations_path,
+            target_layer_id or "<no-focus>",
         )
     else:
         app._comment_store.load_from_dict({})

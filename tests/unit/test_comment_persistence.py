@@ -1,8 +1,9 @@
-"""Tests for :mod:`img_player.comment.persistence`.
+"""Tests for :mod:`img_player.comment.persistence` (schema v2).
 
 The comments share the sidecar JSON with the annotations — these
 tests focus on the contract that **save_comments doesn't clobber
-annotations** and vice versa.
+annotations** and vice versa, plus the v1 → v2 backward-compat
+fallback.
 """
 
 from __future__ import annotations
@@ -24,6 +25,20 @@ def _stroke() -> Stroke:
     return Stroke(points=((0.0, 0.0), (1.0, 1.0)), color="#FF0000", size=5.0)
 
 
+def _stocked_comment_store(layer_id: str, frame: int, text: str) -> CommentStore:
+    store = CommentStore()
+    store.set_current_layer_id(layer_id)
+    store.add_comment(frame, text)
+    return store
+
+
+def _stocked_anno_store(layer_id: str, frame: int) -> AnnotationStore:
+    store = AnnotationStore()
+    store.set_current_layer_id(layer_id)
+    store.add_stroke(frame, _stroke())
+    return store
+
+
 # ============================================================================
 # Round-trip
 # ============================================================================
@@ -33,21 +48,27 @@ class TestRoundTrip:
     def test_save_then_load_preserves_comments(self, tmp_path: Path) -> None:
         path = sidecar_path(tmp_path)
         store = CommentStore()
+        store.set_current_layer_id("layer-A")
         c1 = store.add_comment(42, "first comment")
         c2 = store.add_comment(42, "second comment")
         store.add_comment(87, "elsewhere")
 
-        assert save_comments(path, store, basename="render") is True
-        loaded = load_comments(path, basename="render")
+        assert save_comments(
+            path, store, layer_id="layer-A", name_hint="render",
+        ) is True
+        loaded = load_comments(
+            path, layer_id="layer-A", name_hint="render",
+        )
         assert loaded is not None
         assert loaded.commented_frames() == frozenset({42, 87})
         assert loaded.comments_at(42) == (c1, c2)
 
     def test_atomic_save_no_tmp_left(self, tmp_path: Path) -> None:
         path = sidecar_path(tmp_path)
-        store = CommentStore()
-        store.add_comment(42, "hello")
-        save_comments(path, store, basename="render")
+        store = _stocked_comment_store("layer-A", 42, "hello")
+        save_comments(
+            path, store, layer_id="layer-A", name_hint="render",
+        )
         assert not path.with_suffix(path.suffix + ".tmp").exists()
 
 
@@ -58,73 +79,77 @@ class TestRoundTrip:
 
 class TestCoexistenceWithAnnotations:
     def test_save_comments_does_not_clobber_annotations(
-        self, tmp_path: Path
+        self, tmp_path: Path,
     ) -> None:
         """The headline contract: writing comments preserves the
-        ``"frames"`` (strokes) sub-tree at the same basename. Without
-        this guarantee, the second writer could erase the first
-        writer's data."""
+        ``"frames"`` (strokes) sub-tree on the same layer entry."""
         path = sidecar_path(tmp_path)
 
-        # Annotations first.
-        anno = AnnotationStore()
-        anno.add_stroke(10, _stroke())
-        save_annotations(path, anno, basename="render")
+        anno = _stocked_anno_store("layer-A", 10)
+        save_annotations(
+            path, anno, layer_id="layer-A", name_hint="render",
+        )
 
-        # Comments next — saving should NOT lose the strokes.
-        com = CommentStore()
-        com.add_comment(20, "hello")
-        save_comments(path, com, basename="render")
+        com = _stocked_comment_store("layer-A", 20, "hello")
+        save_comments(
+            path, com, layer_id="layer-A", name_hint="render",
+        )
 
         data = json.loads(path.read_text(encoding="utf-8"))
-        bucket = data["sequences"]["render"]
-        assert "frames" in bucket  # annotations preserved
-        assert "10" in bucket["frames"]
-        assert "comments" in bucket
-        assert "20" in bucket["comments"]
+        entry = data["layers"]["layer-A"]
+        assert "frames" in entry
+        assert "10" in entry["frames"]
+        assert "comments" in entry
+        assert "20" in entry["comments"]
 
     def test_save_annotations_does_not_clobber_comments(
-        self, tmp_path: Path
+        self, tmp_path: Path,
     ) -> None:
-        """Mirror of the previous test: writing annotations second
-        should preserve the comments written first."""
+        """Mirror: writing annotations second preserves comments
+        written first."""
         path = sidecar_path(tmp_path)
 
-        com = CommentStore()
-        com.add_comment(20, "hello")
-        save_comments(path, com, basename="render")
+        com = _stocked_comment_store("layer-A", 20, "hello")
+        save_comments(
+            path, com, layer_id="layer-A", name_hint="render",
+        )
 
-        anno = AnnotationStore()
-        anno.add_stroke(10, _stroke())
-        save_annotations(path, anno, basename="render")
+        anno = _stocked_anno_store("layer-A", 10)
+        save_annotations(
+            path, anno, layer_id="layer-A", name_hint="render",
+        )
 
         data = json.loads(path.read_text(encoding="utf-8"))
-        bucket = data["sequences"]["render"]
-        assert "comments" in bucket  # comments preserved
-        assert "20" in bucket["comments"]
-        assert "frames" in bucket
-        assert "10" in bucket["frames"]
+        entry = data["layers"]["layer-A"]
+        assert "comments" in entry
+        assert "20" in entry["comments"]
+        assert "frames" in entry
+        assert "10" in entry["frames"]
 
 
 # ============================================================================
-# Basename isolation
+# Layer isolation
 # ============================================================================
 
 
-class TestBasenameIsolation:
-    def test_two_basenames_in_one_file(self, tmp_path: Path) -> None:
+class TestLayerIsolation:
+    def test_two_layers_in_one_file(self, tmp_path: Path) -> None:
         path = sidecar_path(tmp_path)
+        store_a = _stocked_comment_store("layer-A", 10, "a-comment")
+        save_comments(
+            path, store_a, layer_id="layer-A", name_hint="render",
+        )
+        store_b = _stocked_comment_store("layer-B", 20, "b-comment")
+        save_comments(
+            path, store_b, layer_id="layer-B", name_hint="playblast",
+        )
 
-        store_a = CommentStore()
-        store_a.add_comment(10, "a-comment")
-        save_comments(path, store_a, basename="render")
-
-        store_b = CommentStore()
-        store_b.add_comment(20, "b-comment")
-        save_comments(path, store_b, basename="playblast")
-
-        loaded_a = load_comments(path, basename="render")
-        loaded_b = load_comments(path, basename="playblast")
+        loaded_a = load_comments(
+            path, layer_id="layer-A", name_hint="render",
+        )
+        loaded_b = load_comments(
+            path, layer_id="layer-B", name_hint="playblast",
+        )
         assert loaded_a is not None and loaded_b is not None
         assert loaded_a.commented_frames() == frozenset({10})
         assert loaded_b.commented_frames() == frozenset({20})
@@ -138,42 +163,77 @@ class TestBasenameIsolation:
 class TestFailureModes:
     def test_missing_file_returns_none(self, tmp_path: Path) -> None:
         assert load_comments(
-            tmp_path / "does_not_exist.json", basename="render"
+            tmp_path / "does_not_exist.json",
+            layer_id="layer-A", name_hint="render",
         ) is None
 
-    def test_unknown_basename_returns_none(self, tmp_path: Path) -> None:
+    def test_unknown_layer_returns_none(self, tmp_path: Path) -> None:
         path = sidecar_path(tmp_path)
-        store = CommentStore()
-        store.add_comment(10, "hello")
-        save_comments(path, store, basename="render")
-
-        assert load_comments(path, basename="other") is None
+        store = _stocked_comment_store("layer-A", 10, "hello")
+        save_comments(
+            path, store, layer_id="layer-A", name_hint="render",
+        )
+        assert load_comments(
+            path, layer_id="layer-B", name_hint="other",
+        ) is None
 
     def test_no_comments_key_returns_none(self, tmp_path: Path) -> None:
-        """An annotations-only file: the ``"comments"`` key is
-        absent. Loading comments should return None gracefully so
-        the app starts with an empty store rather than crashing."""
+        """A layer entry with frames but no comments: loading
+        comments returns ``None`` so the caller starts empty."""
         path = sidecar_path(tmp_path)
-        anno = AnnotationStore()
-        anno.add_stroke(10, _stroke())
-        save_annotations(path, anno, basename="render")
-
-        assert load_comments(path, basename="render") is None
+        anno = _stocked_anno_store("layer-A", 10)
+        save_annotations(
+            path, anno, layer_id="layer-A", name_hint="render",
+        )
+        assert load_comments(
+            path, layer_id="layer-A", name_hint="render",
+        ) is None
 
     def test_malformed_json_returns_none(self, tmp_path: Path) -> None:
         path = sidecar_path(tmp_path)
         path.write_text("{ this is broken", encoding="utf-8")
-        assert load_comments(path, basename="render") is None
+        assert load_comments(
+            path, layer_id="layer-A", name_hint="render",
+        ) is None
 
-    def test_unknown_schema_version_returns_none(self, tmp_path: Path) -> None:
+
+# ============================================================================
+# v1 backward-compat
+# ============================================================================
+
+
+class TestV1BackwardCompat:
+    def test_loads_v1_comments_via_name_hint(self, tmp_path: Path) -> None:
+        """Pre-v2 sidecars stored comments under
+        ``sequences[<basename>].comments``. The v2 loader falls back
+        to the legacy basename via ``name_hint``."""
         path = sidecar_path(tmp_path)
         path.write_text(
             json.dumps(
                 {
-                    "schema_version": 999,
-                    "sequences": {"render": {"comments": {}}},
-                }
+                    "schema_version": 1,
+                    "sequences": {
+                        "render": {
+                            "comments": {
+                                "42": [
+                                    {
+                                        "id": "a",
+                                        "text": "hello",
+                                        "author": "alice",
+                                        "created_at": "2026-04-27T18:00:00+00:00",
+                                        "updated_at": "2026-04-27T18:00:00+00:00",
+                                    },
+                                ],
+                            },
+                        },
+                    },
+                },
             ),
             encoding="utf-8",
         )
-        assert load_comments(path, basename="render") is None
+        loaded = load_comments(
+            path, layer_id="any-new-uuid", name_hint="render",
+        )
+        assert loaded is not None
+        assert loaded.commented_frames() == frozenset({42})
+        assert loaded.comments_at(42)[0].text == "hello"
