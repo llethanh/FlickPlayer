@@ -131,6 +131,8 @@ def render_contact_sheet(
     target_h: int,
     show_labels: bool = False,
     scrub_indicator: tuple[int, float] | None = None,
+    per_tile_strokes: Sequence | None = None,
+    source_size: tuple[int, int] | None = None,
 ) -> np.ndarray:
     """Compose ``tiles`` into a ``cols × rows`` grid.
 
@@ -214,6 +216,28 @@ def render_contact_sheet(
             # asking for "images collées".
             resized = _resize_nearest_raw(tile, cell_w, cell_h, n_channels)
             out[y0:y0 + cell_h, x0:x1] = resized
+
+        # Per-tile annotations: bake the layer's strokes into THIS
+        # tile's slice of the composite. Painted before the label
+        # so the label overlay can't be hidden behind a stroke that
+        # crosses the top-left corner. Skipped when no strokes are
+        # supplied OR when the source size is missing (we need the
+        # source dims to map source-image-space stroke coords to
+        # cell-space).
+        if (
+            per_tile_strokes is not None
+            and idx < len(per_tile_strokes)
+            and per_tile_strokes[idx]
+            and source_size is not None
+            and tile is not None
+        ):
+            _paint_strokes_overlay(
+                out[y0:y0 + cell_h, x0:x1],
+                strokes=per_tile_strokes[idx],
+                source_size=source_size,
+                n_channels=n_channels,
+                dtype=out_dtype,
+            )
 
         # Label overlay: rendered ON the tile near the top-left
         # corner rather than as a strip below the image, so the
@@ -457,6 +481,98 @@ def _paint_label_overlay(
     # appear ghostly when the tile itself has reduced alpha.
     if n_channels == 4:
         tile_region[y0:y1, x0:x1, 3] = _opaque_for(dtype)
+
+
+def _paint_strokes_overlay(
+    tile_region: np.ndarray,
+    *,
+    strokes,  # Sequence[Stroke] — typed lazily to avoid circular imports
+    source_size: tuple[int, int],
+    n_channels: int,
+    dtype: np.dtype,
+) -> None:
+    """Bake the layer's strokes into a tile region.
+
+    Strokes are stored in source-image-space (= the layer's native
+    pixels) but the tile's been resized down to cell pixels — we
+    scale stroke point coords + brush size by the cell/source
+    ratio before painting so they stay visually anchored to the
+    same image content.
+
+    Routes through the export's :func:`paint_strokes` helper so
+    the visual matches what an exported sequence would carry. The
+    cell pixels round-trip uint8 → QImage → painter → uint8 →
+    float32 — the same precision compromise the export takes for
+    annotation pixels.
+
+    No-op for tiny tiles (< 16 px on either side): the painted
+    output would be invisible anyway and the round-trip cost
+    isn't worth it.
+    """
+    h, w = tile_region.shape[:2]
+    if h < 16 or w < 16:
+        return
+    src_w, src_h = source_size
+    if src_w <= 0 or src_h <= 0:
+        return
+
+    # Local imports to keep the compose module Qt-free at import
+    # time (the rest of the file paints via numpy except for the
+    # label overlay which already pays this import cost).
+    from PySide6.QtGui import QImage, QPainter  # noqa: PLC0415
+    from img_player.export.renderer import _scale_strokes  # noqa: PLC0415
+    from img_player.export.stroke_painter import paint_strokes  # noqa: PLC0415
+
+    # Convert tile region to a uint8 RGBA buffer for QPainter. We
+    # work on a copy because tile_region is a view into the
+    # composite — writing through the QImage's bytes goes back
+    # into the composite, but the dtype convert step needs a
+    # non-shared buffer to round-trip cleanly.
+    is_uint8 = np.issubdtype(dtype, np.uint8)
+    if not is_uint8:
+        # Float / uint16 sources: clamp + scale to uint8 for the
+        # paint, then back-blend (drops precision in the painted
+        # area only).
+        src_max = float(np.iinfo(dtype).max) if np.issubdtype(dtype, np.integer) else 1.0
+        rgba8 = (np.clip(tile_region.astype(np.float32) / src_max, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
+    else:
+        rgba8 = tile_region.copy()
+    rgba8 = np.ascontiguousarray(rgba8)
+    if rgba8.shape[2] == 3:
+        # Pad to 4-channel so QImage can use Format_RGBA8888 — its
+        # 3-channel sibling Format_RGB888 has subtly different row
+        # padding rules and the bytes_per_line dance is fiddly.
+        alpha = np.full(
+            (h, w, 1), 255, dtype=np.uint8,
+        )
+        rgba8 = np.ascontiguousarray(np.concatenate([rgba8, alpha], axis=2))
+
+    qimg = QImage(
+        rgba8.data, w, h, w * 4, QImage.Format.Format_RGBA8888,
+    )
+    # Scale strokes from source-image-space to cell-space so they
+    # line up with the resized tile pixels.
+    scaled = _scale_strokes(strokes, src_w, src_h, w, h)
+    painter = QPainter(qimg)
+    try:
+        paint_strokes(
+            painter,
+            scaled,
+            widget_size=(w, h),
+            img_size=(w, h),
+            factor=1.0,
+            pan=(0.0, 0.0),
+        )
+    finally:
+        painter.end()
+
+    # Back to the tile region's dtype.
+    if is_uint8:
+        tile_region[:, :, : rgba8.shape[2]] = rgba8[:, :, : tile_region.shape[2]]
+    else:
+        src_max = float(np.iinfo(dtype).max) if np.issubdtype(dtype, np.integer) else 1.0
+        baked = rgba8.astype(np.float32) / 255.0 * src_max
+        tile_region[:, :, : rgba8.shape[2]] = baked[:, :, : tile_region.shape[2]].astype(dtype)
 
 
 def _paint_scrub_progress_bar(

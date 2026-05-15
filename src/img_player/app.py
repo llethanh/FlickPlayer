@@ -1656,6 +1656,15 @@ class ImgPlayerApp:
         if new_enabled and self._controller.state.is_playing:
             self._controller.pause()
         self._window.transport.set_playback_enabled(not new_enabled)
+        # Hide the annotation overlay while CS is active — strokes
+        # are baked per-tile into the composite by
+        # ``_render_contact_sheet`` (so the user sees existing
+        # notes anchored to the right tile), and the live overlay
+        # would otherwise paint the focused layer's strokes over
+        # the whole grid, ignoring per-tile geometry. Drawing /
+        # erasing in CS mode isn't supported because the gesture
+        # would need a tile-resolution before landing.
+        self._annotation_overlay.setVisible(not new_enabled)
         # Auto-exit compare mode: the two are mutually exclusive
         # because both hijack the GL upload in ``_on_frame_changed``.
         if new_enabled and self._compare_state.enabled:
@@ -1878,6 +1887,19 @@ class ImgPlayerApp:
             _format_tile_label(layer.name, frame)
             for (layer, _), frame in zip(decodes, effective_source_frames)
         ]
+        # Per-tile annotations: bake the strokes attached to each
+        # layer.id at the tile's effective source frame so the user
+        # sees existing review notes laid out across the contact
+        # sheet at a glance. The annotation overlay widget is
+        # hidden while CS is active (see ``set_overlay_visible``)
+        # because it would otherwise paint the focused layer's
+        # strokes over EVERY tile, ignoring per-tile geometry.
+        per_tile_strokes: list[tuple] = []
+        if self._annotation_store is not None:
+            for layer, frame in zip(layers, effective_source_frames):
+                per_tile_strokes.append(
+                    self._annotation_store.strokes_at_for(layer.id, frame),
+                )
         composite = render_contact_sheet(
             tiles,
             names=names,
@@ -1886,6 +1908,14 @@ class ImgPlayerApp:
             target_w=target_w,
             target_h=target_h,
             show_labels=self._contact_sheet_state.show_labels,
+            per_tile_strokes=per_tile_strokes,
+            # Pass the per-layer source dimensions so the bake math
+            # can scale strokes from layer-source-space into cell-
+            # space. We use the first non-None tile's shape as the
+            # canonical source size — every tile is decoded at full
+            # source resolution before being downscaled into its
+            # cell, so they all share the same (src_w, src_h).
+            source_size=(src_w, src_h),
             # Scrub-progress overlay: set by
             # :meth:`_on_contact_sheet_tile_scrub` for the duration
             # of a per-tile drag gesture, cleared by
@@ -4432,6 +4462,13 @@ def _apply_preferences_to_window(app: ImgPlayerApp) -> None:
         # toggle does, otherwise the play buttons stay enabled even
         # though CS mode is on.
         app._window.transport.set_playback_enabled(
+            not app._contact_sheet_state.enabled,
+        )
+        # Mirror the annotation-overlay visibility so boot-from-
+        # prefs matches the runtime toggle path: in CS mode the
+        # overlay is hidden because strokes are baked per-tile
+        # into the composite by ``_render_contact_sheet``.
+        app._annotation_overlay.setVisible(
             not app._contact_sheet_state.enabled,
         )
         app._sync_contact_sheet_menu_state()
