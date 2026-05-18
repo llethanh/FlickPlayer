@@ -210,49 +210,69 @@
 
 <!-- ============================================================ Contact sheet -->
 <section id="contact-sheet">
-  <div class="feature-detail reverse">
-    <div class="copy">
-      <h2>Every layer, <span class="accent">side by side</span>.</h2>
-      <p>
-        Drop your three takes, your six AOVs, your render-version comparison stack
-        — flip into <b>contact sheet</b> mode and Flick tiles them in a grid, each
-        layer re-aligned to "frame 0" so you read across instead of around. Ctrl+G
-        toggles it; the master timeline keeps driving playback for all tiles at
-        once, or you drag <em>per tile</em> to scrub one layer independently of
-        the rest.
-      </p>
-      <ul>
-        <li><b>Smart grid by default</b> — Flick picks the cols × rows that maximise
-            per-tile area inside the current viewport aspect. No empty rails, no
-            wasted real estate.</li>
-        <li><b>Axis presets</b> — "1 row / 2 rows / 3 rows / 4 rows" pin the row
-            count and auto-fit the columns to the layer count (5 layers + "2 rows"
-            = 3×2 grid with one empty cell). Same shape on the column axis. No
-            more dropping layers off the edge of a fixed 2×2 preset.</li>
-        <li><b>Custom grid</b> — pick exact cols × rows when you want a specific
-            review layout.</li>
-        <li><b>Per-tile drag-to-scrub</b> — horizontal drag on a tile shifts that
-            layer's frame offset, anchored to the press position. Letterbox-aware
-            mapping so the gesture lands on the right tile in any grid.</li>
-        <li><b>Per-tile annotation bake</b> — strokes attached to each layer (by
-            <code>layer.id</code>) are composited into the right tile at the right
-            frame. Existing notes show up across the whole grid at a glance.</li>
-        <li><b>Per-tile labels</b> with <code>####</code> placeholder
-            substitution — <code>render.1042.exr</code> rather than the raw
-            <code>render.####.exr</code> + a "Frame 1042" sidecar.</li>
-        <li><b>Output divisor</b> — full / 1/2 / 1/4 / 1/8 the source resolution
-            per tile. Trades GPU upload bandwidth for review-grade detail.</li>
-        <li><b>Layer panel auto-collapses</b> on entry so the grid gets the screen
-            real estate. The master timeline dims + locks during CS mode (per-tile
-            scrub is the active gesture).</li>
-        <li><b>Save Frame As…</b> picks up a "Contact sheet (W×H)" preset
-            automatically so you can ship the grid as a single PNG / TIFF in one
-            click.</li>
-      </ul>
-    </div>
-    <div class="mockup mockup-fit">
+  <div class="feature-stack">
+    <div class="mockup mockup-wide">
       <div class="mockup-label">contact_sheet/compose.py · grid composite</div>
       <img src="screenshots/contact sheet mode.png" alt="Contact sheet mode showing every visible layer tiled in a grid, each with its own label and frame number" class="mockup-shot">
+    </div>
+    <div class="copy-twoup">
+      <div class="copy">
+        <h2>Every layer, <span class="accent">side by side</span>.</h2>
+        <p>
+          Drop your three takes, your six AOVs, your render-version comparison
+          stack — flip into <b>contact sheet</b> mode and Flick tiles them in a
+          grid, each layer re-aligned to "frame 0" so you read across instead of
+          around. Ctrl+G toggles it; the master timeline keeps driving playback
+          for all tiles at once, or you drag <em>per tile</em> to scrub one layer
+          independently of the rest.
+        </p>
+        <ul>
+          <li><b>Smart grid by default</b> — Flick picks the cols × rows that
+              maximise per-tile area inside the current viewport aspect. No
+              empty rails, no wasted real estate.</li>
+          <li><b>Axis presets</b> — "1 row / 2 rows / 3 rows / 4 rows" pin the
+              row count and auto-fit the columns to the layer count (5 layers +
+              "2 rows" = 3×2 grid with one empty cell). Same shape on the
+              column axis. No more dropping layers off the edge of a fixed 2×2
+              preset.</li>
+          <li><b>Custom grid</b> — pick exact cols × rows when you want a
+              specific review layout.</li>
+          <li><b>Output divisor</b> — full / 1/2 / 1/4 / 1/8 the source
+              resolution per tile. Trades GPU upload bandwidth for review-grade
+              detail.</li>
+          <li><b>Layer panel auto-collapses</b> on entry so the grid gets the
+              screen real estate. The master timeline dims + locks during CS
+              mode (per-tile scrub is the active gesture).</li>
+        </ul>
+      </div>
+      <div class="copy">
+        <h2>Per-tile <span class="accent">interactions</span>.</h2>
+        <p>
+          The grid isn't just a viewer — every tile is its own scrub surface,
+          its own annotation surface, and its own export-ready buffer. Per-layer
+          state stays attached to each tile through the swap-source workflow
+          too.
+        </p>
+        <ul>
+          <li><b>Per-tile drag-to-scrub</b> — horizontal drag on a tile shifts
+              that layer's frame offset, anchored to the press position.
+              Letterbox-aware mapping so the gesture lands on the right tile in
+              any grid.</li>
+          <li><b>Per-tile annotation bake</b> — strokes attached to each layer
+              (by <code>layer.id</code>) are composited into the right tile at
+              the right frame. Existing notes show up across the whole grid at
+              a glance.</li>
+          <li><b>Per-tile labels</b> with <code>####</code> placeholder
+              substitution — <code>render.1042.exr</code> rather than the raw
+              <code>render.####.exr</code> + a "Frame 1042" sidecar.</li>
+          <li><b>Save Frame As…</b> picks up a "Contact sheet (W×H)" preset
+              automatically so you can ship the grid as a single PNG / TIFF in
+              one click.</li>
+          <li><b>Scrub-offset clamp</b> — dragging past a layer's end stops at
+              the boundary instead of accumulating an out-of-range offset.
+              Reverse drags respond immediately.</li>
+        </ul>
+      </div>
     </div>
   </div>
 </section>
