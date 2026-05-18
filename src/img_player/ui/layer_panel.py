@@ -1815,7 +1815,14 @@ class LayerPanel(QFrame):  # type: ignore[misc]
         layers = self._stack.layers()
         if not layers:
             return
-        first, last = self._broad_master_range()
+        # Go through the public ``broad_master_range`` so the bars
+        # get the WIDENED axis (= matches what the main timeline
+        # receives). Calling the private ``_broad_master_range``
+        # directly here was the source of the timeline / bar
+        # playhead misalignment on short sequences — the bars
+        # mapped the same master frame to a different x because
+        # they used the raw range instead of the widened one.
+        first, last = self.broad_master_range()
         for layer in layers:
             row = self._rows.get(layer.id)
             if row is None:
