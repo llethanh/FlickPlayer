@@ -2362,6 +2362,25 @@ class ImgPlayerApp:
         if new_layer is None:
             return
 
+        # Preserve the user's trim across the swap when possible.
+        # ``layer_in`` / ``layer_out`` are in source-frame-number
+        # space, so they survive verbatim when the new source uses
+        # the same numbering scheme (the typical "v002 of the same
+        # shot"). When the new source's frame range doesn't fully
+        # contain the old trim, clamp to the new source's bounds —
+        # producing a black "out-of-range" trim would be worse
+        # than silently shrinking to the new source's reach.
+        new_first = new_layer.layer_in
+        new_last = new_layer.layer_out
+        preserved_in = max(new_first, min(new_last, layer.layer_in))
+        preserved_out = max(new_first, min(new_last, layer.layer_out))
+        # Defensive: invariant ``in <= out``. If the old trim was
+        # completely outside the new range (e.g. new source has 100
+        # frames vs old's 1001-1100), fall back to the full new
+        # range — better to show everything than nothing.
+        if preserved_in > preserved_out:
+            preserved_in, preserved_out = new_first, new_last
+
         # Apply the new sequence + frame range to the existing
         # layer via the stack's ``update``, which fires
         # ``layer_modified`` once. The cache + viewport observe
@@ -2373,8 +2392,8 @@ class ImgPlayerApp:
             layer_id,
             sequence=new_layer.sequence,
             video_metadata=new_layer.video_metadata,
-            layer_in=new_layer.layer_in,
-            layer_out=new_layer.layer_out,
+            layer_in=preserved_in,
+            layer_out=preserved_out,
             is_still=new_layer.is_still,
             still_hold_frames=new_layer.still_hold_frames,
             channel_selection=None,
