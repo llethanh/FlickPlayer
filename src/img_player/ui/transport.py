@@ -484,8 +484,49 @@ class TransportBar(QWidget):  # type: ignore[misc]
         self._contact_sheet_btn.clicked.connect(
             self.contact_sheet_toggled.emit,
         )
-        # Reuse compare's QSS so the two siblings look like a family.
-        self._contact_sheet_btn.setStyleSheet(self._compare_btn.styleSheet())
+        # Grey border when inactive (matches the default transport
+        # buttons), accent only when the mode is checked / on hover.
+        # Earlier we mirrored the compare button's QSS which painted
+        # an orange border even when CS was off — user feedback was
+        # that the cadre looked permanently "active" and competed
+        # visually with the rest of the toolbar.
+        _cs_border = f"1px solid {H.BORDER_DEFAULT}"
+        _cs_border_h = f"1px solid {H.ACCENT}"
+        _cs_border_chk = f"1px solid {H.ACCENT_BRIGHT}"
+        self._contact_sheet_btn.setStyleSheet(
+            f"QPushButton {{"
+            f"  background-color: {H.BG_SURFACE};"
+            f"  color: {H.TEXT_PRIMARY};"
+            f"  border-top: {_cs_border};"
+            f"  border-bottom: {_cs_border};"
+            f"  border-left: {_cs_border};"
+            f"  border-right: {_cs_border};"
+            f"  border-radius: 3px;"
+            f"  padding: 0;"
+            f"}}"
+            f"QPushButton:hover {{"
+            f"  background-color: {H.BG_HOVER};"
+            f"  border-top: {_cs_border_h};"
+            f"  border-bottom: {_cs_border_h};"
+            f"  border-left: {_cs_border_h};"
+            f"  border-right: {_cs_border_h};"
+            f"}}"
+            f"QPushButton:checked {{"
+            f"  background-color: {H.BG_SELECT};"
+            f"  border-top: {_cs_border_chk};"
+            f"  border-bottom: {_cs_border_chk};"
+            f"  border-left: {_cs_border_chk};"
+            f"  border-right: {_cs_border_chk};"
+            f"}}"
+            f"QPushButton:disabled {{"
+            f"  background-color: {H.BG_BASE};"
+            f"  color: {H.TEXT_DISABLED};"
+            f"  border-top: {_cs_border};"
+            f"  border-bottom: {_cs_border};"
+            f"  border-left: {_cs_border};"
+            f"  border-right: {_cs_border};"
+            f"}}"
+        )
 
         # Settings popup: tiny QToolButton with the "options" glyph,
         # InstantPopup so a single click opens the menu. App-side
@@ -505,11 +546,13 @@ class TransportBar(QWidget):  # type: ignore[misc]
         # for visual weight.
         self._contact_sheet_menu_btn.setFixedHeight(G.BTN_TRANSPORT_H)
         self._contact_sheet_menu_btn.setFixedWidth(20)
-        # Match the toolbar's other buttons visually: thin accent
-        # outline that lights up on hover, no chevron decoration
-        # (we replaced that with the centred "⋯" so the button reads
-        # as a kebab menu).
-        _border_d = f"1px solid {H.ACCENT_DIM}"
+        # Match the toolbar's default transport buttons visually:
+        # thin grey outline that lights up to accent on hover, no
+        # chevron decoration (we replaced that with the centred
+        # "⋯" so the button reads as a kebab menu). User feedback
+        # was that an orange outline at rest made the cadre look
+        # permanently "active".
+        _border_d = f"1px solid {H.BORDER_DEFAULT}"
         _border_h = f"1px solid {H.ACCENT}"
         self._contact_sheet_menu_btn.setStyleSheet(
             f"QToolButton {{"
