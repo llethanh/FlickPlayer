@@ -24,6 +24,7 @@
     <a href="index.html#layers">Layers</a>
     <a href="index.html#cache">Cache</a>
     <a href="index.html#compare">Compare</a>
+    <a href="index.html#contact-sheet">Contact sheet</a>
     <a href="index.html#annotations">Annotations</a>
     <a href="index.html#color">Color</a>
     <a href="index.html#export">Export</a>
@@ -40,6 +41,64 @@
   </p>
 
   <div class="changelog">
+
+    <article class="release">
+      <div class="release-meta">
+        <span class="ver">v1.5.14<span style="opacity:0.55; font-size:0.7em; margin-left:0.4em;">in dev</span></span>
+        <span class="date">2026-05-18</span>
+        <span class="tagline">Contact sheet mode + annotations re-architected per-layer + Save Frame As… full-source render.</span>
+      </div>
+      <div class="release-body">
+        <h4>New — Contact sheet mode</h4>
+        <ul>
+          <li class="new"><strong>Tile every visible layer in a grid</strong>, all re-aligned to "frame 0" so you read across instead of around. Ctrl+G toggles; the master timeline still drives playback for the whole grid, with a per-tile drag-to-scrub override for shifting one layer's frame independently.</li>
+          <li class="new"><strong>Smart auto-grid</strong> picks <em>cols × rows</em> that maximise per-tile area inside the current viewport aspect — no empty rails.</li>
+          <li class="new"><strong>Axis presets ("N rows" / "N columns")</strong> replace the old fixed "1×2 / 2×3 / 4×4" presets. Pinning one axis auto-fits the other to the layer count, so 5 layers + "2 rows" becomes a 3×2 grid with one empty cell instead of silently dropping the 5th layer like a "1×2" fixed pick would.</li>
+          <li class="new"><strong>Per-tile annotation bake</strong> — each tile composites <em>its</em> layer's strokes at <em>its</em> source frame via the export's <code>paint_strokes</code> helper. Existing notes appear across the grid at a glance.</li>
+          <li class="new"><strong>Per-tile labels</strong> with <code>####</code> placeholder substitution — <code>render.1042.exr</code> rather than <code>render.####.exr · 1042</code>.</li>
+          <li class="new"><strong>Output divisor</strong> control (full / ½ / ¼ / ⅛ source res) trades GPU upload bandwidth for review-grade detail.</li>
+          <li class="new"><strong>Transport integration</strong>: a dedicated grid-icon toggle button + a kebab "⋯" settings popup. Master timeline dims + locks while CS is active (per-tile scrub is the active gesture). Play buttons grey out — the per-layer scrub is the frame-control gesture in this mode.</li>
+          <li class="new"><strong>Save Frame As… contact-sheet preset</strong> — when CS is active, the resolution combo auto-injects a <code>Contact sheet (W×H)</code> entry as the default, shipping the grid as a PNG / TIFF in one click.</li>
+        </ul>
+        <h4>New — Annotations &amp; comments per-layer architecture</h4>
+        <ul>
+          <li class="new"><strong>Strokes &amp; comments now partition by <code>layer.id</code></strong>. AnnotationStore and CommentStore keep a two-level <code>layer_id → frame → state</code> map internally; the public API stays frame-keyed via a <code>current_layer_id</code> attribute updated by the layer panel's focus signal. Existing call sites work unchanged.</li>
+          <li class="new"><strong>Sidecar v2</strong> (<code>.img_player_annotations.json</code>) keys every entry on <code>layer.id</code> with <code>name_hint</code> + <code>source_path_hint</code> for portability. The legacy v1 schema (keyed on basename under <code>sequences</code>) still loads — auto-migrated to v2 on first save. Multi-basename v1 files re-key the other basenames as <code>legacy:&lt;basename&gt;</code> so their data stays reachable.</li>
+          <li class="new"><strong>Right-click on a layer → "Replace source…"</strong> opens a file picker, swaps the underlying sequence / video while preserving <code>layer.id</code>. Annotations + comments attached to that id stay; the user's trim is clamped to the new source's bounds and preserved verbatim when the numbering matches. Auto-detects video vs image-sequence by extension.</li>
+          <li class="new"><strong>Cross-layer signals</strong> (<code>layer_frame_annotated(str, int)</code>, <code>layer_frame_comments_changed(str, int)</code>) for consumers that need every layer's events (export bake, persistence dump).</li>
+        </ul>
+        <h4>New — Save Frame As… full-source render</h4>
+        <ul>
+          <li class="new"><strong>Renders the full source image</strong>, not a viewport screenshot. Zoom + pan no longer crop the saved pixels — the whole frame is read at native resolution, OCIO-baked, optionally Lanczos-resized via OIIO.</li>
+          <li class="new"><strong>Resolution picker</strong>: Source / 4K UHD / 1080p / 720p / Custom with Lock-aspect (same UX as the full Export dialog). Custom dims persist across sessions per user.</li>
+          <li class="new"><strong>Contact-sheet preset injected at the top of the combo</strong> when CS mode is active (see above).</li>
+        </ul>
+        <h4>New — UX polish</h4>
+        <ul>
+          <li class="new"><strong>Preferences dialog remembers the active tab</strong> across opens — within the session AND across launches (round-tripped via QSettings).</li>
+          <li class="new"><strong>Timeline always shows a 100-frame skeleton</strong> when the session is empty, instead of collapsing to a blank rectangle. Short sequences keep their actual length — the widening only kicks in on truly degenerate ranges.</li>
+          <li class="new"><strong>Contact-sheet mode always boots in normal display</strong> regardless of the last persisted <code>enabled</code> flag — opening a session that was closed in CS mode no longer lands the user on the grid view by surprise. The other CS state (grid choice, divisor, labels) is preserved.</li>
+          <li class="new"><strong>Axis presets share the master x-axis</strong> with the layer bars — the 100-frame skeleton widening is applied at <code>LayerPanel.broad_master_range</code> (single source of truth) so the timeline and the bars never drift apart on short sequences.</li>
+        </ul>
+        <h4>Fixes</h4>
+        <ul>
+          <li class="fix"><strong>Still-as-topmost no longer bypasses multi-layer composite</strong>. The still anchor-alias fast path used to fire on every <code>topmost.is_still</code> case — including when the still had <code>alpha_composite=True</code> and a sequence covered the same frame below. Result: alpha holes showed the GL checker instead of the layer underneath. Now the fast path only fires when the still IS the sole contributor.</li>
+          <li class="fix"><strong>Replace-source cache flush is fully self-managed by MasterFrameCache</strong>. A new <code>_last_known_source[layer.id]</code> token (directory + base_name + padding + extension + frame count) is compared inside <code>_on_layer_modified</code> AND <code>_on_layers_changed</code>; mismatch drops the per-layer <code>_path_index</code> and clears the frame cache. Covers both the forward "Replace source…" path and the Ctrl+Z undo path (which goes through <code>_restore()</code> → <code>layers_changed</code>, not <code>layer_modified</code>).</li>
+          <li class="fix"><strong>Per-tile scrub mapping is letterbox / pillarbox aware</strong>. The old <code>x / widget_w × cols</code> formula assumed the composite filled the widget — true in smart-grid mode (matched aspects), false in manual grids where the composite is letterboxed inside the widget. Now reads the actual drawn rect from the same <code>_zoom_factor</code> / <code>_pan_x/y</code> the GL renderer paints from.</li>
+          <li class="fix"><strong>Per-tile scrub offset clamped to the layer's trim range</strong> so dragging past the end no longer accumulates an out-of-range value that has to be "unwound" before the tile starts moving back.</li>
+          <li class="fix"><strong>CS grid pushed to GL viewport from <code>_render_contact_sheet</code></strong> (every render) rather than only from <code>toggle_contact_sheet</code> — boot-from-prefs case where CS is enabled at start now correctly routes mouse drags to per-tile scrub instead of falling back to the master-timeline scrub.</li>
+          <li class="fix"><strong>Contact-sheet button border grey at rest</strong>, accent only on hover / when checked — used to inherit the compare button's orange ACCENT_DIM border which made the cadre look permanently active.</li>
+          <li class="fix"><strong>Replace-source preserves the user's trim</strong> (clamped to the new source's bounds) and updates the layer name to the new basename — was overwriting the trim with the new full range and keeping the stale name.</li>
+        </ul>
+        <p style="opacity: 0.7; font-size: 0.92em; margin-top: 1em;">
+          Test suite grew from 971 to 1024 (+53 cases covering the new
+          contact-sheet, annotation-persistence v2, layer-source-token, and
+          resolution-picker code paths). Build still tagged
+          <code>FlickPlayer_v1.5.13</code> until the version bump in
+          <code>pyproject.toml</code> lands.
+        </p>
+      </div>
+    </article>
 
     <article class="release">
       <div class="release-meta">

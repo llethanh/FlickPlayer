@@ -24,6 +24,7 @@
     <a href="#layers">Layers</a>
     <a href="#cache">Cache</a>
     <a href="#compare">Compare</a>
+    <a href="#contact-sheet">Contact sheet</a>
     <a href="#annotations">Annotations</a>
     <a href="#color">Color</a>
     <a href="#export">Export</a>
@@ -89,6 +90,13 @@
       </div>
       <h3>A/B compare</h3>
       <p>Two layers, four modes: vertical wipe, horizontal wipe, opacity blend, solo-B. Drag the seam live — pure shader, no re-decode. Orange <strong>A</strong> / <strong>B</strong> markers anchored to image corners follow pan + zoom and fade with the opacity seam. Bake the wipe into your export too.</p>
+    </a>
+    <a href="#contact-sheet" class="feature-card">
+      <div class="icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/></svg>
+      </div>
+      <h3>Contact sheet</h3>
+      <p>All visible layers tiled in a grid, re-aligned to the same start frame. Smart auto-grid (matches viewport aspect) or axis presets ("2 rows" auto-fits the columns). Drag <em>per-tile</em> to scrub each layer independently. Per-tile annotation bake. Ctrl+G to toggle.</p>
     </a>
     <a href="#cache" class="feature-card">
       <div class="icon">
@@ -200,6 +208,55 @@
   </div>
 </section>
 
+<!-- ============================================================ Contact sheet -->
+<section id="contact-sheet">
+  <div class="feature-detail reverse">
+    <div class="copy">
+      <h2>Every layer, <span class="accent">side by side</span>.</h2>
+      <p>
+        Drop your three takes, your six AOVs, your render-version comparison stack
+        — flip into <b>contact sheet</b> mode and Flick tiles them in a grid, each
+        layer re-aligned to "frame 0" so you read across instead of around. Ctrl+G
+        toggles it; the master timeline keeps driving playback for all tiles at
+        once, or you drag <em>per tile</em> to scrub one layer independently of
+        the rest.
+      </p>
+      <ul>
+        <li><b>Smart grid by default</b> — Flick picks the cols × rows that maximise
+            per-tile area inside the current viewport aspect. No empty rails, no
+            wasted real estate.</li>
+        <li><b>Axis presets</b> — "1 row / 2 rows / 3 rows / 4 rows" pin the row
+            count and auto-fit the columns to the layer count (5 layers + "2 rows"
+            = 3×2 grid with one empty cell). Same shape on the column axis. No
+            more dropping layers off the edge of a fixed 2×2 preset.</li>
+        <li><b>Custom grid</b> — pick exact cols × rows when you want a specific
+            review layout.</li>
+        <li><b>Per-tile drag-to-scrub</b> — horizontal drag on a tile shifts that
+            layer's frame offset, anchored to the press position. Letterbox-aware
+            mapping so the gesture lands on the right tile in any grid.</li>
+        <li><b>Per-tile annotation bake</b> — strokes attached to each layer (by
+            <code>layer.id</code>) are composited into the right tile at the right
+            frame. Existing notes show up across the whole grid at a glance.</li>
+        <li><b>Per-tile labels</b> with <code>####</code> placeholder
+            substitution — <code>render.1042.exr</code> rather than the raw
+            <code>render.####.exr</code> + a "Frame 1042" sidecar.</li>
+        <li><b>Output divisor</b> — full / 1/2 / 1/4 / 1/8 the source resolution
+            per tile. Trades GPU upload bandwidth for review-grade detail.</li>
+        <li><b>Layer panel auto-collapses</b> on entry so the grid gets the screen
+            real estate. The master timeline dims + locks during CS mode (per-tile
+            scrub is the active gesture).</li>
+        <li><b>Save Frame As…</b> picks up a "Contact sheet (W×H)" preset
+            automatically so you can ship the grid as a single PNG / TIFF in one
+            click.</li>
+      </ul>
+    </div>
+    <div class="mockup mockup-fit">
+      <div class="mockup-label">contact_sheet/compose.py · grid composite</div>
+      <img src="screenshots/contact_sheet.png" alt="Contact sheet mode showing 6 layer tiles in a 3×2 grid, each with its own label and frame number" class="mockup-shot">
+    </div>
+  </div>
+</section>
+
 <!-- ============================================================ Timeline -->
 <section id="timeline">
   <div class="feature-stack">
@@ -246,6 +303,12 @@
           <li><b>M / S audio buttons</b> on each video layer — mute or solo, like a mixer. PlayerController stays in wall-clock mode so A/V never drifts.</li>
           <li><b>Still layers</b> get an adjustable <em>hold duration</em> so a single PNG / JPG can stretch over as many master frames as the review needs.</li>
           <li><b>👁 visibility</b> per layer — temporarily hide a pass without losing its slot; the cache keeps its frames around for when you toggle it back on.</li>
+          <li><b>Right-click → Replace source…</b> swaps the underlying sequence
+              while preserving the layer's id — annotations, comments, the trim,
+              the offset, the alpha mode all stay attached. Review v1, get v2,
+              repoint the layer in one click. Cache + path-index flush is
+              detected automatically (forward + Ctrl+Z undo paths both
+              covered).</li>
         </ul>
       </div>
     </div>
@@ -310,6 +373,23 @@
         <li><b>Three fade presets</b> in ghost mode: court ~2 s, moyen ~5 s (default), long ~10 s.</li>
         <li><b>👁 Show during playback</b> — toggle visibility in real time without losing your work.</li>
         <li><b>Bake into export</b> if you want a self-contained MP4 to send a colleague.</li>
+        <li><b>Per-layer storage</b> — strokes (and comments) are partitioned by
+            <code>layer.id</code> in memory <em>and</em> on disk. Each layer carries
+            its own annotation set, surfaced automatically when the layer is
+            focused. Multi-layer sessions keep every layer's notes isolated.</li>
+        <li><b>Survives source swaps</b> — right-click a layer →
+            <em>Replace source…</em>, point at v2 of the render: the
+            <code>layer.id</code> stays, the sidecar's
+            <code>layers[<layer.id>]</code> entry stays, your annotations come
+            back on the same frames over the new pixels. Perfect for "did the
+            artist address my notes?" passes.</li>
+        <li><b>Contact-sheet aware</b> — in CS mode each tile bakes <em>its</em>
+            layer's strokes at <em>its</em> source frame, so the whole review at
+            a glance shows every layer's existing notes.</li>
+        <li><b>Sidecar v2</b> (<code>.img_player_annotations.json</code>) keyed
+            on <code>layer.id</code> with <code>name_hint</code> +
+            <code>source_path_hint</code> for portability. Legacy v1 files
+            (keyed on basename) still load — auto-migrated on first save.</li>
       </ul>
     </div>
     <div class="mockup" style="display: flex; flex-direction: row; align-items: center; justify-content: center; gap: var(--s-md); padding: var(--s-xl) calc(var(--s-xl) + 56px) var(--s-xl) var(--s-xl);">
@@ -505,12 +585,20 @@
       <h2><span class="accent">Save Frame As…</span> for one-shot stills.</h2>
       <p>
         Need a single image to drop in a review email or a Slack thread? <em>File →
-        Save Frame As…</em> snapshots the viewer with the same compare and annotation
-        toggles as the full export — no need to spin up a 1-frame range. Picks up the
-        active OCIO display transform too, so what you see is what gets written.
+        Save Frame As…</em> renders the current frame at <b>full source
+        resolution</b> (not a zoom-cropped viewport grab), with the same compare
+        and annotation toggles as the full export — no need to spin up a 1-frame
+        range. The active OCIO display transform bakes through too, so what you
+        see is what gets written.
       </p>
       <ul>
         <li><b>Formats</b>: PNG / JPG / TIFF / BMP / WebP. Defaults to PNG with the source basename + master frame number.</li>
+        <li><b>Resolution picker</b> — Source / 4K UHD / 1080p / 720p / Custom
+            with Lock-aspect, same UX as the full export dialog. Custom dims
+            persist across sessions per user.</li>
+        <li><b>Contact-sheet preset</b> — when CS mode is active the dialog
+            injects a <code>Contact sheet (W×H)</code> entry at the top of the
+            list and selects it by default, so you ship the grid in one click.</li>
         <li><b>Same toggles</b> as full export: bake annotations, bake the A/B compare wipe, bake OCIO display.</li>
         <li><b>Persistent path</b> — the dialog remembers the last folder you wrote to, per session.</li>
       </ul>
@@ -575,17 +663,20 @@
 <section id="changelog" class="changelog-teaser">
   <h2>What's <span class="accent">new</span>.</h2>
   <p class="lede">
-    Latest release: <strong>v1.5.13</strong> — smoother playback (paint mean
-    −25 %, paint max −92 %, no more visible spikes) plus a deep code-health
-    pass: long methods split, dead code removed, the full test suite finally
-    back at 971 / 0 / 0. Before that the v1.5.x line shipped a
-    <strong>persistent disk-cache tier</strong> (lz4 + half-float blobs,
-    ~5 ms decode, survives close/reopen), a <strong>user-selectable OCIO
-    config dropdown</strong> with 8 built-in ACES configs (1.3 + 2.0,
-    CG + Studio) and an <strong>ACES 1.3 default</strong> matching Nuke /
-    Maya / OpenRV out of the box, plus a TOML-based <strong>site &amp; user
-    preference system</strong> for studio deployment. The full history — every
-    public release, what changed, why it changed — lives on its own page.
+    In development: <strong>v1.5.14</strong> — the big one is the
+    <strong>contact-sheet mode</strong> (Ctrl+G), tiling every visible layer
+    into a smart grid with per-tile drag-to-scrub, per-tile annotation bake,
+    and a Save Frame As… preset that ships the grid in one click. Annotations
+    and comments were re-architected to live <strong>per-layer</strong> instead
+    of per-source-folder, so a right-click "Replace source…" on a layer
+    preserves all your review notes through the swap. Plus a Save Frame As…
+    upgrade (full-res render with a resolution picker), Preferences dialog
+    that remembers the active tab, and a handful of fixes (timeline skeleton
+    when empty, still-with-alpha now composites over layers below, source-swap
+    cache flush covers Ctrl+Z undo too). Latest released build:
+    <strong>v1.5.13</strong> — smoother playback (paint mean −25 %, paint max
+    −92 %) plus a deep code-health pass. The full history — every public
+    release, what changed, why it changed — lives on its own page.
   </p>
   <p style="margin-top: var(--s-md);">
     <a class="btn btn-primary" href="changelog.html">Read the full changelog →</a>
