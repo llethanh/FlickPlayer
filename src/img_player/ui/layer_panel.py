@@ -853,6 +853,13 @@ class LayerPanel(QFrame):  # type: ignore[misc]
     # focused layer is always part of this set.
     selection_changed = Signal(object)
 
+    # Right-click "Replace source…" — the user picked a new source
+    # path for an existing layer. The app handler swaps the layer's
+    # underlying sequence / video_metadata in-place while preserving
+    # the layer's id, so annotations + comments stored under that id
+    # stay attached. Carries ``(layer_id, picked_path_as_str)``.
+    replace_source_requested = Signal(str, str)
+
     def __init__(
         self,
         stack: LayerStack,
@@ -1867,12 +1874,6 @@ class MasterTimelinePanel(QFrame):  # type: ignore[misc]
     # ``ViewerWidget.replace_requested``; route accordingly in the
     # main window.
     add_layer_requested = Signal(list)
-    # User picked a new source path for an existing layer via the
-    # right-click "Replace source…" action. The app handler swaps
-    # the layer's underlying sequence / video_metadata in-place
-    # while preserving the layer's id — annotations + comments
-    # stored under that id stay attached.
-    replace_source_requested = Signal(str, str)  # layer_id, path
     """Composite that owns the master timeline + the layer panel.
 
     Why this exists: the timeline and the layer rows used to be two
