@@ -869,7 +869,24 @@ class MasterFrameCache:
         # ref-shares the buffer). Eviction may drop aliases
         # independently of the anchor; that's fine, the next request
         # re-aliases on demand.
-        if getattr(topmost, "is_still", False):
+        #
+        # **Important:** the anchor alias assumes the still's decoded
+        # buffer IS the final composite at every frame in the hold.
+        # That's only true when the still is the sole contributor at
+        # this frame — either because it's the only visible layer
+        # here, or because it's opaque (alpha_composite=False, which
+        # blocks the chain below). With multiple visible layers AND
+        # a still that composites with alpha, the composite at frame
+        # F depends on whatever layer is underneath at frame F —
+        # which varies with F, so the alias short-circuit would
+        # surface only the still's pixels and leave alpha holes
+        # un-composited (= GL checker bleeds through where the layer
+        # below should appear). Fall through to the multi-layer
+        # composite path in that case.
+        still_can_alias = getattr(topmost, "is_still", False) and (
+            len(visible) == 1 or not topmost.alpha_composite
+        )
+        if still_can_alias:
             anchor = topmost.master_start
             with self._lock:
                 anchor_sig = self._signature_at(anchor)
