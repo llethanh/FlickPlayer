@@ -2381,31 +2381,17 @@ class ImgPlayerApp:
             name=new_layer.name,
         )
 
-        # Source swap = new pixels behind the same (layer.id +
-        # offset + layer_in) cache signature. Two distinct stale-
-        # data sources have to be flushed:
+        # Cache hygiene is fully handled by the master cache's
+        # _on_layer_modified handler: it compares the layer's
+        # _last_known_source token against the live one and, on
+        # mismatch, drops the per-layer path-index, clears the
+        # frame cache, and bumps the epoch. The compare and
+        # contact-sheet decoders are invalidated by the
+        # _refresh_after_stack_change wired to layer_modified.
+        # Same chain handles the undo direction (LayerStack.undo
+        # restores a prior snapshot and fires layer_modified
+        # again).
         #
-        # 1. The per-layer ``_path_index`` in the master cache
-        #    caches ``frame_number -> Path`` for each layer; it's
-        #    built lazily and short-circuits when ``layer.id`` is
-        #    already a key. Without an explicit invalidate the
-        #    decoder reads from the OLD source's files even though
-        #    ``layer.sequence`` is now the new one.
-        # 2. The frame-content cache itself — the signature token
-        #    doesn't include the source path, so a swap with
-        #    matching offset / layer_in (= common case: re-render
-        #    with same frame range) hits stale entries instead of
-        #    triggering fresh decodes. Bumping the signature
-        #    format would invalidate every cached entry from
-        #    previous sessions; clearing the cache is cheap for
-        #    the rare source-swap action.
-        self._cache.invalidate_layer_paths(layer_id)
-        self._cache.clear()
-        # Per-layer compare / contact-sheet decoders too — their
-        # single-slot caches would otherwise serve stale pixels.
-        self._compare_decoder.invalidate(layer_id)
-        self._contact_sheet_decoder.invalidate(layer_id)
-
         # Re-render the current frame so the user sees the swap
         # immediately rather than waiting for the next playback /
         # scrub event. ``_last_displayed`` clear bypasses the

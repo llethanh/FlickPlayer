@@ -149,6 +149,40 @@ def _signature_token(
     return f"{layer.id}@{sel_label}#{ac}{pm}+{off}+{lin}"
 
 
+def _layer_source_token(layer: Layer) -> tuple:
+    """Identity token for a layer's underlying source.
+
+    Two layers with the same id but different underlying files
+    (= post-"Replace source…") produce different tokens. Used by
+    :meth:`MasterFrameCache._on_layer_modified` to detect a source
+    swap and invalidate the lazily-built ``_path_index`` (which is
+    keyed on layer.id alone and would otherwise keep returning the
+    OLD source's paths after a swap).
+
+    For image sequences: ``(directory, base_name, padding,
+    extension, len(frames))`` — captures both the location and the
+    detected pattern so re-scanning the same source produces an
+    identical token (= no spurious invalidation).
+    For videos: ``("__video__", path)`` — the path uniquely
+    identifies the file; the leading sentinel prevents a future
+    image-sequence whose base_name happens to be ``"__video__"``
+    from colliding.
+    """
+    md = layer.video_metadata
+    if md is not None:
+        return ("__video__", str(md.path))
+    seq = layer.sequence
+    if seq is None:
+        return ()
+    return (
+        str(seq.directory),
+        seq.base_name,
+        int(seq.padding),
+        seq.extension,
+        len(seq.frames),
+    )
+
+
 def _premultiply(arr: np.ndarray, *, inplace: bool = False) -> np.ndarray:
     """Multiply RGB by alpha so straight-alpha buffers can feed the
     same over operator that premult buffers do.
@@ -245,6 +279,14 @@ class MasterFrameCache:
         # decoding is the expensive part, and the pixel data is
         # identical between the two offsets.
         self._last_known_state: dict[str, tuple] = {}
+        # Snapshot of each layer's source-identity (sequence
+        # directory + basename, or video path) so
+        # ``_on_layer_modified`` can detect a "Replace source…"
+        # swap — same layer.id, different underlying files. The
+        # offset / trim / channel paths above keep working when
+        # the source is unchanged; only the new source-swap
+        # branch reaches for this dict.
+        self._last_known_source: dict[str, tuple] = {}
         # Memoised per-master-frame current signature, invalidated on
         # any stack mutation that could shift the chain (layers_changed
         # / visibility_changed / layer_modified). Without this,
@@ -384,6 +426,7 @@ class MasterFrameCache:
             self._mtime_index.clear()
             self._last_known_range.clear()
             self._last_known_state.clear()
+            self._last_known_source.clear()
             self._bytes_used = 0
 
     def clear(self) -> None:
@@ -421,6 +464,7 @@ class MasterFrameCache:
             # a "small mutation" against the OLD baseline.
             self._last_known_range.pop(layer_id, None)
             self._last_known_state.pop(layer_id, None)
+            self._last_known_source.pop(layer_id, None)
 
     # ------------------------------------------------------------------ Compat shims
 
@@ -1633,6 +1677,7 @@ class MasterFrameCache:
                 self._path_index.pop(stale_id, None)
                 self._mtime_index.pop(stale_id, None)
                 self._last_known_range.pop(stale_id, None)
+                self._last_known_source.pop(stale_id, None)
         # Snapshot the current master ranges + per-layer state so
         # the next ``layer_modified`` can diff against this baseline.
         for layer in self._stack.layers():
@@ -1644,6 +1689,7 @@ class MasterFrameCache:
                 layer.channel_selection,
                 layer.alpha_composite, layer.alpha_is_straight,
             )
+            self._last_known_source[layer.id] = _layer_source_token(layer)
         # Drop state for layers that no longer exist.
         for stale_id in list(self._last_known_state.keys()):
             if stale_id not in {l.id for l in self._stack.layers()}:
@@ -1777,11 +1823,45 @@ class MasterFrameCache:
             layer.channel_selection,
             layer.alpha_composite, layer.alpha_is_straight,
         )
+        prev_source = self._last_known_source.get(layer_id)
+        new_source = _layer_source_token(layer)
 
         # Stack mutation always invalidates the per-frame signature
         # memo: the next ``_signature_at`` for any frame this layer
         # touches must reflect the new state.
         self._invalidate_signature_cache()
+
+        # Source-identity change (= "Replace source…" forward OR
+        # an undo that reverts to a previous sequence): the layer
+        # kept its id but ``layer.sequence`` now points at a
+        # different set of files. Two consequences:
+        #
+        # * ``_path_index[layer.id]`` caches ``frame_number -> Path``
+        #   built lazily; it short-circuits when the id is already
+        #   a key. Without dropping the entry, every subsequent
+        #   decode reads from the OLD source's paths.
+        # * Cached frame buffers were decoded from the OLD files;
+        #   the signature token doesn't encode the source path, so
+        #   lookups would still hit them. Clear the whole cache so
+        #   the next render produces a fresh decode against the
+        #   new sequence.
+        #
+        # Done BEFORE the existing offset / trim handling so those
+        # branches don't try to rekey against the stale state.
+        if prev_source is not None and prev_source != new_source:
+            self._path_index.pop(layer_id, None)
+            self._mtime_index.pop(layer_id, None)
+            self._pool.clear()
+            self._frames.clear()
+            self._missing.clear()
+            self._signature_last_seen.clear()
+            self._signature_first_cached.clear()
+            self._bytes_used = 0
+            self._epoch += 1
+            self._last_known_range[layer_id] = (new_start, new_end)
+            self._last_known_state[layer_id] = new_state
+            self._last_known_source[layer_id] = new_source
+            return
 
         # Pure-offset shift fast path — works for any stack size.
         # In multi-layer, ``_shift_solo_dominant_frames`` rekeys only
@@ -1800,6 +1880,7 @@ class MasterFrameCache:
             self._shift_solo_dominant_frames(layer, prev_state, shift)
             self._last_known_range[layer_id] = (new_start, new_end)
             self._last_known_state[layer_id] = new_state
+            self._last_known_source[layer_id] = new_source
             return
 
         # Trim detection: layer_in / layer_out changed. The slots
@@ -1836,6 +1917,7 @@ class MasterFrameCache:
         self._pool.clear()
         self._last_known_range[layer_id] = (new_start, new_end)
         self._last_known_state[layer_id] = new_state
+        self._last_known_source[layer_id] = new_source
 
     # ------------------------------------------------------------------ Internals
 
