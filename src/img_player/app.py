@@ -4473,6 +4473,16 @@ def _apply_preferences_to_window(app: ImgPlayerApp) -> None:
     try:
         cs_dict = prefs.contact_sheet_state
         app._contact_sheet_state = ContactSheetState.from_dict(cs_dict)
+        # Always boot in normal display mode regardless of the
+        # last persisted ``enabled`` flag. The other CS state
+        # (grid choice, divisor, labels, per-layer offsets) is
+        # preserved so the user gets their last configuration
+        # back the moment they toggle CS on. Without this, opening
+        # a session that was closed in CS mode would land the
+        # user on the planche-contact view by surprise — usually
+        # they want to see the regular composite first and opt
+        # into CS via the menu / Ctrl+G when needed.
+        app._contact_sheet_state.enabled = False
         app._window.set_contact_sheet_enabled(
             app._contact_sheet_state.enabled,
         )
