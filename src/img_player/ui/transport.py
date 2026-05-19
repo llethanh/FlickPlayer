@@ -50,9 +50,9 @@ _LOOP_CYCLE = [LoopMode.LOOP, LoopMode.ONCE, LoopMode.PING_PONG]
 # annotation toolbar's ✏️ 🧽 📌 (colorful OS-rendered emojis rather
 # than monochrome text symbols).
 _LOOP_LABELS = {
-    LoopMode.LOOP:      ("🔁", "Loop (play → first frame at the end)"),
-    LoopMode.ONCE:      ("▶️", "Play once (stop at the end)"),
-    LoopMode.PING_PONG: ("🏓", "Ping-pong (reverse at the end)"),
+    LoopMode.LOOP:      ("loop", "Loop (play → first frame at the end)"),
+    LoopMode.ONCE:      ("step-fwd", "Play once (stop at the end)"),
+    LoopMode.PING_PONG: ("swap-arrows", "Ping-pong (reverse at the end)"),
 }
 
 
@@ -221,22 +221,36 @@ class TransportBar(QWidget):  # type: ignore[misc]
         self._loop_mode = LoopMode.LOOP
 
         # --- In/Out markers -------------------------------------------------
-        # Same emoji-as-label style as the annotation toolbar
-        # (✏️ 🧽 📌). Native OS rendering = colourful glyphs that
-        # signal start / end / clean-up at a glance.
-        self._mark_in_btn  = _text_button("🚩", "Mark IN at current frame (I)")
-        self._mark_out_btn = _text_button("🏁", "Mark OUT at current frame (O)")
-        self._clear_io_btn = _text_button("🧹", "Clear IN/OUT range (Shift+R)")
+        # Brief §5 + §11.1: line-art monochrome SVG icons (mark-in /
+        # mark-out / clear-in-out) replace the legacy emoji glyphs
+        # (🚩 🏁 🧹) which rendered as colour emojis or empty squares
+        # depending on the system font stack.
+        self._mark_in_btn  = _icon_button(
+            make_icon("mark-in"), "Mark IN at current frame (I)",
+        )
+        self._mark_out_btn = _icon_button(
+            make_icon("mark-out"), "Mark OUT at current frame (O)",
+        )
+        self._clear_io_btn = _icon_button(
+            make_icon("clear-in-out"), "Clear IN/OUT range (Shift+R)",
+        )
 
         self._mark_in_btn.clicked.connect(self.mark_in_clicked.emit)
         self._mark_out_btn.clicked.connect(self.mark_out_clicked.emit)
         self._clear_io_btn.clicked.connect(self.clear_in_out_clicked.emit)
 
         # --- Loop mode ------------------------------------------------------
-        # Initial label reflects the default LOOP mode; the click
-        # handler swaps it through ``_LOOP_LABELS`` as the user
-        # cycles modes.
-        self._loop_btn = _text_button("🔁", "Loop mode (click to cycle)")
+        # Brief §5: line-art loop icon (SVG) instead of the 🔁 emoji.
+        # The button is checkable so the global ``btnIcon:checked`` QSS
+        # rule paints the active state in ACC_BRIGHT — same orange
+        # active treatment as the rest of the toggle buttons.
+        # ``_refresh_loop_button`` swaps the icon as the user cycles
+        # through LOOP / ONCE / PING_PONG modes.
+        self._loop_btn = _icon_button(
+            make_icon("loop"), "Loop mode (click to cycle)",
+        )
+        self._loop_btn.setCheckable(True)
+        self._loop_btn.setChecked(True)  # default state = LOOP
         self._loop_btn.clicked.connect(self._cycle_loop_mode)
 
         # --- Playback controls ---------------------------------------------
@@ -297,62 +311,39 @@ class TransportBar(QWidget):  # type: ignore[misc]
         # logical group, exposed via three signals (toggle / prev /
         # next). The toggle button is checkable and reflects whether
         # the toolbar is currently visible.
-        # ⏮️ / ⏭️ — track-skip emojis with U+FE0F variation selector for
-        # consistent emoji-presentation across systems (the bare
-        # codepoints have Emoji_Presentation=Yes by default, but the
-        # selector is belt-and-braces against any future renderer
-        # that reads them as text). ✏️ is U+270F LOWER RIGHT PENCIL,
-        # which is text-by-default — the selector is REQUIRED here to
-        # get the colorful pencil glyph the user picked from the
-        # original toolbar mockup.
-        self._annotation_prev_btn = _text_button(
-            "⏮️", "Frame annotée précédente ([)"
+        #
+        # Brief §5 + §11: SVG line-art icons (cache-prev / pen /
+        # cache-next / ann-hide) replace the legacy emoji glyphs
+        # (⏮️ ✏️ ⏭️ 👁/🚫). The annotation_prev / next semantically
+        # double as "previous / next annotated frame" navigation —
+        # the cache-prev / cache-next glyphs (double chevrons) read
+        # cleanly as "jump to neighbouring annotated frame" too.
+        self._annotation_prev_btn = _icon_button(
+            make_icon("cache-prev"), "Frame annotée précédente ([)",
         )
-        self._annotation_toggle_btn = _text_button(
-            "✏️", "Afficher / masquer la toolbar d'annotation (D)"
+        self._annotation_toggle_btn = _icon_button(
+            make_icon("pen"),
+            "Afficher / masquer la toolbar d'annotation (D)",
         )
         self._annotation_toggle_btn.setCheckable(True)
-        self._annotation_next_btn = _text_button(
-            "⏭️", "Frame annotée suivante (])"
+        self._annotation_next_btn = _icon_button(
+            make_icon("cache-next"), "Frame annotée suivante (])",
         )
-        # 👁 — show / hide annotations DURING playback. Checkable so
-        # the user can lock it in either state. Default = checked
+        # Show / hide annotations DURING playback. Checkable so the
+        # user can lock it in either state. Default = checked
         # (annotations visible during play) to match the legacy
         # behaviour. Same toggle the ``A`` keyboard shortcut drives.
-        # Inline stylesheet so checked vs unchecked is unambiguously
-        # visible — without it the colour-emoji rendered by the OS
-        # looks identical in both states (font-color CSS doesn't
-        # touch coloured emoji glyphs). We tint the BACKGROUND
-        # instead and add a ``◌`` strike-overlay via the glyph swap
-        # so the difference reads at a glance.
-        self._annotation_show_play_btn = _text_button(
-            "👁", "Afficher les annotations pendant la lecture (A)"
+        # The ``btnIcon:checked`` global QSS rule paints the active
+        # state in ACC_BRIGHT — no inline stylesheet needed anymore.
+        # On toggle we keep the same icon (the slashed circle reads
+        # as "hide" in both states); the checked state's background
+        # tint signals "currently visible".
+        self._annotation_show_play_btn = _icon_button(
+            make_icon("ann-hide"),
+            "Afficher les annotations pendant la lecture (A)",
         )
         self._annotation_show_play_btn.setCheckable(True)
         self._annotation_show_play_btn.setChecked(True)
-        self._annotation_show_play_btn.setStyleSheet(
-            "QPushButton {"
-            "  font-size: 11pt;"
-            "  padding: 0;"
-            "}"
-            "QPushButton:checked {"
-            f"  background: {H.ACCENT_DIM};"
-            f"  border: 1px solid {H.ACCENT};"
-            f"  border-radius: {G.RADIUS_SM}px;"
-            "}"
-            "QPushButton:!checked {"
-            f"  background: {H.BG_RAISED};"
-            f"  border: 1px solid {H.BORDER_DEFAULT};"
-            f"  border-radius: {G.RADIUS_SM}px;"
-            "}"
-        )
-        # Glyph swap on toggle: open eye when ON, crossed eye when
-        # OFF. Belt-and-braces with the background tint so even users
-        # whose theme washes out the accent colour still see the
-        # state change immediately.
-        self._annotation_show_play_btn.toggled.connect(
-            lambda on: self._annotation_show_play_btn.setText("👁" if on else "🚫")
-        )
         self._annotation_prev_btn.clicked.connect(self.annotation_prev_clicked.emit)
         self._annotation_toggle_btn.clicked.connect(
             self.annotation_toggle_clicked.emit
@@ -837,7 +828,14 @@ class TransportBar(QWidget):  # type: ignore[misc]
         # asked to free up the bar.
         layout.addWidget(self._first_btn)
         layout.addWidget(self._prev_btn)
-        layout.addWidget(self._reverse_play_btn)
+        # NB: ``_reverse_play_btn`` is intentionally NOT added to the
+        # visible layout — brief §5 specifies a single play key, so
+        # the reverse-play affordance lives only on the J keyboard
+        # shortcut now. The button object itself stays alive (parented
+        # to ``self`` below) so existing signal wiring +
+        # ``set_playback_enabled`` calls keep working unchanged.
+        self._reverse_play_btn.setParent(self)
+        self._reverse_play_btn.hide()
         layout.addWidget(self._play_btn)
         layout.addWidget(self._next_btn)
         layout.addWidget(self._last_btn)
@@ -1324,10 +1322,10 @@ class TransportBar(QWidget):  # type: ignore[misc]
         self._annotation_show_play_btn.blockSignals(True)
         try:
             self._annotation_show_play_btn.setChecked(active)
-            # The ``toggled`` signal would normally drive the text
-            # swap; with signals blocked we have to do it manually
-            # so the glyph still matches the new state.
-            self._annotation_show_play_btn.setText("👁" if active else "🚫")
+            # The button now uses the SVG ``ann-hide`` icon and relies
+            # on the global ``btnIcon:checked`` QSS rule to paint the
+            # active state in ACC_BRIGHT — no manual glyph swap to do
+            # here anymore (the legacy emoji 👁/🚫 text path is gone).
         finally:
             self._annotation_show_play_btn.blockSignals(False)
 
@@ -1420,8 +1418,12 @@ class TransportBar(QWidget):  # type: ignore[misc]
         self.loop_mode_requested.emit(self._loop_mode)
 
     def _refresh_loop_button(self) -> None:
-        label, tooltip = _LOOP_LABELS[self._loop_mode]
-        self._loop_btn.setText(label)
+        icon_name, tooltip = _LOOP_LABELS[self._loop_mode]
+        # Re-paint the button's icon with the new mode's glyph. Loop
+        # in active state (= any of the 3 cycle positions) — the
+        # global QSS paints the checked state in ACC_BRIGHT, no
+        # explicit colour needed.
+        self._loop_btn.setIcon(make_icon(icon_name))
         self._loop_btn.setToolTip(tooltip)
 
     def _on_fps_text(self, text: str) -> None:
