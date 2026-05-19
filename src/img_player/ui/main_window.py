@@ -354,13 +354,20 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         # finally to the bottom info band where it now sits along
         # with fps, layer frame and timeline frame readouts.
 
-        # Central: top row [viewer | side panel] (only the display
-        # area gets the side panel beside it), then master-timeline
-        # composite + transport below spanning the full width.
+        # Central: header info strip (above) + top row [viewer | side
+        # panel] (only the display area gets the side panel beside it),
+        # then master-timeline composite + transport below spanning
+        # the full width.
         central = QWidget(self)
         layout = QVBoxLayout(central)
         layout.setContentsMargins(S.SM, S.SM, S.SM, S.SM)
         layout.setSpacing(S.SM)
+        # Header info strip — brief §2. Hidden until a sequence loads
+        # (gated via :meth:`HeaderInfoStrip.set_visible_for_sequence`
+        # by ``update_sequence_info`` / ``set_status_no_sequence``).
+        from img_player.ui.header_strip import HeaderInfoStrip  # noqa: PLC0415
+        self._header_strip = HeaderInfoStrip(self)
+        layout.addWidget(self._header_strip)
         top_row = QHBoxLayout()
         top_row.setContentsMargins(0, 0, 0, 0)
         top_row.setSpacing(S.SM)
@@ -428,63 +435,33 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
     # --------------------------------------------------------------- Status bar
 
     def _build_status_bar(self) -> None:
-        """Three-block status bar: contextual message left, selected
-        layers in the middle, perf indicators right.
+        """Three-zone status bar — brief §10.
 
-        Replaces the legacy single ``showMessage()`` line so we can render
-        coloured dots (rich text) on the right while keeping a plain text
-        message on the left. ``set_status()`` keeps its old contract for
-        existing callers — it just routes to the left label now.
-
-        The middle "selection" readout was added so the user always
-        sees which layers they've highlighted in the panel, even when
-        the left side is busy with a transient ``set_status`` message
-        (load progress, in/out feedback, etc.). Plain text, accent-
-        orange, mid-dot-separated for multi-select — same convention
-        as the compare-band dropdowns.
+        Replaced in the 2026-Q2 redesign with a dedicated
+        :class:`img_player.ui.status_bar.StatusBar` widget. The
+        attribute aliases ``self.status_left`` / ``self.status_selection``
+        / ``self.status_right`` are mirrored from the widget so any
+        legacy caller that imported them by name (e.g.
+        ``app._refresh_status``'s direct ``status_right.setText``)
+        keeps working.
         """
-        bar = self.statusBar()
+        from img_player.ui.status_bar import StatusBar  # noqa: PLC0415
 
-        self.status_left = QLabel("Ready — drop a sequence (folder or file) to start.")
-        self.status_left.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
-        )
-        self.status_left.setStyleSheet(
-            f"color: {H.TEXT_SECONDARY}; font-size: {F.SIZE_XS}px;"
-        )
-
-        # Selected-layer readout — permanent (= survives ``set_status``
-        # overwrites). Sits between the contextual message and the
-        # perf dots so it shares the right-anchored "always-visible"
-        # group rather than competing for the left label's stretch.
-        self.status_selection = QLabel("")
-        self.status_selection.setAlignment(
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        )
-        self.status_selection.setStyleSheet(
-            f"color: {H.ACCENT}; font-size: {F.SIZE_XS}px;"
-        )
-        self.status_selection.setToolTip(
-            "Selected layer(s) — click rows in the layer panel to "
-            "single them out.",
-        )
-
-        self.status_right = QLabel()
-        self.status_right.setAlignment(
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        )
-        self.status_right.setTextFormat(Qt.TextFormat.RichText)
-        self.status_right.setFont(F.mono(F.SIZE_XS))
-
-        bar.addWidget(self.status_left, 1)              # stretch fills the gap
-        bar.addPermanentWidget(self.status_selection)   # right of the message
-        bar.addPermanentWidget(self.status_right)       # far right
+        sb = StatusBar(self)
+        self.setStatusBar(sb)
+        # Backward-compat aliases — old code reaches for these by name.
+        self.status_left = sb.status_left
+        self.status_selection = sb.status_selection
+        self.status_right = sb.status_right
+        # Keep a typed handle so the new helpers (set_session_dot,
+        # set_perf_html) can be reached without a sub-widget walk.
+        self._status_bar_widget = sb
 
     def set_selected_layers(self, text: str) -> None:
-        """Update the middle status-bar widget — the selected layer
-        names. Empty string clears the segment so it disappears
-        visually (no leftover "—" when nothing's selected)."""
-        self.status_selection.setText(text or "")
+        """Update the middle status-bar widget — the focused layer
+        name. Empty string hides the FOCUS pill + name (no leftover
+        "—" when nothing's focused)."""
+        self._status_bar_widget.set_selected_layers(text)
 
     # --------------------------------------------------------------- Accessors
 
@@ -665,6 +642,18 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         """
         self.setWindowTitle(f"Flick Player — {sequence.display_pattern()}")
         self._timeline.set_range(sequence.first_frame, sequence.last_frame)
+        # Header info strip — populate the per-sequence cells and
+        # surface the strip itself. Frame-cell updates fire later from
+        # the playhead's frame_changed signal via :meth:`update_frame_position`.
+        self._header_strip.set_sequence_name(sequence.display_pattern())
+        self._header_strip.set_resolution(sequence.width, sequence.height)
+        # FPS isn't on SequenceInfo — it lives on the controller. The
+        # app picks it up via :meth:`update_fps`; we leave the cell
+        # showing — until that call lands.
+        layer_total = sequence.last_frame - sequence.first_frame + 1
+        self._header_strip.set_layer_position(sequence.first_frame, layer_total)
+        self._header_strip.set_frame_position(sequence.first_frame, layer_total)
+        self._header_strip.set_visible_for_sequence(True)
         # A sequence is loaded → enable the File → Export… action +
         # the 💾 transport bar button + Reload.
         if hasattr(self, "_export_act"):
@@ -703,7 +692,7 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         Kept as a method for backwards compat with all the existing call
         sites (``Loaded …``, ``In point set to frame …``, etc.).
         """
-        self.status_left.setText(message)
+        self._status_bar_widget.set_status(message)
 
     # --------------------------------------------------------------- Menu / shortcuts
 

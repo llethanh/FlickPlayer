@@ -1950,6 +1950,19 @@ class ImgPlayerApp:
             band.set_global_frame(master_frame, last)
         else:
             band.set_global_frame(None, None)
+        # Mirror the same numbers to the header info strip (brief §2).
+        # The strip exposes two cells — "Layer N/total" (local source
+        # frame within the focused layer) and "Frame N/total" (master
+        # frame within the broad range). We re-use the values already
+        # computed above rather than walking the stack twice.
+        header = getattr(self._window, "_header_strip", None)
+        if header is not None:
+            if layer is not None and layer.covers(master_frame):
+                local_frame = layer.source_frame_at(master_frame)
+                local_total = max(1, layer.layer_out)
+                header.set_layer_position(local_frame, local_total)
+            if last > 0:
+                header.set_frame_position(master_frame, last)
 
     def _refresh_status_selected_layers(self) -> None:
         """Push the panel's current selection to the bottom status bar.
@@ -2214,6 +2227,11 @@ class ImgPlayerApp:
         w.transport.set_reload_enabled(False)
         # Re-detect colorspace button — same gating as the rest.
         w.color_panel.set_redetect_enabled(False)
+        # Header info strip — hide on auto-detach so the empty-stack
+        # state matches what Ctrl+N produces.
+        header = getattr(w, "_header_strip", None)
+        if header is not None:
+            header.set_visible_for_sequence(False)
         # Clear the viewport — match the visual reset Ctrl+N does
         # so the user sees "no sequence" identically across both
         # entry points.
@@ -2638,6 +2656,10 @@ class ImgPlayerApp:
         self._window.timeline.set_fps(state.fps)
         # Bottom info band fps readout follows the controller fps.
         self._window.viewer.info_band.set_fps(state.fps)
+        # Header info strip (§2) — third surface that shows fps.
+        header = getattr(self._window, "_header_strip", None)
+        if header is not None:
+            header.set_fps(state.fps)
         # The layer-panel bars need the master in/out so their drag
         # snap targets reflect the playback range.
         panel = getattr(self._window, "_layer_panel", None)
@@ -3635,6 +3657,11 @@ class ImgPlayerApp:
         # Re-detect colorspace button — same gating as Export /
         # Save Frame: greyed out when no footage is loaded.
         self._window.color_panel.set_redetect_enabled(False)
+        # Header info strip (§2) — hide on detach, comes back via
+        # update_sequence_info on the next load.
+        header = getattr(self._window, "_header_strip", None)
+        if header is not None:
+            header.set_visible_for_sequence(False)
         # Reset the current-session pointer + title bar.
         # ``set_current_session_path(None)`` rewrites the title to
         # the bare "Flick Player" baseline.
