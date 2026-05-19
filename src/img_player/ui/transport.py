@@ -321,8 +321,14 @@ class TransportBar(QWidget):  # type: ignore[misc]
         self._annotation_prev_btn = _icon_button(
             make_icon("cache-prev"), "Frame annotée précédente ([)",
         )
+        # Pen — THE annotation-tool entry point. Painted in the warm
+        # amber accent (ACC_BRIGHT) at rest so it visually reads as
+        # "the annotation button" alongside the other monochrome
+        # transport icons. When toggled ON (toolbar visible), the
+        # global ``QPushButton:checked`` rule additionally tints the
+        # background so the active state remains unambiguous.
         self._annotation_toggle_btn = _icon_button(
-            make_icon("pen"),
+            make_icon("pen", color=H.ACC_BRIGHT),
             "Afficher / masquer la toolbar d'annotation (D)",
         )
         self._annotation_toggle_btn.setCheckable(True)
