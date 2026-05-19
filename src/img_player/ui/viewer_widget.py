@@ -80,25 +80,26 @@ class ViewerWidget(QWidget):  # type: ignore[misc]
         # retired — duplicated info in two places, the band reads
         # better.
         #
-        # 2026-Q2 redesign: hidden by default. The HeaderInfoStrip
-        # widget at the TOP of the viewport now carries the
-        # sequence name / resolution / fps / Layer N/total /
-        # Frame N/total information, and the new StatusBar's middle
-        # zone (FOCUS pill) shows the currently focused layer's
-        # name. The bottom band became visually redundant — the
-        # user explicitly asked us to drop it in favour of the
-        # top header.
-        #
-        # The widget stays alive (no .deleteLater()) so the existing
-        # set_layer_name / set_fps / set_image_size / set_local_frame
-        # / set_global_frame call sites in app.py keep running
-        # harmlessly — they just don't paint anywhere. A future
-        # cleanup pass can remove those call sites and the InfoBand
-        # class entirely, but doing it now would mean touching ~10
-        # files and re-running the test suite.
+        # 2026-Q2 redesign: legacy InfoBand kept alive but hidden —
+        # see comment below. The HeaderInfoStrip (the orange cartouche
+        # with sequence name / resolution / fps / Layer / Frame) sits
+        # as a floating overlay at the bottom edge of THIS viewer,
+        # absolute-positioned the same way the InfoBand used to be.
+        # The user explicitly asked the strip to overlay inside the
+        # display area (vs. taking layout space below it).
         self._info_band = InfoBand(self)
         self._info_band.hide()
         self._info_band.raise_()
+
+        # Header info strip — brief §2. Floating overlay flush with
+        # the bottom edge of the viewer. Built as a child of self so
+        # the parent-relative absolute positioning naturally tracks
+        # viewer resizes. Hidden by default; surfaces when
+        # ``set_visible_for_sequence(True)`` fires from
+        # ``MainWindow.update_sequence_info``.
+        from img_player.ui.header_strip import HeaderInfoStrip  # noqa: PLC0415
+        self._header_strip = HeaderInfoStrip(self)
+        self._header_strip.raise_()
 
     @property
     def gl(self) -> GLViewport:
@@ -116,12 +117,28 @@ class ViewerWidget(QWidget):  # type: ignore[misc]
     def info_band(self) -> InfoBand:
         return self._info_band
 
+    @property
+    def header_strip(self):  # type: ignore[no-untyped-def]
+        """Floating header cartouche (sequence name / resolution / fps
+        / Layer / Frame), pinned to the bottom edge of the viewer.
+        See :mod:`img_player.ui.header_strip`."""
+        return self._header_strip
+
     def _reposition_info_band(self) -> None:
         """Pin the info band to the bottom edge of the viewer, full
         width. Visible / hidden state isn't touched here — the
         caller controls it."""
         h = self._info_band.height()
         self._info_band.setGeometry(0, self.height() - h, self.width(), h)
+
+    def _reposition_header_strip(self) -> None:
+        """Pin the header info strip to the bottom edge of the viewer.
+        Mirrors the legacy InfoBand placement — the strip overlays
+        the bottom of the image (the user prefers this to taking
+        layout space below the viewer). Visible state is controlled
+        by the caller via ``set_visible_for_sequence``."""
+        h = self._header_strip.height()
+        self._header_strip.setGeometry(0, self.height() - h, self.width(), h)
 
     def resizeEvent(self, event) -> None:  # type: ignore[no-untyped-def]
         super().resizeEvent(event)
@@ -131,6 +148,7 @@ class ViewerWidget(QWidget):  # type: ignore[misc]
         if self._drop_overlay.isVisible():
             self._drop_overlay.setGeometry(self.rect())
         self._reposition_info_band()
+        self._reposition_header_strip()
         # Compare-mode A/B overlay tracks the viewer rect (it's a
         # plain child, not in the QStackedLayout). Without this it'd
         # stay at its initial 0×0 size and paint nothing.

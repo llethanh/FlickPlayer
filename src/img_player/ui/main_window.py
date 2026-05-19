@@ -376,16 +376,13 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         top_row.addWidget(self._side_dock)
         self._top_row = top_row
         layout.addLayout(top_row, stretch=1)
-        # Header info strip — brief §2 — now sits BELOW the viewer
-        # row (where the legacy InfoBand used to overlay) and ABOVE
-        # the timeline. User explicitly wanted it relocated here so
-        # the cartouche reads as "info about the frame I'm looking
-        # at" rather than as a separate chrome bar at the top of the
-        # window. Hidden until a sequence loads (gated via
-        # :meth:`HeaderInfoStrip.set_visible_for_sequence`).
-        from img_player.ui.header_strip import HeaderInfoStrip  # noqa: PLC0415
-        self._header_strip = HeaderInfoStrip(self)
-        layout.addWidget(self._header_strip)
+        # Header info strip lives INSIDE the viewer now (floating
+        # overlay pinned to the bottom edge) — see
+        # ``ViewerWidget._reposition_header_strip``. Exposed here as
+        # ``self._header_strip`` for backwards-compat with the
+        # ``update_sequence_info`` / ``app._refresh_info_band_frames``
+        # call sites that still reach for it by attribute name.
+        self._header_strip = self._viewer.header_strip
         if self._master_timeline_panel is not None:
             layout.addWidget(self._master_timeline_panel)
         else:
