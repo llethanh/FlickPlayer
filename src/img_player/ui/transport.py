@@ -39,7 +39,7 @@ from img_player.sequence.channels import (
 from img_player.ui.channel_menu import ChannelMenu
 from img_player.ui.frame_display import DisplayMode, FrameDisplay
 from img_player.ui.icons import make_icon
-from img_player.ui.theme import G, H, S
+from img_player.ui.theme import F, G, H, S
 
 if TYPE_CHECKING:
     from img_player.player.state import PlaybackState
@@ -248,18 +248,31 @@ class TransportBar(QWidget):  # type: ignore[misc]
         # the frame display, forward_play right of it. The frame
         # display itself sits at the visual centre between the two
         # play buttons — matches the Nuke-style transport.
-        self._first_btn = _icon_button(make_icon("first"), "Go to first frame (Home)")
-        self._prev_btn  = _icon_button(make_icon("prev"),  "Previous frame (Left)")
+        # Use the new brief icon set for the step / skip glyphs;
+        # ``first`` / ``last`` are kept as backwards-compatible aliases
+        # but the brief-named ``skip-start`` / ``skip-end`` carry the
+        # updated geometry, and ``step-back`` / ``step-fwd`` replace
+        # the legacy ``prev`` / ``next`` chevrons.
+        self._first_btn = _icon_button(make_icon("skip-start"), "Go to first frame (Home)")
+        self._prev_btn  = _icon_button(make_icon("step-back"),  "Previous frame (Left)")
         self._reverse_play_btn = _icon_button(
-            make_icon("play_reverse", color=H.ACCENT),
+            make_icon("play_reverse", color="#1A1206"),
             "Play in reverse (J)",
         )
         self._play_btn  = _icon_button(
-            make_icon("play", color=H.ACCENT),
+            make_icon("play", color="#1A1206"),
             "Play forward (L)",
         )
-        self._next_btn  = _icon_button(make_icon("next"),  "Next frame (Right)")
-        self._last_btn  = _icon_button(make_icon("last"),  "Go to last frame (End)")
+        self._next_btn  = _icon_button(make_icon("step-fwd"),   "Next frame (Right)")
+        self._last_btn  = _icon_button(make_icon("skip-end"),   "Go to last frame (End)")
+
+        # Play / reverse-play buttons get the wider 38 px ``btnPrimary``
+        # footprint and the orange gradient. We overwrite the size set
+        # by ``_icon_button`` (which uses CTRL_ICON_W = 30) so the
+        # primary key visually outweighs the surrounding nav buttons.
+        for play_btn in (self._reverse_play_btn, self._play_btn):
+            play_btn.setObjectName("btnPrimary")
+            play_btn.setFixedSize(G.CTRL_PRIMARY_W, G.CTRL_BUTTON_H)
 
         # --- Frame / timecode display -------------------------------------
         # Sits between the navigation half and the playback half so the
@@ -585,10 +598,28 @@ class TransportBar(QWidget):  # type: ignore[misc]
         self._fps_combo = QLineEdit()
         self._fps_combo.setText("24")
         self._fps_combo.setFixedWidth(40)
-        self._fps_combo.setFixedHeight(G.INPUT_H)
+        self._fps_combo.setFixedHeight(G.CTRL_INPUT_H)
         self._fps_combo.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._fps_combo.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self._fps_combo.setToolTip("Playback rate (fps) — type a value, Enter to apply")
+        # Brief §5 readout style: dark BG_BASE field, hairline border,
+        # monospace digits. Overrides the global QLineEdit rule which
+        # paints BG_SURFACE (too bright next to the gradient play key).
+        self._fps_combo.setStyleSheet(
+            "QLineEdit {"
+            f"  background:{H.BG_BASE};"
+            f"  border:1px solid {H.BORDER_DEF};"
+            f"  border-radius:{G.RADIUS_MD}px;"
+            f"  color:{H.T_PRI};"
+            f"  font-family:{F.FAMILY_MONO};"
+            f"  font-size:{F.SIZE_MONO_CODE}px;"
+            "  font-weight:500;"
+            "}"
+            "QLineEdit:focus {"
+            f"  border:1px solid {H.ACC};"
+            f"  color:{H.ACC_BRIGHT};"
+            "}"
+        )
         validator = QDoubleValidator(0.1, 1000.0, 3, self._fps_combo)
         validator.setNotation(QDoubleValidator.Notation.StandardNotation)
         self._fps_combo.setValidator(validator)
@@ -826,6 +857,15 @@ class TransportBar(QWidget):  # type: ignore[misc]
         layout.addWidget(_separator())
         fps_label = QLabel("FPS")
         fps_label.setFixedWidth(24)
+        # Brief §5 mono caption — secondary text, JetBrains Mono with
+        # a hint of letter-spacing so the three-letter label reads as
+        # a key, not as body text.
+        fps_label.setStyleSheet(
+            f"color:{H.T_SEC};"
+            "letter-spacing:0.08em;"
+            f"font-family:{F.FAMILY_MONO};"
+            f"font-size:{F.SIZE_MONO_LABEL}px;"
+        )
         layout.addWidget(fps_label)
         layout.addWidget(self._fps_combo)
 
@@ -854,8 +894,13 @@ class TransportBar(QWidget):  # type: ignore[misc]
         # ``_show_volume_popup``.
         self._volume_popup_closed_at: float = 0.0
         self._volume_btn = QPushButton()
-        self._volume_btn.setFixedSize(G.BTN_TRANSPORT_W, G.BTN_TRANSPORT_H)
-        self._volume_btn.setText("🔊")
+        self._volume_btn.setObjectName("btnIcon")
+        self._volume_btn.setFixedSize(G.CTRL_ICON_W, G.CTRL_BUTTON_H)
+        # Use the brief's ``audio`` SVG glyph at rest. The mute swap
+        # is driven by ``_refresh_volume_button`` below; we initialise
+        # to the un-muted icon here.
+        self._volume_btn.setIcon(make_icon("audio", color=H.T_PRI))
+        self._volume_btn.setIconSize(QSize(16, 16))
         self._volume_btn.setToolTip("Volume")
         self._volume_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._volume_btn.clicked.connect(self._show_volume_popup)
@@ -868,8 +913,9 @@ class TransportBar(QWidget):  # type: ignore[misc]
         # ``set_fullscreen_state``.
         layout.addWidget(_separator())
         self._fullscreen_btn = QPushButton()
-        self._fullscreen_btn.setFixedSize(G.BTN_TRANSPORT_W, G.BTN_TRANSPORT_H)
-        self._fullscreen_btn.setIcon(make_icon("fullscreen_enter"))
+        self._fullscreen_btn.setObjectName("btnIcon")
+        self._fullscreen_btn.setFixedSize(G.CTRL_ICON_W, G.CTRL_BUTTON_H)
+        self._fullscreen_btn.setIcon(make_icon("fullscreen"))
         self._fullscreen_btn.setIconSize(QSize(16, 16))
         self._fullscreen_btn.setToolTip("Fullscreen (F)")
         self._fullscreen_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -882,9 +928,16 @@ class TransportBar(QWidget):  # type: ignore[misc]
 
     def set_fullscreen_state(self, on: bool) -> None:
         """Swap the fullscreen button's icon to reflect the current
-        mode. Called from ``MainWindow`` when fullscreen toggles."""
+        mode. Called from ``MainWindow`` when fullscreen toggles.
+
+        The brief introduces a single ``fullscreen`` icon (vs the
+        legacy enter/exit pair); we still use the legacy
+        ``fullscreen_exit`` for the active state since the new icon
+        set has no contract glyph yet. Resting state uses the brief's
+        ``fullscreen``.
+        """
         self._fullscreen_btn.setIcon(
-            make_icon("fullscreen_exit" if on else "fullscreen_enter")
+            make_icon("fullscreen_exit" if on else "fullscreen")
         )
         self._fullscreen_btn.setToolTip(
             "Exit fullscreen (F / Esc)" if on else "Fullscreen (F)"
@@ -1068,11 +1121,14 @@ class TransportBar(QWidget):  # type: ignore[misc]
 
     def _refresh_volume_icon(self) -> None:
         """Icon swap based purely on the current slider value: zero
-        reads as muted (🔇), any positive value reads as audible
-        (🔊). No second source of truth — mute is implicit in the
-        slider position."""
+        reads as muted, any positive value reads as audible. No
+        second source of truth — mute is implicit in the slider
+        position. Swaps between the brief's ``audio`` and
+        ``audio-mute`` glyphs."""
         muted = self._volume_value == 0
-        self._volume_btn.setText("🔇" if muted else "🔊")
+        self._volume_btn.setIcon(
+            make_icon("audio-mute" if muted else "audio", color=H.T_PRI)
+        )
         self._volume_btn.setToolTip(
             "Volume — muted (slider at 0)" if muted else "Volume",
         )
@@ -1176,14 +1232,19 @@ class TransportBar(QWidget):  # type: ignore[misc]
         # belongs to the reverse button instead.
         playing_fwd = state.is_playing and state.direction >= 0
         playing_rev = state.is_playing and state.direction < 0
+        # ``btnPrimary`` paints the play key with an orange gradient,
+        # so the glyph itself reads better in dark ink (#1A1206) — matches
+        # the contrast brief calls for. Pause uses the same dark ink so
+        # the button reads as one continuous accent surface in either
+        # state.
         if playing_fwd:
-            self._play_btn.setIcon(make_icon("pause"))
+            self._play_btn.setIcon(make_icon("pause", color="#1A1206"))
         else:
-            self._play_btn.setIcon(make_icon("play", color=H.ACCENT))
+            self._play_btn.setIcon(make_icon("play", color="#1A1206"))
         if playing_rev:
-            self._reverse_play_btn.setIcon(make_icon("pause"))
+            self._reverse_play_btn.setIcon(make_icon("pause", color="#1A1206"))
         else:
-            self._reverse_play_btn.setIcon(make_icon("play_reverse", color=H.ACCENT))
+            self._reverse_play_btn.setIcon(make_icon("play_reverse", color="#1A1206"))
 
         # Push the current frame into the editable display.
         self._frame_display.set_frame(state.current_frame)
@@ -1642,9 +1703,16 @@ class TransportBar(QWidget):  # type: ignore[misc]
 
 def _icon_button(icon: QIcon, tooltip: str) -> QPushButton:
     btn = QPushButton()
+    # Opt into the global ``#btnIcon`` QSS variant — same 30×28
+    # footprint as the rest of the transport-bar icon buttons, with
+    # the brief's hover / pressed treatment baked in. We keep the
+    # explicit ``setFixedSize`` below because the QSS uses min/max
+    # width only; the height needs a setFixedHeight to defeat any
+    # parent layout that might try to stretch the button vertically.
+    btn.setObjectName("btnIcon")
     btn.setIcon(icon)
     btn.setIconSize(QSize(G.ICON_SIZE, G.ICON_SIZE))
-    btn.setFixedSize(G.BTN_TRANSPORT_W, G.BTN_TRANSPORT_H)
+    btn.setFixedSize(G.CTRL_ICON_W, G.CTRL_BUTTON_H)
     btn.setToolTip(tooltip)
     btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
     return btn
@@ -1685,7 +1753,7 @@ def _separator() -> QWidget:
     line.setFrameShadow(QFrame.Shadow.Plain)
     line.setFixedWidth(1)
     line.setFixedHeight(18)
-    line.setStyleSheet(f"background-color: {H.BORDER_DEFAULT};")
+    line.setStyleSheet(f"background-color: {H.BORDER_SUB};")
     h.addWidget(line)
     return container
 
