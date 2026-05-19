@@ -64,14 +64,14 @@ class HeaderInfoStrip(QWidget):  # type: ignore[misc]
         super().__init__(parent)
         self.setObjectName("headerInfoStrip")
         self.setFixedHeight(self.HEIGHT)
-        # Strip background: warm-amber at very low alpha (4%) so the
-        # image underneath stays clearly visible — the strip should
-        # read as a discreet caption, not a chrome bar. Border kept
-        # in ACC_DEEP for the cartouche outline.
+        # Strip background: warm-amber at 40% alpha — visible orange
+        # caption that still lets the image bleed through enough for
+        # the user to see what's happening under the cartouche. Border
+        # in ACC_DEEP frames the strip.
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(
             f"QWidget#headerInfoStrip {{"
-            f"  background-color: rgba(232, 144, 28, 0.04);"
+            f"  background-color: rgba(232, 144, 28, 0.40);"
             f"  border: 1px solid {H.BORDER_ACC_DEEP};"
             f"  border-radius: {G.RADIUS_MD}px;"
             f"}}"
@@ -81,28 +81,25 @@ class HeaderInfoStrip(QWidget):  # type: ignore[misc]
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # ---- Cell 1 — Sequence name (weight 600, flex 1) ----------------
+        # ---- Cell 1 — Sequence name (weight 600) -----------------------
+        # The "layer name" cell as the user calls it — the loaded
+        # sequence's display pattern. Sized to its content (no
+        # ``expand`` flex) so it sits flush against the resolution
+        # cell on its right ("collé à gauche de la résolution"),
+        # rather than stretching across the strip and pushing the
+        # other cells to the far right edge. The trailing stretch
+        # added at the end of the layout absorbs any leftover
+        # horizontal space.
         self._name_label = self._make_cell_label(
-            weight_600=True, expand=True, color=H.ACC_BRIGHT,
+            weight_600=True, expand=False, color=H.ACC_BRIGHT,
         )
         self._name_label.setText("(no sequence)")
-        layout.addWidget(self._name_label, 1)
+        layout.addWidget(self._name_label, 0)
 
         # ---- Cell 2 — Resolution ---------------------------------------
         layout.addWidget(_HairlineSep(self))
         self._res_label = self._make_cell_label()
         layout.addWidget(self._res_label, 0)
-
-        # ---- Cell 2b — Layer name (focused) ----------------------------
-        # Sits flush to the right of the resolution cell as the user
-        # requested ("collé à droite de la résolution"). Shows the
-        # currently focused layer's display name; empty when no layer
-        # is focused (which collapses the cell visually since the
-        # hairline + empty label render as a single thin line — the
-        # user just sees less width in the strip).
-        layout.addWidget(_HairlineSep(self))
-        self._layer_name_label = self._make_cell_label()
-        layout.addWidget(self._layer_name_label, 0)
 
         # ---- Cell 3 — FPS ----------------------------------------------
         layout.addWidget(_HairlineSep(self))
@@ -119,6 +116,12 @@ class HeaderInfoStrip(QWidget):  # type: ignore[misc]
         layout.addWidget(_HairlineSep(self))
         self._frame_label = self._make_kv_label(prefix="Frame")
         layout.addWidget(self._frame_label, 0)
+
+        # Trailing stretch — absorbs the leftover horizontal space so
+        # all the cells pack tight on the LEFT of the strip rather
+        # than spreading across the full width. The user wanted the
+        # sequence name and resolution to stay glued together.
+        layout.addStretch(1)
 
         # Hidden until the first sequence loads — the empty cartouche
         # at boot would be visual noise on the "no project" state.
@@ -216,19 +219,15 @@ class HeaderInfoStrip(QWidget):  # type: ignore[misc]
             self._res_label.setText("—")
 
     def set_layer_name(self, name: str | None) -> None:
-        """Update cell 2b — the focused layer's display name.
-
-        Empty / ``None`` clears the cell (renders as ``—``). Long
-        names get elided automatically by Qt at the cell's clamp;
-        full name is available via the tooltip set by the caller.
+        """Legacy no-op — the dedicated "layer name to the right of
+        resolution" cell was removed at the user's request. The
+        sequence name on the LEFT (cell 1) is the canonical "layer
+        name" surface now. Kept as a method so the existing
+        ``app._refresh_info_band_frames`` call site doesn't have to
+        be conditionally guarded — passing through silently is
+        cheaper than wrapping the caller in ``hasattr``.
         """
-        text = (name or "").strip()
-        if not text:
-            self._layer_name_label.setText("—")
-            self._layer_name_label.setToolTip("")
-        else:
-            self._layer_name_label.setText(text)
-            self._layer_name_label.setToolTip(text)
+        del name  # intentionally unused — see docstring
 
     def set_fps(self, fps: float | None) -> None:
         """Update cell 3. Accepts ``None`` to clear."""
