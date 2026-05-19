@@ -79,7 +79,25 @@ class ViewerWidget(QWidget):  # type: ignore[misc]
         # used to live as a separate top-right corner label was
         # retired — duplicated info in two places, the band reads
         # better.
+        #
+        # 2026-Q2 redesign: hidden by default. The HeaderInfoStrip
+        # widget at the TOP of the viewport now carries the
+        # sequence name / resolution / fps / Layer N/total /
+        # Frame N/total information, and the new StatusBar's middle
+        # zone (FOCUS pill) shows the currently focused layer's
+        # name. The bottom band became visually redundant — the
+        # user explicitly asked us to drop it in favour of the
+        # top header.
+        #
+        # The widget stays alive (no .deleteLater()) so the existing
+        # set_layer_name / set_fps / set_image_size / set_local_frame
+        # / set_global_frame call sites in app.py keep running
+        # harmlessly — they just don't paint anywhere. A future
+        # cleanup pass can remove those call sites and the InfoBand
+        # class entirely, but doing it now would mean touching ~10
+        # files and re-running the test suite.
         self._info_band = InfoBand(self)
+        self._info_band.hide()
         self._info_band.raise_()
 
     @property
