@@ -64,14 +64,14 @@ class HeaderInfoStrip(QWidget):  # type: ignore[misc]
         super().__init__(parent)
         self.setObjectName("headerInfoStrip")
         self.setFixedHeight(self.HEIGHT)
-        # Strip background: warm-amber at 10% alpha + 1 px solid
-        # accent-deep border + 3 px radius. Same chrome as the legacy
-        # info-band over the viewer, just lifted into a top-of-window
-        # cartouche.
+        # Strip background: warm-amber at very low alpha (4%) so the
+        # image underneath stays clearly visible — the strip should
+        # read as a discreet caption, not a chrome bar. Border kept
+        # in ACC_DEEP for the cartouche outline.
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(
             f"QWidget#headerInfoStrip {{"
-            f"  background-color: {H.ACC_TINT_10};"
+            f"  background-color: rgba(232, 144, 28, 0.04);"
             f"  border: 1px solid {H.BORDER_ACC_DEEP};"
             f"  border-radius: {G.RADIUS_MD}px;"
             f"}}"
@@ -92,6 +92,17 @@ class HeaderInfoStrip(QWidget):  # type: ignore[misc]
         layout.addWidget(_HairlineSep(self))
         self._res_label = self._make_cell_label()
         layout.addWidget(self._res_label, 0)
+
+        # ---- Cell 2b — Layer name (focused) ----------------------------
+        # Sits flush to the right of the resolution cell as the user
+        # requested ("collé à droite de la résolution"). Shows the
+        # currently focused layer's display name; empty when no layer
+        # is focused (which collapses the cell visually since the
+        # hairline + empty label render as a single thin line — the
+        # user just sees less width in the strip).
+        layout.addWidget(_HairlineSep(self))
+        self._layer_name_label = self._make_cell_label()
+        layout.addWidget(self._layer_name_label, 0)
 
         # ---- Cell 3 — FPS ----------------------------------------------
         layout.addWidget(_HairlineSep(self))
@@ -203,6 +214,21 @@ class HeaderInfoStrip(QWidget):  # type: ignore[misc]
             self._res_label.setText(f"{int(width)}×{int(height)}")
         else:
             self._res_label.setText("—")
+
+    def set_layer_name(self, name: str | None) -> None:
+        """Update cell 2b — the focused layer's display name.
+
+        Empty / ``None`` clears the cell (renders as ``—``). Long
+        names get elided automatically by Qt at the cell's clamp;
+        full name is available via the tooltip set by the caller.
+        """
+        text = (name or "").strip()
+        if not text:
+            self._layer_name_label.setText("—")
+            self._layer_name_label.setToolTip("")
+        else:
+            self._layer_name_label.setText(text)
+            self._layer_name_label.setToolTip(text)
 
     def set_fps(self, fps: float | None) -> None:
         """Update cell 3. Accepts ``None`` to clear."""

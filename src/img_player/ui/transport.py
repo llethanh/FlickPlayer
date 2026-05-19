@@ -269,24 +269,60 @@ class TransportBar(QWidget):  # type: ignore[misc]
         # the legacy ``prev`` / ``next`` chevrons.
         self._first_btn = _icon_button(make_icon("skip-start"), "Go to first frame (Home)")
         self._prev_btn  = _icon_button(make_icon("step-back"),  "Previous frame (Left)")
+        # Reverse / forward play — outlined orange box with an
+        # orange-stroke triangle inside. User explicitly asked for
+        # the outline look (vs the previous filled-gradient
+        # btnPrimary): the button face stays in BG_SURFACE with an
+        # ACC_BRIGHT 1.5px border, and the triangle is a stroke-only
+        # SVG in ACC_BRIGHT. Reads as "play" while staying visually
+        # quiet enough not to dominate the toolbar like the previous
+        # gradient face did.
         self._reverse_play_btn = _icon_button(
-            make_icon("play_reverse", color="#1A1206"),
+            make_icon("play-reverse-outline", color=H.ACC_BRIGHT),
             "Play in reverse (J)",
         )
         self._play_btn  = _icon_button(
-            make_icon("play", color="#1A1206"),
+            make_icon("play-outline", color=H.ACC_BRIGHT),
             "Play forward (L)",
         )
         self._next_btn  = _icon_button(make_icon("step-fwd"),   "Next frame (Right)")
         self._last_btn  = _icon_button(make_icon("skip-end"),   "Go to last frame (End)")
 
-        # Play / reverse-play buttons get the wider 38 px ``btnPrimary``
-        # footprint and the orange gradient. We overwrite the size set
-        # by ``_icon_button`` (which uses CTRL_ICON_W = 30) so the
-        # primary key visually outweighs the surrounding nav buttons.
+        # Play buttons keep the wider 38 px footprint so they read as
+        # the toolbar's primary actions. The orange border + dark face
+        # are applied per-button via inline QSS — _icon_button gives
+        # us the base btnIcon class but we override border + size for
+        # the outline-style play key here. ``setCheckable(True)``
+        # would normally drive the checked-tint from the global QSS,
+        # but the play buttons' checked state is managed by the
+        # transport state machine (update_from_state), so we keep
+        # them non-checkable and just swap the icon to "pause" when
+        # playing.
+        _play_border_qss = (
+            f"QPushButton {{"
+            f"  background-color: {H.BG_SURFACE};"
+            f"  border: 1.5px solid {H.ACC_BRIGHT};"
+            f"  border-radius: {G.RADIUS_MD}px;"
+            f"  padding: 0;"
+            f"}}"
+            f"QPushButton:hover {{"
+            f"  background-color: {H.BG_HOVER};"
+            f"}}"
+            f"QPushButton:pressed {{"
+            f"  background-color: {H.ACC_TINT_14};"
+            f"}}"
+            f"QPushButton:disabled {{"
+            f"  border-color: {H.BORDER_DEF};"
+            f"  background-color: {H.BG_STRIP};"
+            f"}}"
+        )
         for play_btn in (self._reverse_play_btn, self._play_btn):
-            play_btn.setObjectName("btnPrimary")
+            # Drop the btnIcon objectName (set by _icon_button) so our
+            # inline border QSS isn't fighting the global #btnIcon
+            # rule for specificity.
+            play_btn.setObjectName("")
             play_btn.setFixedSize(G.CTRL_PRIMARY_W, G.CTRL_BUTTON_H)
+            play_btn.setStyleSheet(_play_border_qss)
 
         # --- Frame / timecode display -------------------------------------
         # Sits between the navigation half and the playback half so the
@@ -721,14 +757,11 @@ class TransportBar(QWidget):  # type: ignore[misc]
         # asked to free up the bar.
         layout.addWidget(self._first_btn)
         layout.addWidget(self._prev_btn)
-        # NB: ``_reverse_play_btn`` is intentionally NOT added to the
-        # visible layout — brief §5 specifies a single play key, so
-        # the reverse-play affordance lives only on the J keyboard
-        # shortcut now. The button object itself stays alive (parented
-        # to ``self`` below) so existing signal wiring +
-        # ``set_playback_enabled`` calls keep working unchanged.
-        self._reverse_play_btn.setParent(self)
-        self._reverse_play_btn.hide()
+        # User asked for both play directions to be visible: the
+        # reverse play button sits to the LEFT of the forward play.
+        # Both share the outlined orange-box look (set above) so
+        # they read as paired primary actions.
+        layout.addWidget(self._reverse_play_btn)
         layout.addWidget(self._play_btn)
         layout.addWidget(self._next_btn)
         layout.addWidget(self._last_btn)
@@ -1123,19 +1156,27 @@ class TransportBar(QWidget):  # type: ignore[misc]
         # belongs to the reverse button instead.
         playing_fwd = state.is_playing and state.direction >= 0
         playing_rev = state.is_playing and state.direction < 0
-        # ``btnPrimary`` paints the play key with an orange gradient,
-        # so the glyph itself reads better in dark ink (#1A1206) — matches
-        # the contrast brief calls for. Pause uses the same dark ink so
-        # the button reads as one continuous accent surface in either
-        # state.
+        # Outline play buttons (orange border + dark face) — the
+        # triangle / pause glyph rides on ACC_BRIGHT to stay visible
+        # over the BG_SURFACE face. When playing, swap to the filled
+        # pause bars (also in ACC_BRIGHT). The previous dark-ink
+        # (#1A1206) variant was tied to the old gradient-filled
+        # btnPrimary face and would be invisible on the new outline
+        # face.
         if playing_fwd:
-            self._play_btn.setIcon(make_icon("pause", color="#1A1206"))
+            self._play_btn.setIcon(make_icon("pause", color=H.ACC_BRIGHT))
         else:
-            self._play_btn.setIcon(make_icon("play", color="#1A1206"))
+            self._play_btn.setIcon(
+                make_icon("play-outline", color=H.ACC_BRIGHT),
+            )
         if playing_rev:
-            self._reverse_play_btn.setIcon(make_icon("pause", color="#1A1206"))
+            self._reverse_play_btn.setIcon(
+                make_icon("pause", color=H.ACC_BRIGHT),
+            )
         else:
-            self._reverse_play_btn.setIcon(make_icon("play_reverse", color="#1A1206"))
+            self._reverse_play_btn.setIcon(
+                make_icon("play-reverse-outline", color=H.ACC_BRIGHT),
+            )
 
         # Push the current frame into the editable display.
         self._frame_display.set_frame(state.current_frame)

@@ -366,6 +366,25 @@ _TEMPLATES: dict[str, str] = {
 
     # ---- §11.1 Transport ------------------------------------------------
 
+    # Play / reverse-play triangles rendered as STROKE-only outlines.
+    # Used by the transport's primary play key in the redesigned
+    # transport bar where the button face is a thin amber-bordered
+    # box (BG_SURFACE inside) — a filled triangle on that face
+    # reads as "active" already; the outline variant lets the
+    # button:checked QSS rule add the active fill on top instead.
+    "play-outline": (
+        '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none" '
+        'stroke="{color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'
+        '<path d="M5 3.5 L13 8 L5 12.5 Z"/>'
+        "</svg>"
+    ),
+    "play-reverse-outline": (
+        '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none" '
+        'stroke="{color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'
+        '<path d="M11 3.5 L3 8 L11 12.5 Z"/>'
+        "</svg>"
+    ),
+
     "skip-start": (
         '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none" '
         'stroke="{color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'

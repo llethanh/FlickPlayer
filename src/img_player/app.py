@@ -1961,6 +1961,14 @@ class ImgPlayerApp:
                 local_frame = layer.source_frame_at(master_frame)
                 local_total = max(1, layer.layer_out)
                 header.set_layer_position(local_frame, local_total)
+                # User asked for the focused layer's display name to
+                # sit flush right of the resolution cell in the strip.
+                # We use the topmost-visible-at-playhead layer (same
+                # one the InfoBand showed) — that's "the layer you're
+                # currently seeing" from the user's POV.
+                header.set_layer_name(layer.name)
+            else:
+                header.set_layer_name(None)
             if last > 0:
                 header.set_frame_position(master_frame, last)
 
