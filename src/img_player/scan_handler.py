@@ -486,6 +486,17 @@ def apply_scan_result(app: ImgPlayerApp, path: Path, result: object) -> None:
     # auto-detector has the resolution it needs.
     seq = app._enrich_with_header(seq)
 
+    # Force-exit any active review mode (compare, contact-sheet)
+    # before binding the new sequence. The mode state is anchored
+    # to layer ids from the OLD stack — keeping it active would
+    # leave the band pointing at ids the new sequence doesn't
+    # carry, producing visual garbage or a decode crash. See
+    # ``ImgPlayerApp._exit_review_modes`` for the canonical exit
+    # path. Runs AFTER the picker / cancel handling above so a
+    # cancelled open doesn't kick the user out of a mode for
+    # nothing.
+    app._exit_review_modes()
+
     app._window.update_sequence_info(seq)
     app._guess_source_colorspace(seq)
     # ``controller.load_sequence(seq)`` calls ``cache.attach(seq)``,

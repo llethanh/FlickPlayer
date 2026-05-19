@@ -254,6 +254,46 @@ _TEMPLATES: dict[str, str] = {
         '<polyline points="14,3.5 12.5,6 10,5"/>'
         "</svg>"
     ),
+    # Circular arrow rotating clockwise around itself — the universal
+    # "refresh / re-run" affordance, Lucide / Material style. Two
+    # primitives layered:
+    # * A near-complete arc (~310°) going clockwise around the
+    #   centre, leaving a small wedge at the upper-right for the
+    #   arrowhead.
+    # * A filled triangle "closing" the wedge with its tip pointing
+    #   down-and-right — reads as "the rotation continues
+    #   clockwise" and is the universal refresh affordance the user
+    #   recognises from browser reload buttons, Material refresh,
+    #   Lucide RotateCw, etc. Triangle uses ``fill="{color}"``
+    #   + ``stroke="none"`` so the colour-substitution still works
+    #   (only one ``{color}`` slot per template; both the arc stroke
+    #   and the triangle fill get the same value at render time).
+    # Used by the Color panel's "Re-detect source colorspace"
+    # button; same shape works for any future reload affordance
+    # (e.g. could replace the transport's Ctrl+R icon if we ever
+    # add one).
+    "reload": (
+        '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none" '
+        'stroke="{color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'
+        # Lucide RotateCw / browser-refresh silhouette adapted to
+        # 16×16. Two-path composition:
+        # * Path 1 — main arc winds CLOCKWISE about 250° from the
+        #   middle-right (3 o'clock), around the bottom, up the
+        #   left side, ending near the top. A short straight
+        #   segment then bends out to the right and lands at
+        #   (13, 5.5) = the inside corner of the arrowhead.
+        # * Path 2 — L-shape (vertical-down + horizontal-left) in
+        #   the upper-right corner. Its inside corner is the same
+        #   (13, 5.5) point the arc's tail just reached, so the
+        #   three line-segments (arc tail, L vertical, L
+        #   horizontal) converge at one point and read as a
+        #   hooked-arrowhead pointing up-and-right. That's the
+        #   classic "refresh / rotate-cw" affordance the user
+        #   recognises from every browser address bar.
+        '<path d="M 13 8 a 5 5 0 1 1 -1.5 -3.6 L 13 5.5"/>'
+        '<path d="M 13 2.5 V 5.5 H 10"/>'
+        "</svg>"
+    ),
     "pin": (
         '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none" '
         'stroke="{color}" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">'

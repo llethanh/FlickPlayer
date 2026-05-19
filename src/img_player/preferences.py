@@ -836,7 +836,14 @@ class Preferences:
         ``int | None``; the parsing in
         :meth:`ContactSheetState.from_dict` understands both.
         """
-        keys = ("enabled", "cols", "rows", "show_labels", "output_divisor")
+        keys = (
+            "enabled",
+            "cols",
+            "rows",
+            "show_labels",
+            "output_divisor",
+            "label_size",
+        )
         return _qsettings_dict(self._s, "contact_sheet", keys)
 
     @contact_sheet_state.setter
@@ -909,17 +916,66 @@ class Preferences:
 
     @property
     def disk_cache_compression(self) -> bool:
-        """Whether to lz4-compress disk-cache blobs.
+        """Legacy bool view of :attr:`disk_cache_compression_mode`.
 
-        ``True`` (default) trades ~5 ms of decode time per read for
-        ~50 % smaller files — good on spinning disks and budget SSDs.
-        ``False`` writes raw bytes — faster on NVMe where I/O is
-        essentially free but lz4 decode shows up in the profile,
-        costs ~2× disk space. The setting only affects **new writes**;
-        existing compressed blobs are still readable after the switch.
+        Pre-v1.5.x, compression was a simple on/off flag. The newer
+        tri-state ("none" / "lz4" / "lz4hc") supersedes it; this
+        bool stays for backward compat with any caller that hasn't
+        migrated. Returns ``True`` whenever the mode is anything
+        other than ``"none"``.
         """
-        return _layered_bool("disk_cache.compression", True)
+        return self.disk_cache_compression_mode != "none"
 
     @disk_cache_compression.setter
     def disk_cache_compression(self, value: bool) -> None:
-        _set_user_pref("disk_cache.compression", bool(value))
+        # Map bool → matching mode string. ``True`` lands on fast
+        # LZ4 (the historical default); ``False`` on "none".
+        self.disk_cache_compression_mode = "lz4" if value else "none"
+
+    @property
+    def disk_cache_compression_mode(self) -> str:
+        """Compression mode for new disk-cache writes — one of
+        ``"none"``, ``"lz4"``, ``"lz4hc"``.
+
+        Trade-offs:
+
+        * **"none"** — no compression. Fastest reads & writes; blobs
+          are ~50 MB per 4K frame. Worth picking only on fast NVMe
+          where I/O is essentially free and the ~5 ms lz4 decode
+          shows up in the profile.
+        * **"lz4"** (default) — fast LZ4 at compression level 1.
+          ~5 ms decode per 4K frame, ~25 MB on disk. The universal
+          safe choice on any disk type.
+        * **"lz4hc"** — LZ4 High Compression at level 12. Same
+          decoder as fast LZ4 (~5 ms / 4K), produces ~30 % smaller
+          blobs (~17 MB / 4K). Encoder is ~3× slower than fast LZ4
+          but each blob is written once and read many times across
+          sessions, so the encode cost amortises immediately.
+
+        Setting any value only affects **new writes**; existing
+        entries stay readable since both LZ4 sub-modes share the
+        same on-disk format and the "none" path uses a distinct
+        magic prefix that the reader auto-detects.
+
+        Unknown stored values (e.g. a corrupt prefs file) fall
+        back silently to ``"lz4"``.
+        """
+        from img_player.cache.disk_cache import COMPRESSION_MODES  # noqa: PLC0415
+        raw_value = _layered_default("disk_cache.compression_mode", "")
+        raw = str(raw_value) if raw_value else ""
+        if raw in COMPRESSION_MODES:
+            return raw
+        # No mode stored — read the legacy bool (for users upgrading
+        # from a version that only had the on/off flag) and map.
+        legacy_bool = _layered_bool("disk_cache.compression", True)
+        return "lz4" if legacy_bool else "none"
+
+    @disk_cache_compression_mode.setter
+    def disk_cache_compression_mode(self, value: str) -> None:
+        from img_player.cache.disk_cache import COMPRESSION_MODES  # noqa: PLC0415
+        mode = value if value in COMPRESSION_MODES else "lz4"
+        _set_user_pref("disk_cache.compression_mode", mode)
+        # Keep the legacy bool in sync so any old caller still
+        # reading it sees the right value. Once nothing references
+        # ``disk_cache.compression`` we can drop this line.
+        _set_user_pref("disk_cache.compression", mode != "none")

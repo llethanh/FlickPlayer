@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QSize, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from img_player.color.ocio_manager import OCIOManager
+from img_player.ui.icons import make_icon
 from img_player.ui.theme import H, S
 
 
@@ -38,6 +39,13 @@ class ColorPanel(QWidget):  # type: ignore[misc]
     unmarked_exr_save_requested = Signal(str, str)  # (source, view)
     # User clicked "Clear" on the pinned EXR default.
     unmarked_exr_clear_requested = Signal()
+    # User clicked "Re-detect" — the app re-runs the auto-detector
+    # against the loaded footage's metadata and picks a source +
+    # view, same code path the initial open uses. Lets the user
+    # recover from a manual override they no longer want, OR from
+    # a wrong detection at load time after fixing the file's
+    # metadata in another tool.
+    redetect_source_requested = Signal()
 
     def __init__(self, manager: OCIOManager, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -48,6 +56,35 @@ class ColorPanel(QWidget):  # type: ignore[misc]
         self._src_combo.addItems(manager.list_colorspaces())
         default_src = manager.role("scene_linear") or manager.list_colorspaces()[0]
         self._src_combo.setCurrentText(default_src)
+
+        # Re-detect button — re-runs the auto-detector against the
+        # loaded footage's metadata (header colorspace tag,
+        # chromaticities, filename heuristics, extension fallback).
+        # Lives next to the source combo because that's the field it
+        # mutates; pairing the action with its target is clearer than
+        # tucking it in the footer with the EXR-default controls.
+        # Uses the SVG "reload" icon (circular arrow rotating CW)
+        # from the shared :mod:`icons` module so the visual matches
+        # the rest of the line-art set; the tooltip carries the
+        # full sentence for users who hover.
+        self._redetect_btn = QPushButton()
+        self._redetect_btn.setIcon(make_icon("reload", color=H.TEXT_PRIMARY))
+        self._redetect_btn.setIconSize(QSize(16, 16))
+        self._redetect_btn.setToolTip(
+            "Re-detect the source colorspace from the loaded "
+            "footage's metadata (same auto-detection that runs on "
+            "open). Useful after fixing the file's metadata in "
+            "another tool, or to revert a manual pick."
+        )
+        # Fixed compact width — same row footprint as a small icon
+        # button, doesn't push the combo when the panel narrows.
+        self._redetect_btn.setFixedWidth(28)
+        self._redetect_btn.clicked.connect(self.redetect_source_requested.emit)
+        # Disabled until a sequence is loaded — the app re-enables
+        # via ``set_redetect_enabled`` once footage is bound. Without
+        # this gate, clicking the button on an empty player would
+        # produce a no-op + a confusing status message.
+        self._redetect_btn.setEnabled(False)
 
         self._display_combo = QComboBox()
         self._display_combo.addItems(manager.list_displays())
@@ -102,8 +139,17 @@ class ColorPanel(QWidget):  # type: ignore[misc]
         self._exposure_spin.valueChanged.connect(self._notify)
         self._gamma_spin.valueChanged.connect(self._notify)
 
+        # Source row: combo + re-detect button side by side. Wrapped
+        # in an HBox so QFormLayout still treats them as a single
+        # labelled row aligned with Display / View / Exposure / Gamma.
+        source_row = QHBoxLayout()
+        source_row.setContentsMargins(0, 0, 0, 0)
+        source_row.setSpacing(S.SM)
+        source_row.addWidget(self._src_combo, 1)
+        source_row.addWidget(self._redetect_btn, 0)
+
         form = QFormLayout()
-        form.addRow("Source colorspace:", self._src_combo)
+        form.addRow("Source colorspace:", source_row)
         form.addRow("Display:", self._display_combo)
         form.addRow("View:", self._view_combo)
         form.addRow("Exposure:", self._exposure_spin)
@@ -218,6 +264,18 @@ class ColorPanel(QWidget):  # type: ignore[misc]
         self._emit_enabled = False
         self._src_combo.setCurrentText(name)
         self._emit_enabled = True
+
+    def set_redetect_enabled(self, enabled: bool) -> None:
+        """Gate the ⟳ re-detect button on having footage loaded.
+
+        Wired by the app from ``update_sequence_info`` (turn on) and
+        ``_on_new_sequence`` / detach paths (turn off). Same gating
+        pattern the Export / Save Frame buttons use — disabled-grey
+        when no sequence is bound so the user gets a visual cue
+        that the action isn't actionable yet rather than a silent
+        no-op.
+        """
+        self._redetect_btn.setEnabled(bool(enabled))
 
     def bump_exposure(self, delta: float) -> None:
         """Nudge the exposure spinbox (used by keyboard shortcuts)."""

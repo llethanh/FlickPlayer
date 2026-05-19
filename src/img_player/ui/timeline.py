@@ -539,12 +539,26 @@ class Timeline(QWidget):  # type: ignore[misc]
         the cache bar (starts y=41). Points up so the tip "lands"
         on the range bar — visually anchoring the marker to the
         frame it refers to.
+
+        Boundary clamping: with ``MARGIN_X = 0`` (kept for layer-bar
+        alignment), a marker at ``self._first`` lands at ``x=0`` and
+        a marker at ``self._last`` at ``x=width`` — half the
+        symmetric triangle would then sit outside the widget bounds
+        and get clipped by Qt. We keep the **tip** at the exact
+        frame x (so the visual anchor to the right frame is
+        preserved) and clamp the **base corners** independently to
+        the widget bounds. At the boundary frames the triangle
+        becomes a right-triangle shape (vertical edge on the inside,
+        slanted edge toward the centre) — slightly asymmetric but
+        the tip still points unambiguously at the correct frame,
+        which is the property that matters for review feedback.
         """
         if not self._annotated_frames:
             return
 
         marker_h = 9.0
         marker_w = 8.0
+        marker_half = marker_w / 2.0
         # Tip flush against the range bar's bottom edge, base near
         # the cache bar — fills the 10 px slack.
         tip_y = self.RANGE_Y + self.RANGE_H  # 31
@@ -558,11 +572,20 @@ class Timeline(QWidget):  # type: ignore[misc]
         in_range = sorted(
             f for f in self._annotated_frames if self._first <= f <= self._last
         )
+        widget_w = float(self.width())
         for frame in in_range:
             x = self._frame_to_x(frame)
+            # Tip stays on the exact frame x. Base corners clamp to
+            # the widget edges independently — at the first frame
+            # the left corner snaps to x=0 (= tip x), making a
+            # right-triangle with the vertical edge on the left;
+            # at the last frame the right corner snaps to widget_w
+            # symmetrically.
+            left_base = max(0.0, x - marker_half)
+            right_base = min(widget_w, x + marker_half)
             tri = QPolygonF([
-                QPointF(x - marker_w / 2.0, base_y),
-                QPointF(x + marker_w / 2.0, base_y),
+                QPointF(left_base, base_y),
+                QPointF(right_base, base_y),
                 QPointF(x, tip_y),
             ])
             painter.drawPolygon(tri)
@@ -588,6 +611,7 @@ class Timeline(QWidget):  # type: ignore[misc]
 
         marker_h = 9.0
         marker_w = 8.0
+        marker_half = marker_w / 2.0
         # Tip flush against the range bar top (y=28); base reaches
         # up into the major-tick row. Same dimensions as the
         # annotation triangle below — so a frame with both notes
@@ -607,11 +631,19 @@ class Timeline(QWidget):  # type: ignore[misc]
         in_range = sorted(
             f for f in self._commented_frames if self._first <= f <= self._last
         )
+        widget_w = float(self.width())
         for frame in in_range:
             x = self._frame_to_x(frame)
+            # Same boundary-clamping rationale as
+            # ``_draw_annotation_markers`` — tip stays exactly on
+            # the frame, base corners clamp to widget bounds. At a
+            # boundary frame the triangle becomes a right-triangle
+            # but the tip's frame anchoring is preserved.
+            left_base = max(0.0, x - marker_half)
+            right_base = min(widget_w, x + marker_half)
             tri = QPolygonF([
-                QPointF(x - marker_w / 2.0, base_y),
-                QPointF(x + marker_w / 2.0, base_y),
+                QPointF(left_base, base_y),
+                QPointF(right_base, base_y),
                 QPointF(x, tip_y),
             ])
             painter.drawPolygon(tri)

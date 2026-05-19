@@ -45,6 +45,14 @@ class ContactSheetState:
     # compose + upload, suitable for review at viewer scale).
     # The user picks the divisor to trade detail for performance.
     output_divisor: int = 1
+    # Scale factor applied to the auto-computed label font size in
+    # :func:`compose._paint_label_overlay`. 1.0 = the historical
+    # default (≈ 3.5 % of tile height); ``0.75`` shrinks the
+    # cartouche, ``1.5`` / ``2.5`` enlarge it for screen-grabs and
+    # 4K reviews. The pill background sizes itself off the text
+    # metrics so the cartouche scales with the typography
+    # automatically — no separate "pill size" knob needed.
+    label_size: float = 1.0
     # Per-layer scrub offset, added on top of the global contact-sheet
     # playback offset. Lets the user pick a different "starting frame"
     # for each tile — drag horizontally on a tile to shift its offset
@@ -122,6 +130,7 @@ class ContactSheetState:
             "rows": self.rows,
             "show_labels": self.show_labels,
             "output_divisor": self.output_divisor,
+            "label_size": self.label_size,
         }
 
     @classmethod
@@ -152,10 +161,21 @@ class ContactSheetState:
                 return default
             return iv if iv > 0 else default
 
+        def _pos_float(v: object, default: float) -> float:
+            try:
+                fv = float(v)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return default
+            # Clamp to the same sane bounds the UI presets cover so a
+            # corrupt / hand-edited prefs entry can't blow the label
+            # up to fill the whole tile (or shrink it to 0 px).
+            return max(0.4, min(fv, 4.0)) if fv > 0 else default
+
         return cls(
             enabled=bool(data.get("enabled", False)),
             cols=_opt_pos_int(data.get("cols")),
             rows=_opt_pos_int(data.get("rows")),
             show_labels=bool(data.get("show_labels", False)),
             output_divisor=_pos_int(data.get("output_divisor"), 1),
+            label_size=_pos_float(data.get("label_size"), 1.0),
         )

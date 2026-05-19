@@ -27,11 +27,27 @@ from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
 log = logging.getLogger(__name__)
 
 
-# Label pill colours. The label is rendered as a rounded pill behind
-# the layer-name text, semi-transparent black so the image bleeds
-# through (= the user can still see the corner content) but the
-# text reads cleanly on any background.
-_LABEL_BG_RGBA = (0.0, 0.0, 0.0, 0.55)  # semi-transparent black
+# Label pill colours. The cartouche mirrors the info band that sits
+# under the viewport (``ui/info_band.py``): warm-amber accent at
+# ~55 % alpha, warm-cream text. Same family as the rest of the UI
+# design and the same transparency feel so the user reads the label
+# as "part of the player chrome" rather than "stamped on top of the
+# image". The lower alpha (vs an opaque badge) lets the underlying
+# tile pixels bleed through, which keeps the image content visible
+# even where the label sits — critical for reviews where the
+# top-left corner of a tile might carry signal the reviewer needs
+# to evaluate.
+_LABEL_BG_RGB = (0xE8 / 255.0, 0x90 / 255.0, 0x1C / 255.0)  # = theme H.ACCENT
+_LABEL_BG_ALPHA = 140 / 255  # = the info-band's rgba(232,144,28,140)
+_LABEL_FG_RGB = (0xFF / 255.0, 0xE5 / 255.0, 0xC0 / 255.0)  # = info-band #FFE5C0
+
+# Per-step font-size factor presets exposed in the band UI. The
+# render path multiplies the divisor-scaled auto-px by this factor.
+# Range chosen so the smallest preset stays readable on a 540 px
+# tile at full res, and the largest doesn't overflow the tile
+# width on common layouts.
+_LABEL_SIZE_MIN = 0.4
+_LABEL_SIZE_MAX = 4.0
 
 
 def auto_grid_dimensions(
@@ -130,6 +146,8 @@ def render_contact_sheet(
     target_w: int,
     target_h: int,
     show_labels: bool = False,
+    label_size: float = 1.0,
+    output_divisor: int = 1,
     scrub_indicator: tuple[int, float] | None = None,
     per_tile_strokes: Sequence | None = None,
     source_size: tuple[int, int] | None = None,
@@ -250,6 +268,8 @@ def render_contact_sheet(
                 name=name,
                 n_channels=n_channels,
                 dtype=out_dtype,
+                label_size=label_size,
+                output_divisor=output_divisor,
             )
 
         # Scrub-progress indicator: a translucent orange bar at the
@@ -345,37 +365,79 @@ def _fill_unavailable(
 
 
 def _paint_label_overlay(
-    tile_region: np.ndarray, *, name: str, n_channels: int, dtype: np.dtype,
+    tile_region: np.ndarray,
+    *,
+    name: str,
+    n_channels: int,
+    dtype: np.dtype,
+    label_size: float = 1.0,
+    output_divisor: int = 1,
 ) -> None:
     """Stamp ``name`` near the top-left of ``tile_region`` (HxWxC).
 
     Two layers:
 
-    * A small **semi-transparent black pill** behind the text — just
-      a few px of padding around the glyphs so the text stays
-      readable on any background (sky, white, dark grey, …).
-    * The **white bold text** itself, antialiased via QPainter.
+    * A **warm-amber pill** at ~55 % alpha matching the info band
+      under the viewport — same accent + transparency as the rest
+      of the player chrome so the labels read as "UI on top of the
+      image" without fully blocking the underlying tile pixels.
+    * The **warm-cream bold text** itself, antialiased via QPainter.
 
-    Both are alpha-blended into the underlying tile pixels —
-    we don't overwrite — so the image bleeds through the pill's
+    Both are alpha-blended into the underlying tile pixels — we
+    don't overwrite — so the image bleeds through the pill's
     transparency. Position is the top-left corner with a small
     inset so the label doesn't kiss the tile edge.
 
-    No-op when the tile is too small (< ~40 px on either side) to
-    render any legible label.
+    Two scale knobs combine to produce the final font size:
+
+    1. **Tile-proportional auto-base** — ``base_px = h * 0.035`` (so
+       the label always occupies ~3.5 % of tile height regardless
+       of output divisor). The natural GL upscale that fires when
+       the composite is rendered at ÷N then displays the label at a
+       consistent visual proportion across all divisors — the user
+       sees the SAME label-to-image ratio whether they're at full
+       resolution or at ÷4 / ÷8. Previously the formula included a
+       ``/ sqrt(divisor)`` shrink AND a high pixel floor; both
+       broke the "same proportion at every divisor" expectation
+       once shown in real review screenshots.
+
+       ``output_divisor`` is still accepted as a parameter for
+       call-site compatibility, but is no longer used in the
+       computation — kept so callers don't have to detect a
+       signature change.
+
+    2. ``label_size`` — the user-facing multiplier from the
+       ContactSheetBand's Size combo (0.75 / 1.0 / 1.5 / 2.5).
+       Applied on top of the auto-base so the user can dial the
+       proportion globally (e.g. "Large" = the label takes ~5.25 %
+       of tile height at every divisor).
+
+    Both are clamped: the typo can't grow past 50 % of tile height
+    (would overlap neighbouring tiles) nor shrink below 5 px (Qt's
+    text antialiasing breaks below that).
+
+    No-op when the tile is too small (< ~40 px on either side).
     """
+    del output_divisor  # accepted for callsite compat; not used in v2 of the formula
     h, w = tile_region.shape[:2]
     if h < 40 or w < 40:
         return
 
     # Geometry. Inset from the tile edge so the label sits clearly
-    # inside the image rather than touching the border. Text size
-    # scales with tile height — ~3.5 % is a sweet spot that stays
-    # readable on a 540 px tile (= ~19 px) without crowding a
-    # 2160 px tile (= ~75 px).
+    # inside the image rather than touching the border.
+    factor = max(_LABEL_SIZE_MIN, min(float(label_size), _LABEL_SIZE_MAX))
     inset = max(8, int(min(h, w) * 0.02))
-    px = max(14, min(int(h * 0.035), 64))
-    pad_x = max(4, px // 3)
+    # Auto-base in tile pixels: a fixed 3.5 % of tile height,
+    # ensuring the label takes the same VISUAL PROPORTION of the
+    # image whatever the output divisor — what the user sees at
+    # full res is geometrically the same fraction-of-tile as at ÷3.
+    # Floor at 5 keeps QPainter's antialiasing legible even on
+    # small tiles (high-divisor + many-row layouts).
+    base_px = max(5, int(round(h * 0.035)))
+    # User-facing multiplier on top, then clamp to legible bounds
+    # (5 px floor, half-tile ceiling).
+    px = max(5, min(int(round(base_px * factor)), int(h * 0.5)))
+    pad_x = max(3, px // 3)
     pad_y = max(2, px // 5)
 
     # Measure the text first so the pill background is sized to fit.
@@ -418,17 +480,35 @@ def _paint_label_overlay(
     try:
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
-        # Rounded pill background — 6 px radius works at any text
-        # size we render here (~14..64 px). The colour matches the
-        # info-band convention: dark + semi-transparent.
+        # Rounded pill background — warm-amber accent matching the
+        # rest of the UI design system. Radius is ``box_h // 4`` so
+        # the pill stays proportional as the text scales (small label
+        # gets a tight pill, large label gets a generous one).
         from PySide6.QtGui import QBrush  # noqa: PLC0415
-        bg = QColor(0, 0, 0, int(_LABEL_BG_RGBA[3] * 255))
+        bg = QColor(
+            int(_LABEL_BG_RGB[0] * 255),
+            int(_LABEL_BG_RGB[1] * 255),
+            int(_LABEL_BG_RGB[2] * 255),
+            int(_LABEL_BG_ALPHA * 255),
+        )
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(bg))
         radius = max(4, box_h // 4)
         painter.drawRoundedRect(0, 0, box_w, box_h, radius, radius)
-        # Text on top — white, bold, centred vertically inside the pill.
-        painter.setPen(QPen(QColor(255, 255, 255)))
+        # Text on top — white bold, centred vertically inside the pill.
+        # White-on-orange picks up the same legibility convention as
+        # the existing accent buttons in the toolbar (the ":checked"
+        # state of cmpMode / csPill buttons uses dark text on orange,
+        # but those are interactive widgets where the click-affordance
+        # matters; here the label is a passive caption so white-bold
+        # reads cleaner across the broader spectrum of underlying
+        # image backgrounds the pill might sit on).
+        fg = QColor(
+            int(_LABEL_FG_RGB[0] * 255),
+            int(_LABEL_FG_RGB[1] * 255),
+            int(_LABEL_FG_RGB[2] * 255),
+        )
+        painter.setPen(QPen(fg))
         painter.setFont(font)
         painter.drawText(
             pad_x, 0, text_w, box_h,

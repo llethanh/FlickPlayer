@@ -661,7 +661,7 @@ class _DiskCachePage(QWidget):
         self._initial_enabled = prefs.disk_cache_enabled
         self._initial_path = str(prefs.disk_cache_path or "")
         self._initial_budget_gb = prefs.disk_cache_budget_gb
-        self._initial_compression = prefs.disk_cache_compression
+        self._initial_compression_mode = prefs.disk_cache_compression_mode
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
@@ -734,22 +734,98 @@ class _DiskCachePage(QWidget):
         # ---- Storage / compression -------------------------------------
         layout.addWidget(self._make_subtitle("Storage"))
 
-        self._compress_chk = QCheckBox("Compress blobs (lz4)")
-        self._compress_chk.setChecked(self._initial_compression)
-        self._compress_chk.setToolTip(
-            "lz4 compression trades ~5 ms of decode time per read for "
-            "~50 % smaller files. Disable on fast NVMe drives where I/O "
-            "is essentially free and lz4 becomes the bottleneck — costs "
-            "about 2× more disk space."
+        # Three mutually exclusive compression modes. Picking one fires
+        # ``setChecked`` on the matching radio; ``QButtonGroup`` enforces
+        # the exclusivity so we don't have to wire the three signals
+        # manually. The selected mode is read back in ``apply()`` from
+        # whichever radio is checked.
+        self._compress_group = QButtonGroup(self)
+        self._compress_group.setExclusive(True)
+
+        self._compress_radio_none = QRadioButton("None (no compression)")
+        self._compress_radio_lz4 = QRadioButton("LZ4 (recommended)")
+        self._compress_radio_lz4hc = QRadioButton("LZ4 HC (high compression)")
+        self._compress_group.addButton(self._compress_radio_none)
+        self._compress_group.addButton(self._compress_radio_lz4)
+        self._compress_group.addButton(self._compress_radio_lz4hc)
+
+        # Per-radio explanatory text. Sits directly under each radio,
+        # slightly indented, in muted grey — the user gets the
+        # speed-vs-space trade-off for each option without having to
+        # click around to find out what changes. Keeping the helper
+        # labels static (rather than a single label that swaps as the
+        # user picks) means the comparison is at-a-glance and helps
+        # the user decide which option fits their disk.
+        _help_style = (
+            "color: #888; font-size: 11px; "
+            "padding-left: 22px; margin-bottom: 4px;"
         )
-        layout.addWidget(self._compress_chk)
-        compress_help = QLabel(
+
+        self._compress_radio_none.setToolTip(
+            "Write blobs to disk uncompressed. Fastest reads & writes, "
+            "biggest files (~50 MB / 4K frame). Worth picking only on "
+            "fast NVMe drives where the lz4 decode would dominate the "
+            "load time."
+        )
+        none_help = QLabel(
+            "Fastest reads & writes. Blobs ~50 MB / 4K frame. "
+            "Best on fast NVMe scratch — no decode overhead at all."
+        )
+        none_help.setWordWrap(True)
+        none_help.setStyleSheet(_help_style)
+
+        self._compress_radio_lz4.setToolTip(
+            "Fast LZ4 compression (level 1). Decode ~5 ms / 4K frame, "
+            "~25 MB on disk. The universal safe default — fast on any "
+            "disk type."
+        )
+        lz4_help = QLabel(
+            "Decode ~5 ms / 4K frame, blobs ~25 MB. "
+            "Universal default: balanced for any disk (HDD, SATA SSD, NVMe)."
+        )
+        lz4_help.setWordWrap(True)
+        lz4_help.setStyleSheet(_help_style)
+
+        self._compress_radio_lz4hc.setToolTip(
+            "LZ4 High Compression (level 12). Same decoder as fast LZ4 "
+            "(~5 ms / 4K) so reads are equally fast — but blobs are "
+            "~30 % smaller (~17 MB / 4K) at the cost of a ~3× slower "
+            "encoder. Each blob is written once and read many times, "
+            "so the encode cost pays off quickly."
+        )
+        lz4hc_help = QLabel(
+            "Decode ~5 ms / 4K frame (same as LZ4), blobs ~17 MB "
+            "(~30 % smaller). Encoder is ~3× slower than LZ4 — pays "
+            "off because each blob is written once and read N times."
+        )
+        lz4hc_help.setWordWrap(True)
+        lz4hc_help.setStyleSheet(_help_style)
+
+        # Pre-check the radio matching the persisted mode. Defensive
+        # fallback to LZ4 if a future version writes a mode this
+        # build doesn't know.
+        mode = self._initial_compression_mode
+        if mode == "none":
+            self._compress_radio_none.setChecked(True)
+        elif mode == "lz4hc":
+            self._compress_radio_lz4hc.setChecked(True)
+        else:
+            self._compress_radio_lz4.setChecked(True)
+
+        layout.addWidget(self._compress_radio_none)
+        layout.addWidget(none_help)
+        layout.addWidget(self._compress_radio_lz4)
+        layout.addWidget(lz4_help)
+        layout.addWidget(self._compress_radio_lz4hc)
+        layout.addWidget(lz4hc_help)
+
+        compress_footer = QLabel(
             "Only affects new writes. Existing entries stay readable "
-            "after toggling — no need to clear the cache.",
+            "after switching — no need to clear the cache.",
         )
-        compress_help.setWordWrap(True)
-        compress_help.setStyleSheet("color: #888; font-size: 11px;")
-        layout.addWidget(compress_help)
+        compress_footer.setWordWrap(True)
+        compress_footer.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(compress_footer)
 
         # ---- Clear ------------------------------------------------------
         layout.addWidget(self._make_subtitle("Maintenance"))
@@ -793,12 +869,14 @@ class _DiskCachePage(QWidget):
     # ---- Slots ---------------------------------------------------------
 
     def _on_enable_toggled(self, checked: bool) -> None:
-        # Grey out path + budget + compression when the cache is off —
-        # they have no effect in that state and showing them as active
-        # would mislead.
+        # Grey out path + budget + compression radios when the cache
+        # is off — they have no effect in that state and showing them
+        # as active would mislead.
         self._path_edit.setEnabled(checked)
         self._budget_spin.setEnabled(checked)
-        self._compress_chk.setEnabled(checked)
+        self._compress_radio_none.setEnabled(checked)
+        self._compress_radio_lz4.setEnabled(checked)
+        self._compress_radio_lz4hc.setEnabled(checked)
 
     def _on_browse(self) -> None:
         current = self._path_edit.text().strip() or ""
@@ -897,7 +975,16 @@ class _DiskCachePage(QWidget):
         new_enabled = self._enable_chk.isChecked()
         new_path = self._path_edit.text().strip()
         new_budget = int(self._budget_spin.value())
-        new_compression = self._compress_chk.isChecked()
+        # Read whichever radio is checked. ``QButtonGroup`` keeps the
+        # three radios mutually exclusive so exactly one is checked
+        # at any time — no need for a "fallback to LZ4 if nothing is
+        # checked" branch.
+        if self._compress_radio_none.isChecked():
+            new_compression_mode = "none"
+        elif self._compress_radio_lz4hc.isChecked():
+            new_compression_mode = "lz4hc"
+        else:
+            new_compression_mode = "lz4"
 
         changed = False
         if new_enabled != self._initial_enabled:
@@ -919,17 +1006,19 @@ class _DiskCachePage(QWidget):
                 except Exception:  # pragma: no cover — defensive
                     log.exception("DiskCache set_budget failed")
             changed = True
-        if new_compression != self._initial_compression:
-            self._prefs.disk_cache_compression = new_compression
-            self._initial_compression = new_compression
+        if new_compression_mode != self._initial_compression_mode:
+            self._prefs.disk_cache_compression_mode = new_compression_mode
+            self._initial_compression_mode = new_compression_mode
             # Toggle the live cache too — affects new writes immediately.
             # Existing entries remain readable thanks to the multi-magic
-            # auto-detection on read.
+            # auto-detection on read; LZ4 and LZ4 HC even share the
+            # same on-disk format so the switch between them doesn't
+            # change read perf for already-stored frames either.
             if self._disk_cache is not None:
                 try:
-                    self._disk_cache.set_compress(new_compression)
+                    self._disk_cache.set_compression_mode(new_compression_mode)
                 except Exception:  # pragma: no cover — defensive
-                    log.exception("DiskCache set_compress failed")
+                    log.exception("DiskCache set_compression_mode failed")
             changed = True
         return changed
 

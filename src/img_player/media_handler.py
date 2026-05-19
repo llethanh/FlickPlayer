@@ -117,6 +117,12 @@ def open_video_path(app: ImgPlayerApp, path: Path) -> None:
         return
 
     layer = Layer.from_video(metadata)
+    # Force-exit any active review mode (compare, contact-sheet)
+    # before swapping in the video layer. Same rationale as the
+    # image-sequence path in ``scan_handler.apply_scan_result`` —
+    # the mode state references layer ids from the OLD stack and
+    # would point at nothing meaningful after the swap.
+    app._exit_review_modes()
     # Detach the cache first — without this the previous sequence's
     # prefetch keeps walking image paths in the background while we
     # swap in a video layer the cache can't decode.

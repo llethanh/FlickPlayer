@@ -308,7 +308,7 @@ class ImgPlayerApp:
                 disk_cache = DiskCache(
                     cache_dir,
                     budget_bytes=budget_bytes,
-                    compress=self._prefs.disk_cache_compression,
+                    compression_mode=self._prefs.disk_cache_compression_mode,
                 )
             except Exception:  # pragma: no cover — defensive
                 log.exception(
@@ -499,7 +499,7 @@ class ImgPlayerApp:
 
     # ------------------------------------------------------------------ Lifecycle
 
-    def run(self, initial_path: Path | None = None) -> int:
+    def run(self, initial_path: Path | list[Path] | None = None) -> int:
         self._window.show()
         # Hand the splash off to the main window so it fades as soon
         # as the real UI becomes the active paintable widget — avoids
@@ -513,7 +513,16 @@ class ImgPlayerApp:
         # can paint it, *then* kick off the (potentially slow) scan +
         # prefetch. With no deferral, the window stays invisible during a
         # slow first scan (e.g. Google Drive Stream lazy downloads).
-        if initial_path is not None:
+        #
+        # ``initial_path`` accepts either a single ``Path`` (legacy
+        # single-drop / opened via Recents) or a ``list[Path]`` (the
+        # drag-multiple-folders-onto-FlickPlayer.exe case forwarded
+        # from ``__main__``). ``_open_path`` already routes both — the
+        # list path triggers the same multi-source picker as a multi-
+        # drop on the viewer area.
+        if initial_path is not None and (
+            not isinstance(initial_path, list) or len(initial_path) > 0
+        ):
             QTimer.singleShot(0, lambda: self._open_path(initial_path))
         exit_code = int(self._qapp.exec())
         self._shutdown()
@@ -951,14 +960,28 @@ class ImgPlayerApp:
             self._on_contact_sheet_divisor_changed,
         )
         # Transport bar's contact-sheet button — same toggle flow as
-        # the View menu entry. The chevron menu is populated lazily
-        # on each open so checkmarks reflect the live state.
+        # the View menu entry. The old chevron / kebab popup is gone
+        # (replaced by the :class:`ContactSheetBand` toolbar that
+        # appears above the viewer while the mode is on); only the
+        # toggle button itself remains on the transport bar.
         w.transport.contact_sheet_toggled.connect(
             self._on_contact_sheet_toggle,
         )
-        w.transport.contact_sheet_menu.aboutToShow.connect(
-            self._build_transport_contact_sheet_menu,
+        # Contact-sheet band signals — the band replaces the older
+        # View → Contact sheet settings sub-menu + the kebab popup
+        # next to the transport button. Routes through the existing
+        # `_on_contact_sheet_*` slots so the state-mutation pipeline
+        # is identical regardless of which UI surface fired the
+        # change.
+        band = w.contact_sheet_band
+        band.grid_changed.connect(self._on_contact_sheet_grid_changed)
+        band.auto_requested.connect(
+            lambda: self._on_contact_sheet_grid_changed(-1, -1),
         )
+        band.labels_toggled.connect(self.set_contact_sheet_labels)
+        band.divisor_changed.connect(self._on_contact_sheet_divisor_changed)
+        band.label_size_changed.connect(self._on_contact_sheet_label_size_changed)
+        band.close_requested.connect(self._on_contact_sheet_toggle)
         # Edit menu — wire to the same chained handlers the keyboard
         # shortcut (Ctrl+Z / Ctrl+Shift+Z) uses, so menu and shortcut
         # produce identical behaviour (annotations first, layer
@@ -1095,6 +1118,14 @@ class ImgPlayerApp:
         )
         self._window.color_panel.unmarked_exr_clear_requested.connect(
             self._on_unmarked_exr_clear,
+        )
+        # ⟳ button on the source row — re-runs the boot-time
+        # auto-detector against the loaded footage's metadata.
+        # Useful after the user manually overrode the source (and
+        # wants to revert) or after they fixed the file's
+        # colorspace tag in another tool.
+        self._window.color_panel.redetect_source_requested.connect(
+            self._on_redetect_source_colorspace,
         )
 
     def _wire_annotations(self) -> None:
@@ -1364,128 +1395,37 @@ class ImgPlayerApp:
             self._wait_timer.start()
 
     def _on_contact_sheet_toggle(self) -> None:
-        """Slot for both ``MainWindow.contact_sheet_toggle_requested``
-        (= View menu) and ``transport.contact_sheet_toggled`` (=
-        toolbar button). Either entry point lands here.
+        """Slot for ``MainWindow.contact_sheet_toggle_requested`` (=
+        View menu) and ``transport.contact_sheet_toggled`` (= toolbar
+        button). Either entry point lands here.
+
+        (The band's own ``close_requested`` signal is still wired
+        to this slot, but the band no longer has a ✕ button that
+        fires it — the connection is dormant. Kept in case a future
+        affordance re-introduces an explicit close gesture.)
 
         Flips the state, syncs the View menu checkmark + transport
-        button checkmark, and re-renders.
+        button checkmark, shows / hides the settings band, and
+        re-renders.
         """
         self.toggle_contact_sheet()
-        self._window.set_contact_sheet_enabled(
-            self._contact_sheet_state.enabled,
-        )
-        self._window.transport.set_contact_sheet_checked(
-            self._contact_sheet_state.enabled,
-        )
+        enabled = self._contact_sheet_state.enabled
+        self._window.set_contact_sheet_enabled(enabled)
+        self._window.transport.set_contact_sheet_checked(enabled)
+        # Mirror the compare-band UX: show the settings strip only
+        # while the mode is on, hide it otherwise. Mutually exclusive
+        # with the compare band — the app's compare-toggle slot does
+        # the symmetric forced-off in the other direction.
+        self._window.set_contact_sheet_band_visible(enabled)
         self._sync_contact_sheet_menu_state()
 
-    def _build_transport_contact_sheet_menu(self) -> None:
-        """Populate the QMenu attached to the transport bar's
-        contact-sheet button on each ``aboutToShow``. Mirrors the
-        layout of ``View → Contact sheet settings`` so the user has
-        the same options without leaving the toolbar.
-
-        Re-uses the window's settings builder for consistency: the
-        QActions there carry the wiring we want; we just clone them
-        into the transport menu and trigger the parent action on
-        click so signals route through one path.
-        """
-        from PySide6.QtGui import QAction  # noqa: PLC0415 — UI-only
-        from PySide6.QtWidgets import QInputDialog  # noqa: PLC0415 — UI-only
-        menu = self._window.transport.contact_sheet_menu
-        menu.clear()
-        cs = self._contact_sheet_state
-
-        # Header — toggle entry. Useful when the user opened the
-        # menu by accident and wants to flip the mode from inside it.
-        toggle_act = QAction(
-            "Active (contact sheet on)" if cs.enabled else "Activate", self._window,
-            checkable=True,
-        )
-        toggle_act.setChecked(cs.enabled)
-        toggle_act.triggered.connect(self._on_contact_sheet_toggle)
-        menu.addAction(toggle_act)
-        menu.addSeparator()
-
-        # Auto + axis presets. Picking "N rows" stores rows=N
-        # cols=None — :meth:`ContactSheetState.effective_grid`
-        # then computes cols = ceil(n_layers / N) so every visible
-        # layer gets a tile, with the trailing row partially filled
-        # when n_layers isn't a multiple of N. Same shape for "N
-        # columns". Replaces the old fixed "1×2 / 2×3 / 4×4" presets
-        # which silently dropped layers past cols × rows when the
-        # stack had more than the preset's cell count.
-        auto_act = QAction("Auto (smart)", self._window, checkable=True)
-        auto_act.setChecked(cs.cols is None and cs.rows is None)
-        auto_act.triggered.connect(
-            lambda: self._on_contact_sheet_grid_changed(-1, -1),
-        )
-        menu.addAction(auto_act)
-        for r in (1, 2, 3, 4):
-            label = "1 row" if r == 1 else f"{r} rows"
-            act = QAction(label, self._window, checkable=True)
-            # Checked when rows is pinned to this preset and cols is
-            # auto — distinguishes "2 rows" (= rows=2, cols=None) from
-            # a manual 2×N picked via Custom grid (= both set).
-            act.setChecked(cs.rows == r and cs.cols is None)
-            act.triggered.connect(
-                lambda _chk, rr=r: self._on_contact_sheet_grid_changed(-1, rr),
-            )
-            menu.addAction(act)
-        for c in (1, 2, 3, 4):
-            label = "1 column" if c == 1 else f"{c} columns"
-            act = QAction(label, self._window, checkable=True)
-            act.setChecked(cs.cols == c and cs.rows is None)
-            act.triggered.connect(
-                lambda _chk, cc=c: self._on_contact_sheet_grid_changed(cc, -1),
-            )
-            menu.addAction(act)
-
-        def _ask_custom() -> None:
-            cols, ok = QInputDialog.getInt(
-                self._window, "Contact sheet — columns",
-                "Number of columns:",
-                value=cs.cols or 2, min=1, max=16,
-            )
-            if not ok:
-                return
-            rows, ok = QInputDialog.getInt(
-                self._window, "Contact sheet — rows",
-                "Number of rows:",
-                value=cs.rows or 2, min=1, max=16,
-            )
-            if not ok:
-                return
-            self._on_contact_sheet_grid_changed(cols, rows)
-
-        custom_act = QAction("Custom grid…", self._window)
-        custom_act.triggered.connect(_ask_custom)
-        menu.addAction(custom_act)
-        menu.addSeparator()
-
-        labels_act = QAction(
-            "Show labels on tiles", self._window, checkable=True,
-        )
-        labels_act.setChecked(cs.show_labels)
-        labels_act.triggered.connect(
-            lambda checked: self.set_contact_sheet_labels(bool(checked)),
-        )
-        menu.addAction(labels_act)
-        menu.addSeparator()
-
-        # Output divisor sub-menu — same presets as the View menu.
-        divisor_menu = menu.addMenu("Output size")
-        for div, label in (
-            (1, "Full (÷1)"), (2, "Half (÷2)"), (3, "Third (÷3)"),
-            (4, "Quarter (÷4)"), (6, "Sixth (÷6)"), (8, "Eighth (÷8)"),
-        ):
-            act = QAction(label, self._window, checkable=True)
-            act.setChecked(cs.output_divisor == div)
-            act.triggered.connect(
-                lambda _chk, d=div: self._on_contact_sheet_divisor_changed(d),
-            )
-            divisor_menu.addAction(act)
+    # NB: ``_build_transport_contact_sheet_menu`` used to populate the
+    # kebab popup hanging off the transport bar's contact-sheet
+    # button. The popup (and the kebab button itself) were dropped
+    # when the settings moved to the dedicated :class:`ContactSheetBand`
+    # toolbar — the band is always visible while CS mode is on and is
+    # much easier to discover than a popup menu hidden behind a
+    # 16-px-wide ``⋯`` button.
 
     def _on_contact_sheet_grid_changed(self, cols: int, rows: int) -> None:
         """Slot for ``MainWindow.contact_sheet_grid_changed``.
@@ -1501,6 +1441,17 @@ class ImgPlayerApp:
     def _on_contact_sheet_divisor_changed(self, divisor: int) -> None:
         """Slot for ``MainWindow.contact_sheet_divisor_changed``."""
         self.set_contact_sheet_output_divisor(divisor)
+        self._sync_contact_sheet_menu_state()
+
+    def _on_contact_sheet_label_size_changed(self, size: float) -> None:
+        """Slot for ``ContactSheetBand.label_size_changed``.
+
+        Writes the new scale factor into the state, persists the
+        ContactSheetState dict, and forces a one-frame redisplay so
+        the change is visible immediately (otherwise the next render
+        only happens on the next playhead move or layer toggle).
+        """
+        self.set_contact_sheet_label_size(size)
         self._sync_contact_sheet_menu_state()
 
     def _on_contact_sheet_tile_scrub_started(self, tile_idx: int) -> None:
@@ -1614,12 +1565,13 @@ class ImgPlayerApp:
 
     def _sync_contact_sheet_menu_state(self) -> None:
         """Push the current ContactSheetState to the window so the
-        settings sub-menu's checkmarks match reality on next open."""
+        ContactSheetBand's widgets stay in sync with reality."""
         self._window.set_contact_sheet_grid_state(
             self._contact_sheet_state.cols,
             self._contact_sheet_state.rows,
             self._contact_sheet_state.show_labels,
             self._contact_sheet_state.output_divisor,
+            self._contact_sheet_state.label_size,
         )
 
     def toggle_contact_sheet(self) -> None:
@@ -1756,6 +1708,24 @@ class ImgPlayerApp:
         etc. Larger values trade detail for compose / upload speed.
         """
         self._contact_sheet_state.output_divisor = max(1, int(divisor))
+        self._prefs.contact_sheet_state = self._contact_sheet_state.to_dict()
+        if self._contact_sheet_state.is_active():
+            cur = self._controller.state.current_frame
+            self._last_displayed = None
+            self._on_frame_changed(cur)
+
+    def set_contact_sheet_label_size(self, size: float) -> None:
+        """Multiply the auto-computed label font size by ``size``.
+
+        The render path clamps to ``[0.4, 4.0]`` so a hand-edited
+        prefs entry can't blow the cartouche up to overflow the
+        tile; do the same clamp here at write-time so the persisted
+        state matches what the user actually sees. The pill
+        background sizes itself off the text metrics — no separate
+        pill-size knob to update.
+        """
+        clamped = max(0.4, min(float(size), 4.0))
+        self._contact_sheet_state.label_size = clamped
         self._prefs.contact_sheet_state = self._contact_sheet_state.to_dict()
         if self._contact_sheet_state.is_active():
             cur = self._controller.state.current_frame
@@ -1916,6 +1886,8 @@ class ImgPlayerApp:
             target_w=target_w,
             target_h=target_h,
             show_labels=self._contact_sheet_state.show_labels,
+            label_size=self._contact_sheet_state.label_size,
+            output_divisor=self._contact_sheet_state.output_divisor,
             per_tile_strokes=per_tile_strokes,
             # Pass the per-layer source dimensions so the bake math
             # can scale strokes from layer-source-space into cell-
@@ -2096,6 +2068,29 @@ class ImgPlayerApp:
         # anything changed" invariant.
         self._contact_sheet_decoder.invalidate()
         self._sync_navigable_range_to_layer_panel()
+        # Auto-sync the controller's binding to the live stack.
+        # Two symmetric mismatches can arise from undo / redo of
+        # actions that wipe both at once (``File → New``,
+        # ``cache.attach`` on replace, session load):
+        #
+        # * **Layers present, controller detached** — classic case
+        #   ``Ctrl+N → Ctrl+Z``: New nulls the controller's
+        #   sequence AND empties the stack (one undo entry); the
+        #   undo brings the layers back but the controller is
+        #   still detached. Without a rebind the early-return
+        #   below skips prefetch / redisplay and the user sees
+        #   "layers in the panel, blank viewport".
+        # * **Layers absent, controller bound** — same flow with
+        #   one extra ``Ctrl+Y`` (= redo of the New): the redo
+        #   empties the stack again, but the rebind we did on
+        #   undo left the controller pointing at the (now-
+        #   removed) focused layer's sequence. Detaching keeps
+        #   the file actions / title bar / transport gated state
+        #   consistent with the empty stack.
+        if self._controller.sequence is None and self._layer_stack:
+            self._rebind_controller_to_focused_layer()
+        elif self._controller.sequence is not None and not self._layer_stack:
+            self._detach_controller_from_empty_stack()
         if self._controller.sequence is None:
             return
         # Re-plan prefetch over the FULL navigable range (not just the
@@ -2109,6 +2104,125 @@ class ImgPlayerApp:
         # mutations.
         self._controller.replan_prefetch()
         self._redisplay_current_frame_or_show_gap()
+
+    def _rebind_controller_to_focused_layer(self) -> None:
+        """Restore the controller's sequence binding from the live stack.
+
+        Used by :meth:`_refresh_after_stack_change` when it detects
+        the "layers present, controller detached" mismatch (typical
+        after ``Ctrl+Z`` reverses a ``File → New``). Same shape as
+        the session-open path:
+
+        * Pick the focused layer (or fall back to the topmost one).
+        * Set ``controller._sequence`` directly — we deliberately
+          DON'T call ``controller.load_sequence``, which would
+          route through ``cache.attach`` and replace the stack we
+          just restored with a single fresh layer (wiping the
+          undo result).
+        * Call ``update_sequence_info`` so the timeline range,
+          title bar, and file actions (Export / Save Frame /
+          Reload / Add Layer / Save Session) all re-enable.
+        * Seek to the navigable range's start so the playhead
+          lands inside the restored coverage — without this, the
+          stale ``current_frame`` carried over from the pre-New
+          state may sit outside any layer's range and produce a
+          gap-placeholder instead of an image.
+
+        No-op when the stack is empty (the early-return upstream
+        handles that case).
+        """
+        focused = self._layer_stack.focused()
+        if focused is None:
+            # Defensive: ``add()`` auto-focuses, so a populated
+            # stack normally has a focus — but a restored snapshot
+            # could in theory carry ``focused_id=None``. Fall back
+            # to the topmost layer so the rebind still proceeds.
+            layers = list(self._layer_stack.layers())
+            if not layers:
+                return
+            focused = layers[0]
+            self._layer_stack.set_focus(focused.id)
+        seq = getattr(focused, "sequence", None)
+        if seq is None:
+            return
+        self._controller._sequence = seq  # noqa: SLF001 — no public re-attach
+        self._window.update_sequence_info(seq)
+        # ``update_sequence_info`` just set the timeline range to the
+        # focused layer's OWN first/last (= the sequence's bounds) —
+        # but the LayerPanel uses ``broad_master_range`` (the union
+        # of every layer's source potential), so without this re-
+        # sync the top timeline ends at e.g. 1033 while the layer
+        # bars extend to 1244, producing the visible playhead /
+        # cursor drift the user reported. Same fix the session-open
+        # path uses: re-run the post-stack-change sync so the
+        # timeline + controller + GL navigable bounds all snap to
+        # the broader of the two. Cheap and idempotent — the
+        # earlier call in ``_refresh_after_stack_change`` got the
+        # range right; this call just re-asserts it after
+        # ``update_sequence_info`` clobbered the timeline alone.
+        self._sync_navigable_range_to_layer_panel()
+        # Land the playhead inside the restored coverage. Without
+        # this, the controller's pre-New ``current_frame`` may be
+        # outside the layer's range and the user sees a gap-
+        # placeholder where they expected the image back. Seek to
+        # the BROAD master range's first frame (= leftmost edge of
+        # the layer-panel timeline) rather than the focused
+        # sequence's first, so the playhead lands at the same
+        # position the layer bars start at.
+        try:
+            first, _last = self._layer_stack.master_range()
+            self._controller.seek(first)
+        except Exception:  # pragma: no cover — defensive
+            log.exception(
+                "[undo] failed to seek to first frame after rebind",
+            )
+
+    def _detach_controller_from_empty_stack(self) -> None:
+        """Mirror image of :meth:`_rebind_controller_to_focused_layer`.
+
+        Used by :meth:`_refresh_after_stack_change` when the live
+        stack becomes empty but the controller still carries a
+        sequence binding from a previous state (typical after a
+        redo of ``File → New``, where the redo re-empties the
+        stack but the prior undo had re-bound the controller).
+        Detaches the controller and re-disables the file actions
+        that need a loaded sequence, so the user sees the same
+        "no project" UI shape they get from a fresh ``Ctrl+N``.
+        """
+        self._controller._sequence = None  # noqa: SLF001 — no public detach
+        # Re-disable the file-menu / transport actions that need a
+        # loaded sequence. Same set ``_on_new_sequence`` toggles
+        # off — keep them in lockstep so the empty-stack state
+        # reads identically whether reached via Ctrl+N or via
+        # redo-of-undo-of-New.
+        w = self._window
+        if hasattr(w, "_export_act"):
+            w._export_act.setEnabled(False)  # noqa: SLF001
+        if hasattr(w, "_save_frame_act"):
+            w._save_frame_act.setEnabled(False)  # noqa: SLF001
+        if hasattr(w, "_reload_act"):
+            w._reload_act.setEnabled(False)  # noqa: SLF001
+        if hasattr(w, "_force_reload_act"):
+            w._force_reload_act.setEnabled(False)  # noqa: SLF001
+        if hasattr(w, "_add_layer_act"):
+            w._add_layer_act.setEnabled(False)  # noqa: SLF001
+        if hasattr(w, "_save_session_act"):
+            w._save_session_act.setEnabled(False)  # noqa: SLF001
+        if hasattr(w, "_save_session_as_act"):
+            w._save_session_as_act.setEnabled(False)  # noqa: SLF001
+        w.transport.set_export_enabled(False)
+        w.transport.set_reload_enabled(False)
+        # Re-detect colorspace button — same gating as the rest.
+        w.color_panel.set_redetect_enabled(False)
+        # Clear the viewport — match the visual reset Ctrl+N does
+        # so the user sees "no sequence" identically across both
+        # entry points.
+        try:
+            w.viewer.gl.clear_image()
+        except Exception:  # pragma: no cover — defensive
+            log.exception("[undo] failed to clear viewport on auto-detach")
+        # Reset the title bar to the no-sequence baseline.
+        w.setWindowTitle("Flick Player")
 
     def _sync_compare_band_for_stack_change(self) -> None:
         """Refresh the compare band's dropdown entries + gate the
@@ -3403,6 +3517,45 @@ class ImgPlayerApp:
 
     # ------------------------------------------------------------------ New / Reload (v0.5.1)
 
+    def _exit_review_modes(self) -> None:
+        """Force-exit compare + contact-sheet modes if either is on.
+
+        Called from every "wipe the project" entry point: File → New,
+        File → Open (replace), drag-drop replace (image sequences AND
+        videos). The rationale is that a review mode's state
+        (compare's A/B picks, contact-sheet's per-tile offsets) is
+        anchored to layer ids from the OLD stack — keeping the mode
+        active across a replace would leave the band pointing at
+        layer ids the new sequence doesn't know about, producing
+        either a confusing rendering or an outright crash on the
+        first decode.
+
+        Routes through the canonical toggles so all the side effects
+        wire correctly: contact-sheet's always-advance flag,
+        annotation-overlay visibility, layer-panel auto-collapse
+        restore, timeline dim, compare band visibility, transport
+        button checked state, GL compare-shader clear, decoder
+        invalidation.
+        """
+        # Contact sheet first — its ``toggle_contact_sheet`` does
+        # the layer-panel auto-restore which we want to fire BEFORE
+        # the new sequence's stack mutations (so the restored panel
+        # state isn't trampled by a "layers_changed" cascade).
+        if self._contact_sheet_state.enabled:
+            self._on_contact_sheet_toggle()
+        # Compare — same canonical toggle path used by the W
+        # shortcut. After exit, nullify the A/B ids so a future
+        # re-entry on a different stack doesn't try to map them to
+        # the new (unrelated) layers — the ``toggle_compare`` exit
+        # leaves the ids set so the user can flip the mode back ON
+        # within the SAME session and resume their last pick; a
+        # project replace breaks that invariant, hence the clear.
+        if self._compare_state.enabled:
+            from img_player.compare_handler import toggle_compare  # noqa: PLC0415
+            toggle_compare(self)
+        self._compare_state.layer_a_id = None
+        self._compare_state.layer_b_id = None
+
     def _on_new_sequence(self) -> None:
         """File → New (Ctrl+N): clear the loaded sequence without
         resetting the rest of the UI.
@@ -3416,22 +3569,16 @@ class ImgPlayerApp:
         # Stop any ongoing playback first; ticking a detached cache
         # would just spin no-ops.
         self._controller.pause()
-        # Exit compare mode if it was active. Without this the
-        # CompareBand stays visible after the wipe, pointing at
-        # ids that are about to be invalidated by the layer-stack
-        # reset below — and the user has no obvious way to dismiss
-        # the band since File → New conceptually resets the project.
-        if self._compare_state.enabled:
-            self._compare_state.enabled = False
-            self._compare_state.layer_a_id = None
-            self._compare_state.layer_b_id = None
-            self._compare_decoder.invalidate()
-            self._window.viewer.gl.clear_compare()
-            self._window.transport.set_compare_checked(False)
-            self._window.set_compare_band_visible(False)
+        # Exit any review mode (compare / contact-sheet) before the
+        # layer-stack reset below — otherwise the bands stay
+        # visible pointing at ids that are about to be invalidated,
+        # and the user has no obvious way to dismiss them.
+        self._exit_review_modes()
         # Contact-sheet decoder lives parallel to compare's and
         # benefits from the same "drop the per-layer slot when
-        # anything changed" invariant.
+        # anything changed" invariant. ``_exit_review_modes`` only
+        # toggles the mode — the decoder still holds stale per-layer
+        # buffers from the previous stack, so invalidate explicitly.
         self._contact_sheet_decoder.invalidate()
         # File → New is a project-load entry point too — re-tune the
         # cache budget so the next project opened from this empty
@@ -3485,6 +3632,9 @@ class ImgPlayerApp:
             self._window._force_reload_act.setEnabled(False)  # noqa: SLF001
         self._window.transport.set_export_enabled(False)
         self._window.transport.set_reload_enabled(False)
+        # Re-detect colorspace button — same gating as Export /
+        # Save Frame: greyed out when no footage is loaded.
+        self._window.color_panel.set_redetect_enabled(False)
         # Reset the current-session pointer + title bar.
         # ``set_current_session_path(None)`` rewrites the title to
         # the bare "Flick Player" baseline.
@@ -4266,6 +4416,30 @@ class ImgPlayerApp:
             )
         return enriched
 
+    def _on_redetect_source_colorspace(self) -> None:
+        """``ColorPanel.redetect_source_requested`` handler.
+
+        Re-runs :meth:`_guess_source_colorspace` against the
+        currently focused layer's sequence. Same auto-detect
+        cascade as the boot-time path so the result is identical
+        to what the user got at load time — minus any manual
+        override they may have applied since.
+
+        No-op when no footage is loaded; the button is also gated
+        upstream via ``set_redetect_enabled`` so this branch only
+        fires defensively.
+        """
+        focused = self._layer_stack.focused()
+        seq = getattr(focused, "sequence", None) if focused else None
+        if seq is None:
+            seq = self._controller.sequence
+        if seq is None:
+            self._window.set_status(
+                "Re-detect: no footage loaded.",
+            )
+            return
+        self._guess_source_colorspace(seq)
+
     def _guess_source_colorspace(self, seq: SequenceInfo) -> None:
         """Auto-detect the source colorspace + the right view for it.
 
@@ -4648,7 +4822,7 @@ def _qt_screen_colorspace_hint(qapp: QApplication) -> str | None:
 
 def run_gui(
     argv: list[str] | None = None,
-    initial_path: Path | None = None,
+    initial_path: Path | list[Path] | None = None,
     *,
     cache_budget_bytes: int = DEFAULT_CACHE_BUDGET_BYTES,
     num_workers: int = DEFAULT_NUM_WORKERS,

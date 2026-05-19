@@ -225,9 +225,16 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "path",
         type=Path,
-        nargs="?",
-        default=None,
-        help="File or directory. With no flag, launches the GUI on that sequence.",
+        nargs="*",
+        default=[],
+        help=(
+            "One or more files / directories. With no flag, launches the "
+            "GUI on those sequence(s). Multiple paths trigger the same "
+            "multi-source picker as a multi-drop on the viewer area, so "
+            "you can drag-drop several folders / sequence files / videos "
+            "directly onto FlickPlayer.exe (or onto img_player.bat) and "
+            "they all open in one shot."
+        ),
     )
     return parser
 
@@ -306,10 +313,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     # `--scan` is a CLI-only path — no GUI, no cache, no need to auto-tune.
+    # Multi-path support only exists for the GUI launch (drag-drop multi
+    # source onto the .exe); --scan keeps its single-path semantic.
     if args.scan:
-        if args.path is None:
+        if not args.path:
             parser.error("--scan requires a PATH.")
-        return _cmd_scan(args.path, list_all=args.all)
+        if len(args.path) > 1:
+            parser.error("--scan accepts only one PATH.")
+        return _cmd_scan(args.path[0], list_all=args.all)
 
     # Bring up Qt + splash *before* anything else we want to surface
     # as "loading…" — every milestone update needs a live
@@ -365,12 +376,14 @@ def main(argv: list[str] | None = None) -> int:
     # via log_tune_resolution() above.
 
     if args.benchmark:
-        if args.path is None:
+        if not args.path:
             parser.error("--benchmark requires a PATH.")
+        if len(args.path) > 1:
+            parser.error("--benchmark accepts only one PATH.")
         from img_player.bench.runner import run_benchmark
 
         return run_benchmark(
-            args.path,
+            args.path[0],
             passes=args.passes,
             warmup_frames=args.warmup_frames,
             target_fps=args.target_fps,
@@ -384,11 +397,24 @@ def main(argv: list[str] | None = None) -> int:
     # Default: launch the GUI (empty if no path, opening the given
     # sequence otherwise). Users can still drag & drop once the window
     # is open.
+    #
+    # Multi-path support: when several paths come in (typical case is
+    # the user dropping multiple folders / files on FlickPlayer.exe in
+    # Explorer), forward the full list. The GUI's ``_open_path`` already
+    # routes ``list[Path]`` through the multi-source picker — exact same
+    # flow as a multi-drop on the viewer area.
     splash.update("Loading Flick Player…")
     from img_player.app import run_gui
 
+    if not args.path:
+        initial_arg: Path | list[Path] | None = None
+    elif len(args.path) == 1:
+        initial_arg = args.path[0]
+    else:
+        initial_arg = list(args.path)
+
     return run_gui(
-        initial_path=args.path,
+        initial_path=initial_arg,
         cache_budget_bytes=budget,
         num_workers=workers,
         oiio_threads=oiio_threads,

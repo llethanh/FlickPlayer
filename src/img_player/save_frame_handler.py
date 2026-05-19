@@ -450,6 +450,8 @@ def _render_contact_sheet_array(
         target_w=out_w,
         target_h=out_h,
         show_labels=cs_state.show_labels,
+        label_size=cs_state.label_size,
+        output_divisor=cs_state.output_divisor,
     )
 
     # OCIO + clamp to uint8. Tiles come from ``read_frame`` so they're

@@ -39,6 +39,7 @@ from img_player.comment.store import CommentStore
 from img_player.ui.color_panel import ColorPanel
 from img_player.ui.comment_panel import CommentPanel
 from img_player.ui.compare_band import CompareBand
+from img_player.ui.contact_sheet_band import ContactSheetBand
 from img_player.ui.icons import make_icon
 from img_player.ui.theme import F, G, H, S
 from img_player.ui.timeline import Timeline
@@ -508,10 +509,35 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         """
         on = bool(on)
         self._compare_band.setVisible(on)
-        # Right stretch weight: 1 when compare is on (equal split with
-        # the left stretch → band centred), 0 when off (left stretch
-        # absorbs the slack → buttons flush right).
-        self._top_layout.setStretch(self._top_stretch_right_idx, 1 if on else 0)
+        # Right stretch weight: 1 when EITHER band is on (equal split
+        # with the left stretch → band centred), 0 when both are off
+        # (left stretch absorbs the slack → buttons flush right).
+        any_band_on = on or self._contact_sheet_band.isVisible()
+        self._top_layout.setStretch(
+            self._top_stretch_right_idx, 1 if any_band_on else 0,
+        )
+
+    @property
+    def contact_sheet_band(self) -> ContactSheetBand:
+        """Contact-sheet settings band — exposed so the app can wire
+        its signals and push state updates. Hidden by default; the
+        app shows it when contact-sheet mode turns on."""
+        return self._contact_sheet_band
+
+    def set_contact_sheet_band_visible(self, on: bool) -> None:
+        """Toggle the contact-sheet band's visibility.
+
+        Same stretch-flip pattern as :meth:`set_compare_band_visible`
+        — when either band is visible the right stretch takes weight
+        1 so the band centres; when both are hidden it drops back to
+        0 so the buttons toolbar sits flush right.
+        """
+        on = bool(on)
+        self._contact_sheet_band.setVisible(on)
+        any_band_on = on or self._compare_band.isVisible()
+        self._top_layout.setStretch(
+            self._top_stretch_right_idx, 1 if any_band_on else 0,
+        )
 
     @property
     def color_panel(self) -> ColorPanel:
@@ -577,13 +603,14 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         finally:
             self._contact_sheet_act.blockSignals(False)
 
-    # Mirror of the state on the app singleton — set by the app so the
-    # settings sub-menu can build itself with the right ticks. The
-    # window doesn't need to know about ``ContactSheetState`` — just
-    # the fields it renders.
+    # Mirror of the state on the app singleton — set by the app so
+    # the band can rebuild itself with the right state. The window
+    # doesn't need to know about ``ContactSheetState`` — just the
+    # fields it forwards to the band.
     _contact_sheet_grid: tuple[int | None, int | None] = (None, None)
     _contact_sheet_labels: bool = False
     _contact_sheet_divisor: int = 1
+    _contact_sheet_label_size: float = 1.0
 
     def set_contact_sheet_grid_state(
         self,
@@ -591,16 +618,29 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         rows: int | None,
         show_labels: bool,
         output_divisor: int = 1,
+        label_size: float = 1.0,
     ) -> None:
-        """Sync the settings sub-menu state from the app side. Pass
-        ``None`` for cols / rows to mark "auto"."""
+        """Sync the contact-sheet band's widgets from the app side.
+
+        Pass ``None`` for cols / rows to mark "auto". ``label_size``
+        is a float multiplier (1.0 = historical default); the band
+        snaps it to the closest preset in the Size combo.
+        """
         self._contact_sheet_grid = (cols, rows)
         self._contact_sheet_labels = bool(show_labels)
         self._contact_sheet_divisor = max(1, int(output_divisor))
-        # If the submenu is open right now, force a rebuild so the
-        # checkmarks reflect the new state immediately.
-        if self._contact_sheet_settings_menu.isVisible():
-            self._build_contact_sheet_settings_menu()
+        self._contact_sheet_label_size = max(0.4, min(float(label_size), 4.0))
+        # Push to the band so its spin-boxes / pills / combos reflect
+        # reality. The band's ``set_state`` blocks internal emissions
+        # so this call is safe even when the state change came FROM
+        # the band itself (no signal loop).
+        self._contact_sheet_band.set_state(
+            cols,
+            rows,
+            self._contact_sheet_labels,
+            self._contact_sheet_divisor,
+            self._contact_sheet_label_size,
+        )
 
     @property
     def transport(self) -> TransportBar:
@@ -643,6 +683,10 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
             self._save_session_as_act.setEnabled(True)
         self._transport.set_export_enabled(True)
         self._transport.set_reload_enabled(True)
+        # Re-detect colorspace button — needs footage to act on.
+        # Enabled here alongside the rest of the sequence-gated
+        # actions; disabled symmetrically by the New / detach paths.
+        self._color_panel.set_redetect_enabled(True)
         # Clear the cache bar so we don't briefly show the old run
         # rectangles re-mapped onto the new range. The next
         # _refresh_cache_bar tick (~200 ms) re-populates with the
@@ -690,6 +734,16 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         open_act.setShortcut(QKeySequence.StandardKey.Open)
         open_act.triggered.connect(self._on_open_action)
         file_menu.addAction(open_act)
+
+        # Open Recent lives directly under Open so the two-step
+        # "ouvrir → re-ouvrir un truc connu" path is visually contiguous,
+        # mirroring the "Open Session… → Open Recent Session" pair
+        # further down. (Used to sit way further down, just before the
+        # Export separator — hard to find.)
+        self._recent_menu = file_menu.addMenu("Open &Recent")
+        self._recent_menu.aboutToShow.connect(self._refresh_recent_menu)
+        # Pre-populate so the submenu is never empty on first open.
+        self._refresh_recent_menu()
 
         # File → Add layer… (v1.0). Pops the same folder picker as
         # Open, but the result is *added* to the LayerStack as a
@@ -746,11 +800,19 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         )
         file_menu.addAction(self._save_session_as_act)
 
-        # File → Reload (Ctrl+R): smart re-scan of the source folder.
+        # Reload (Ctrl+R): smart re-scan of the source folder.
         # Keeps cached frames whose mtime is unchanged, drops the
         # rest, and surfaces any newly-arrived / removed files.
         # Disabled until a sequence is loaded — same gating as
         # Export.
+        #
+        # NB: lives in the Image menu only (re-added below). Used to
+        # also sit under File but that was duplication — Image is the
+        # natural home since reload is about the frames, not file I/O
+        # bookkeeping. The QAction itself is still created here so the
+        # Ctrl+R / Ctrl+Shift+R shortcuts stay app-wide active and so
+        # the existing toolbar / status hooks (`hasattr(self,
+        # "_reload_act")`) keep working unchanged.
         self._reload_act = QAction("&Reload (smart)", self)
         self._reload_act.setToolTip(
             "Re-scan the source folder and re-decode only frames "
@@ -759,11 +821,11 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         self._reload_act.setShortcut(QKeySequence("Ctrl+R"))
         self._reload_act.setEnabled(False)
         self._reload_act.triggered.connect(self.reload_sequence_requested.emit)
-        file_menu.addAction(self._reload_act)
 
-        # File → Reload (force) (Ctrl+Shift+R): drop every cached
-        # frame and re-decode from scratch, ignoring mtime. Same
-        # enable-gating as the smart reload.
+        # Reload (force) (Ctrl+Shift+R): drop every cached frame and
+        # re-decode from scratch, ignoring mtime. Same enable-gating
+        # as the smart reload. Also Image-menu-only — see comment
+        # above.
         self._force_reload_act = QAction("Reload (&force)", self)
         self._force_reload_act.setToolTip(
             "Drop every cached frame and re-decode from scratch, "
@@ -775,12 +837,6 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         self._force_reload_act.triggered.connect(
             self.force_reload_sequence_requested.emit,
         )
-        file_menu.addAction(self._force_reload_act)
-
-        self._recent_menu = file_menu.addMenu("Open &Recent")
-        self._recent_menu.aboutToShow.connect(self._refresh_recent_menu)
-        # Pre-populate so the submenu is never empty on first open.
-        self._refresh_recent_menu()
 
         file_menu.addSeparator()
         # Export action (v0.5.0). Disabled until a sequence is loaded —
@@ -951,19 +1007,13 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
             self.contact_sheet_toggle_requested.emit,
         )
         view_menu.addAction(self._contact_sheet_act)
-        # Grid + labels live in their own sub-menu so they don't
-        # clutter the top-level View menu. The submenu is rebuilt
-        # on aboutToShow so the active grid + labels state is the
-        # source of truth.
-        self._contact_sheet_settings_menu = view_menu.addMenu(
-            "Contact sheet &settings",
-        )
-        self._contact_sheet_settings_menu.aboutToShow.connect(
-            self._build_contact_sheet_settings_menu,
-        )
-        # Pre-populate so the submenu has the right entries before
-        # first ``aboutToShow``.
-        self._build_contact_sheet_settings_menu()
+        # Grid / labels / output-size now live in the dedicated
+        # ContactSheetBand toolbar (`self._contact_sheet_band`) that
+        # appears above the viewer when the mode is on — same UX as
+        # the compare band. The older ``View → Contact sheet settings``
+        # sub-menu was removed because the band is always visible
+        # while the mode is on and is much easier to discover than a
+        # nested menu.
 
         # NB: T / αS used to live here as global View menu toggles.
         # They moved to per-row buttons in the layer panel once the
@@ -1070,12 +1120,13 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         # app greys out the inactive one when its sibling is on.
         buttons_layout.addWidget(self._transport.compare_button)
         buttons_layout.addWidget(self._transport.contact_sheet_button)
-        # The "…" kebab button sits flush against the contact-sheet
-        # toggle (no inter-button spacing) so the two read as a
-        # paired control. Negative-margin trick on the menu button
-        # is the cheapest way to get rid of the layout's standard
-        # ``S.SM`` spacing for this one boundary.
-        buttons_layout.addWidget(self._transport.contact_sheet_menu_button)
+        # NB: the older ``…`` kebab button next to the contact-sheet
+        # toggle is no longer added to the layout — settings live in
+        # the ContactSheetBand toolbar (`self._contact_sheet_band`)
+        # that appears above the viewer when the mode is on. The
+        # QToolButton itself still exists on ``self._transport`` (so
+        # the property accessor stays valid) but is unparented from
+        # any visible layout.
         buttons_layout.addWidget(self._transport.reload_button)
         buttons_layout.addWidget(self._transport.export_button)
         # Channel selector + RGBA mode selector, grouped tight.
@@ -1154,6 +1205,15 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         self._compare_band = CompareBand(self)
         self._compare_band.setVisible(False)
 
+        # Contact-sheet band — same shape / placement as the compare
+        # band, mutually exclusive with it (both hijack the GL upload
+        # path, so the app forces one off when the other turns on).
+        # Replaces the older transport-bar ``⋯`` kebab popup and the
+        # View → Contact sheet settings sub-menu — settings now live
+        # right next to the on/off toggle.
+        self._contact_sheet_band = ContactSheetBand(self)
+        self._contact_sheet_band.setVisible(False)
+
         top_bar = QWidget(self)
         top_bar.setStyleSheet("background: transparent;")
         top_layout = QHBoxLayout(top_bar)
@@ -1162,18 +1222,20 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         top_layout.addWidget(menu_bar, 0)
         top_layout.addStretch(1)
         top_layout.addWidget(self._compare_band, 0)
+        top_layout.addWidget(self._contact_sheet_band, 0)
         # Right stretch starts at 0 so the buttons toolbar sits flush
-        # right while compare is hidden. ``set_compare_band_visible``
-        # flips it to 1 when compare turns on, which centres the band
-        # between the two equal-weight stretches.
+        # right while both bands are hidden. ``set_compare_band_visible``
+        # / ``set_contact_sheet_band_visible`` flip it to 1 when their
+        # band turns on, which centres the band between the two equal-
+        # weight stretches.
         top_layout.addStretch(0)
         top_layout.addWidget(buttons_toolbar, 0)
         # Cache the layout + the right-stretch index so the visibility
         # toggle can update its weight without rebuilding anything.
         self._top_layout = top_layout
         # Layout indices: 0 = menu_bar, 1 = stretch_L, 2 = compare_band,
-        # 3 = stretch_R, 4 = buttons_toolbar.
-        self._top_stretch_right_idx = 3
+        # 3 = contact_sheet_band, 4 = stretch_R, 5 = buttons_toolbar.
+        self._top_stretch_right_idx = 4
         # Replace the auto-installed menu bar slot with the composite.
         # ``setMenuWidget`` takes ownership; QMainWindow positions it
         # at the top of the window where the menu bar usually lives.
@@ -1336,118 +1398,15 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         self._clear_recent_callback = clear_callback
         self._refresh_recent_menu()
 
-    def _build_contact_sheet_settings_menu(self) -> None:
-        """(Re)build the ``View → Contact sheet settings`` sub-menu so
-        its check-marks reflect the current grid / labels state.
-
-        Three sections:
-
-        1. **Grid** — Auto + per-axis presets ("N rows", "N
-           columns"). Picking one emits
-           :attr:`contact_sheet_grid_changed(cols, rows)` with one
-           dim pinned and the other set to ``-1`` (= "auto-fit so
-           every layer has a tile"). ``-1 / -1`` means full auto.
-        2. **Custom grid…** — opens a QInputDialog pair so the user
-           can pick any positive integer for both dims.
-        3. **Show labels** — checkable toggle that fires
-           :attr:`contact_sheet_labels_toggled`.
-        """
-        from PySide6.QtWidgets import QInputDialog  # noqa: PLC0415 — cold path
-        menu = self._contact_sheet_settings_menu
-        menu.clear()
-        cur_cols, cur_rows = self._contact_sheet_grid
-
-        auto_act = QAction("&Auto (square-ish)", self, checkable=True)
-        auto_act.setChecked(cur_cols is None and cur_rows is None)
-        auto_act.triggered.connect(
-            lambda: self.contact_sheet_grid_changed.emit(-1, -1),
-        )
-        menu.addAction(auto_act)
-        menu.addSeparator()
-
-        # Axis presets: pin ONE dimension and let the other auto-fit
-        # the visible layer count. ``ContactSheetState.effective_grid``
-        # then computes the missing dim as ``ceil(n_layers / fixed)``
-        # — so "2 rows" with 5 layers becomes a 3×2 grid (one tile
-        # short on the second row) rather than a 2×N that silently
-        # drops layers past 2 × N. The old "1×2 / 2×3 / 4×4" fixed
-        # grids made sense only when N matched the preset exactly;
-        # axis-presets adapt to whatever the stack size is.
-        for r in (1, 2, 3, 4):
-            label = "1 row" if r == 1 else f"{r} rows"
-            act = QAction(label, self, checkable=True)
-            act.setChecked(cur_rows == r and cur_cols is None)
-            act.triggered.connect(
-                lambda _checked, rr=r: (
-                    self.contact_sheet_grid_changed.emit(-1, rr)
-                ),
-            )
-            menu.addAction(act)
-        for c in (1, 2, 3, 4):
-            label = "1 column" if c == 1 else f"{c} columns"
-            act = QAction(label, self, checkable=True)
-            act.setChecked(cur_cols == c and cur_rows is None)
-            act.triggered.connect(
-                lambda _checked, cc=c: (
-                    self.contact_sheet_grid_changed.emit(cc, -1)
-                ),
-            )
-            menu.addAction(act)
-        menu.addSeparator()
-
-        # Custom grid — two prompts because QInputDialog doesn't ship
-        # a "pair of ints" affordance. Cheap and matches the
-        # "Open recent: clear list…" pattern used elsewhere.
-        def _ask_custom() -> None:
-            cols, ok = QInputDialog.getInt(
-                self, "Contact sheet — columns",
-                "Number of columns:",
-                value=cur_cols or 2, min=1, max=16,
-            )
-            if not ok:
-                return
-            rows, ok = QInputDialog.getInt(
-                self, "Contact sheet — rows",
-                "Number of rows:",
-                value=cur_rows or 2, min=1, max=16,
-            )
-            if not ok:
-                return
-            self.contact_sheet_grid_changed.emit(cols, rows)
-
-        custom_act = QAction("&Custom grid…", self)
-        custom_act.triggered.connect(_ask_custom)
-        menu.addAction(custom_act)
-        menu.addSeparator()
-
-        labels_act = QAction("Show &labels on tiles", self, checkable=True)
-        labels_act.setChecked(self._contact_sheet_labels)
-        labels_act.triggered.connect(
-            lambda checked: self.contact_sheet_labels_toggled.emit(bool(checked)),
-        )
-        menu.addAction(labels_act)
-
-        # Output resolution divisor — splits the composite size into
-        # 1/N on each axis so the user can trade tile detail for
-        # compose + GL-upload speed. Common picks: 1 (full res, only
-        # smooth with few layers), 2 (half × half = quarter pixels,
-        # the sweet spot for review at viewer scale), 4 (proxy-ish).
-        menu.addSeparator()
-        divisor_menu = menu.addMenu("Output &size")
-        for div, label in (
-            (1, "Full resolution (÷1)"),
-            (2, "Half (÷2)"),
-            (3, "Third (÷3)"),
-            (4, "Quarter (÷4)"),
-            (6, "Sixth (÷6)"),
-            (8, "Eighth (÷8)"),
-        ):
-            act = QAction(label, self, checkable=True)
-            act.setChecked(self._contact_sheet_divisor == div)
-            act.triggered.connect(
-                lambda _checked, d=div: self.contact_sheet_divisor_changed.emit(d),
-            )
-            divisor_menu.addAction(act)
+    # NB: ``_build_contact_sheet_settings_menu`` used to live here and
+    # rebuilt the View → Contact sheet settings sub-menu on each
+    # ``aboutToShow``. It was removed when the settings moved to a
+    # dedicated :class:`ContactSheetBand` toolbar (see
+    # ``self._contact_sheet_band``) that appears above the viewer
+    # while contact-sheet mode is on — same UX as the compare band.
+    # The QSignals (`contact_sheet_grid_changed`, `_labels_toggled`,
+    # `_divisor_changed`) are unchanged; only the widget that emits
+    # them has been swapped.
 
     def _refresh_recent_menu(self) -> None:
         self._recent_menu.clear()

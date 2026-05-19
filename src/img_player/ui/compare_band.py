@@ -374,12 +374,13 @@ class CompareBand(QFrame):  # type: ignore[misc]
         self._swap_btn.clicked.connect(self.swap_toggled.emit)
         layout.addWidget(self._swap_btn)
 
-        # ---- ✕ close ----
-        self._close_btn = QPushButton("✕")
-        self._close_btn.setFixedSize(G.INPUT_H, G.INPUT_H)
-        self._close_btn.setToolTip("Exit compare mode (W)")
-        self._close_btn.clicked.connect(self.close_requested.emit)
-        layout.addWidget(self._close_btn)
+        # NB: the older ✕ close button used to live here. It was
+        # removed because clicking the transport's compare toggle
+        # (or pressing W) already exits the mode — the ✕ was
+        # redundant with those existing surfaces. The
+        # ``close_requested`` signal is kept on the class so a
+        # future affordance can re-emit it, but the band never
+        # fires it on its own anymore.
 
     # ------------------------------------------------------------------ Public API
 

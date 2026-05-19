@@ -287,9 +287,48 @@ def _try_acquire_lock(  # type: ignore[no-untyped-def]
         return fh
 
 
-def _compress(payload: bytes) -> bytes:
+# Compression mode constants. Stored as strings rather than ints so
+# the prefs round-trip is human-readable and adding a future tier
+# (zstd, lz4 ultra, …) doesn't require renumbering. The disk format
+# itself doesn't carry the mode — every LZ4 blob (fast or HC) decodes
+# through the same ``lz4_frame.decompress`` call, so flipping modes
+# at runtime never invalidates the warm cache.
+COMPRESSION_NONE = "none"
+COMPRESSION_LZ4 = "lz4"  # fast LZ4, compression_level=1 — historical default
+COMPRESSION_LZ4_HC = "lz4hc"  # LZ4 high-compression, compression_level=12
+
+# Convenience set the prefs layer + dialog use to validate input.
+COMPRESSION_MODES: tuple[str, ...] = (
+    COMPRESSION_NONE,
+    COMPRESSION_LZ4,
+    COMPRESSION_LZ4_HC,
+)
+
+
+def _compress(payload: bytes, mode: str = COMPRESSION_LZ4) -> bytes:
+    """Compress ``payload`` according to ``mode``.
+
+    Modes:
+    * ``COMPRESSION_LZ4`` — fast LZ4 at ``compression_level=1``. The
+      historical default; ~5 ms decode per 4K frame, ~25 MB on disk.
+    * ``COMPRESSION_LZ4_HC`` — LZ4 high-compression at
+      ``compression_level=12``. Same lz4_frame on-disk format so the
+      decoder is identical (~5 ms / 4K) but the encoder is ~3× slower
+      in exchange for ~30 % smaller blobs (~17 MB / 4K). Worth it
+      because each blob is written once and read N times across
+      sessions — the encode cost amortises immediately.
+    * ``COMPRESSION_NONE`` — caller should never reach this branch
+      (the no-compression path skips :func:`_compress` entirely via
+      the v3 magic in :func:`_serialize`). Defensive ``return as-is``.
+
+    Falls back to ``zlib`` (slower, no levels) when lz4 isn't
+    available — same fallback the legacy single-mode path had.
+    """
+    if mode == COMPRESSION_NONE:
+        return payload
     if _HAS_LZ4:
-        return _lz4_frame.compress(payload, compression_level=1)
+        level = 12 if mode == COMPRESSION_LZ4_HC else 1
+        return _lz4_frame.compress(payload, compression_level=level)
     return zlib.compress(payload, level=1)
 
 
@@ -299,7 +338,11 @@ def _decompress(blob: bytes) -> bytes:
     return zlib.decompress(blob)
 
 
-def _serialize(arr: np.ndarray, compress: bool = True) -> bytes:
+def _serialize(
+    arr: np.ndarray,
+    compression_mode: str = COMPRESSION_LZ4,
+    compress: bool | None = None,
+) -> bytes:
     """Convert ndarray → bytes blob (v2 / v3 format).
 
     Float arrays are cast to ``float16`` for storage (2× space win).
@@ -307,8 +350,13 @@ def _serialize(arr: np.ndarray, compress: bool = True) -> bytes:
     inputs) are stored as-is.
 
     Layout written:
-      * ``compress=True``  → ``FCD2`` + ``lz4(header + raw_bytes)``
-      * ``compress=False`` → ``FCD3`` + ``header + raw_bytes``
+      * ``COMPRESSION_LZ4`` / ``COMPRESSION_LZ4_HC`` → ``FCD2`` +
+        ``lz4(header + raw_bytes)``. The v2 magic carries no info on
+        which LZ4 sub-mode was used to encode — the lz4_frame format
+        embeds that internally and the decoder doesn't care.
+      * ``COMPRESSION_NONE`` → ``FCD3`` + ``header + raw_bytes``.
+        Caller asked for no compression, so the v3 magic flags the
+        reader to skip the lz4 decompression step entirely.
 
     The struct-packed header (16 bytes) replaces ``np.save``'s NPY
     format, saving ~5 ms per HD read by skipping the ``literal_eval``
@@ -318,8 +366,18 @@ def _serialize(arr: np.ndarray, compress: bool = True) -> bytes:
     Falls back to the v1 NPY-based path for dtypes we don't have a
     code for in :data:`_DTYPE_CODES`. That keeps the cache writable
     even if someone hands it an exotic dtype, at the cost of the
-    slower read path for those entries.
+    slower read path for those entries. The v1 path always
+    compresses (using whatever ``mode`` was requested), since the
+    legacy NPY header doesn't carry a "no compression" variant.
     """
+    # Backward-compat shim: pre-v1.5.x callers passed ``compress=True``
+    # or ``compress=False``. Map onto the new tri-state mode string so
+    # existing unit tests and any in-flight integrations keep working
+    # without an update. The new ``compression_mode`` kwarg takes
+    # priority if both are passed.
+    if compress is not None and compression_mode == COMPRESSION_LZ4:
+        compression_mode = COMPRESSION_LZ4 if compress else COMPRESSION_NONE
+
     # Avoid a copy when the array is already float16; ``copy=False``
     # short-circuits when the dtype already matches.
     if arr.dtype == np.float32:
@@ -330,9 +388,12 @@ def _serialize(arr: np.ndarray, compress: bool = True) -> bytes:
         # ``allow_pickle=False`` is a sanity guard — we only round-trip
         # plain arrays here; if a pickled object ever sneaks in we'd
         # rather fail loud than silently load arbitrary code on read.
+        # Legacy v1 path always compresses (using the user-requested
+        # mode, defaulting to fast LZ4 when "none" is asked).
         buf = io.BytesIO()
         np.save(buf, arr, allow_pickle=False)
-        return _BLOB_MAGIC_V1 + _compress(buf.getvalue())
+        v1_mode = COMPRESSION_LZ4 if compression_mode == COMPRESSION_NONE else compression_mode
+        return _BLOB_MAGIC_V1 + _compress(buf.getvalue(), mode=v1_mode)
     # Ensure C-contiguous so ``tobytes()`` matches the natural
     # ``frombuffer`` layout on read. Already-contiguous arrays
     # (the overwhelming common case) hit the no-op branch inside
@@ -342,9 +403,9 @@ def _serialize(arr: np.ndarray, compress: bool = True) -> bytes:
     h, w, c = arr.shape
     header = struct.pack(_V2_HEADER_FMT, dtype_code, arr.ndim, 0, h, w, c)
     payload = header + arr.tobytes()
-    if compress:
-        return _BLOB_MAGIC_V2 + _compress(payload)
-    return _BLOB_MAGIC_V3 + payload
+    if compression_mode == COMPRESSION_NONE:
+        return _BLOB_MAGIC_V3 + payload
+    return _BLOB_MAGIC_V2 + _compress(payload, mode=compression_mode)
 
 
 def _deserialize(blob: bytes) -> np.ndarray:
@@ -446,17 +507,37 @@ class DiskCache:
         self,
         cache_dir: Path,
         budget_bytes: int = 0,
-        compress: bool = True,
+        compress: bool | None = None,
+        compression_mode: str | None = None,
         lock_retry_timeout_s: float = _LOCK_RETRY_TIMEOUT_S,
     ) -> None:
         self._cache_dir = Path(cache_dir)
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         self._budget_bytes = max(0, int(budget_bytes))
-        # Compression toggle for new writes. The reader auto-detects
-        # via magic prefix so flipping this at runtime (via
-        # :meth:`set_compress`) doesn't invalidate the warm cache —
-        # old entries stay readable, new entries follow the new flag.
-        self._compress = bool(compress)
+        # Compression mode for new writes. The reader auto-detects
+        # via magic prefix so flipping the mode at runtime (via
+        # :meth:`set_compression_mode`) doesn't invalidate the warm
+        # cache — old entries stay readable, new entries follow the
+        # new mode.
+        #
+        # Backward compat: callers that still pass ``compress=True/False``
+        # (pre-v1.5.x bool API) map onto the matching mode string so
+        # the upgrade is invisible. New callers should pass
+        # ``compression_mode`` explicitly.
+        if compression_mode is not None:
+            if compression_mode not in COMPRESSION_MODES:
+                log.warning(
+                    "DiskCache: unknown compression_mode %r — "
+                    "falling back to %s",
+                    compression_mode, COMPRESSION_LZ4,
+                )
+                compression_mode = COMPRESSION_LZ4
+            self._compression_mode = compression_mode
+        elif compress is False:
+            self._compression_mode = COMPRESSION_NONE
+        else:
+            # ``compress=True`` or unspecified → default fast LZ4.
+            self._compression_mode = COMPRESSION_LZ4
 
         # ---- Multi-process lock (F) ----------------------------------
         # Acquire <cache_dir>/.lock so a second Flick instance can't
@@ -595,6 +676,15 @@ class DiskCache:
         self._bytes_read = 0
         self._bytes_written = 0
 
+        # Boot-log line surfaces the active compression mode alongside
+        # the budget / size so a bug report's logs say "yes the cache
+        # is in HC mode" without needing to dump prefs separately.
+        if self._compression_mode == COMPRESSION_NONE:
+            compressor_label = "none"
+        elif not _HAS_LZ4:
+            compressor_label = "zlib (lz4 unavailable)"
+        else:
+            compressor_label = self._compression_mode  # "lz4" or "lz4hc"
         log.info(
             "DiskCache ready at %s (budget=%s, entries=%d, used=%d MB, "
             "compressor=%s)",
@@ -602,7 +692,7 @@ class DiskCache:
             "unlimited" if self._budget_bytes == 0 else f"{self._budget_bytes} B",
             self._entry_count_unlocked(),
             self._total_bytes // (1024 * 1024),
-            "lz4" if _HAS_LZ4 else "zlib",
+            compressor_label,
         )
 
     # ------------------------------------------------------------------ Public API
@@ -845,14 +935,38 @@ class DiskCache:
         return self._read_only
 
     def set_compress(self, compress: bool) -> None:
-        """Toggle lz4 compression for **new** writes. Idempotent.
+        """Legacy bool API — kept for backward compat with pre-v1.5.x
+        callers. Maps onto the new tri-state :meth:`set_compression_mode`
+        (``True`` → fast LZ4, ``False`` → none). New code should call
+        :meth:`set_compression_mode` directly with one of the
+        :data:`COMPRESSION_MODES` strings.
+        """
+        self.set_compression_mode(COMPRESSION_LZ4 if compress else COMPRESSION_NONE)
+
+    def set_compression_mode(self, mode: str) -> None:
+        """Set the compression mode for **new** writes. Idempotent.
+
+        Accepts one of :data:`COMPRESSION_MODES` (``"none"`` /
+        ``"lz4"`` / ``"lz4hc"``). Unknown values fall back to
+        ``"lz4"`` with a warning rather than raising — keeps a
+        corrupt pref from blocking the cache.
 
         Existing entries keep their on-disk format (v2 lz4 or v3 raw);
         the reader auto-routes via the blob's magic prefix so the
         switch is non-destructive — no need to clear the cache when
         the user changes their mind about the speed-vs-space trade.
+        Both fast LZ4 and LZ4 HC use the same lz4_frame on-disk
+        format AND the same decoder, so switching between them
+        doesn't even change read performance for pre-switch entries.
         """
-        self._compress = bool(compress)
+        if mode not in COMPRESSION_MODES:
+            log.warning(
+                "DiskCache.set_compression_mode: unknown mode %r — "
+                "falling back to %s",
+                mode, COMPRESSION_LZ4,
+            )
+            mode = COMPRESSION_LZ4
+        self._compression_mode = mode
 
     def pending_writes(self) -> int:
         """Approximate queue depth of frames waiting to be written.
@@ -1129,7 +1243,7 @@ class DiskCache:
         abs_path = self._cache_dir / rel
         abs_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            blob = _serialize(arr, compress=self._compress)
+            blob = _serialize(arr, compression_mode=self._compression_mode)
         except Exception:  # pragma: no cover — defensive
             log.exception("DiskCache serialize failed for key %s", key[:16])
             return
