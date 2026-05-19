@@ -354,20 +354,15 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         # finally to the bottom info band where it now sits along
         # with fps, layer frame and timeline frame readouts.
 
-        # Central: header info strip (above) + top row [viewer | side
-        # panel] (only the display area gets the side panel beside it),
-        # then master-timeline composite + transport below spanning
-        # the full width.
+        # Central: top row [viewer | side panel] (only the display
+        # area gets the side panel beside it), then the header info
+        # strip (slim cartouche just under the viewport, where the
+        # legacy InfoBand used to sit), then the master-timeline
+        # composite + transport below spanning the full width.
         central = QWidget(self)
         layout = QVBoxLayout(central)
         layout.setContentsMargins(S.SM, S.SM, S.SM, S.SM)
         layout.setSpacing(S.SM)
-        # Header info strip — brief §2. Hidden until a sequence loads
-        # (gated via :meth:`HeaderInfoStrip.set_visible_for_sequence`
-        # by ``update_sequence_info`` / ``set_status_no_sequence``).
-        from img_player.ui.header_strip import HeaderInfoStrip  # noqa: PLC0415
-        self._header_strip = HeaderInfoStrip(self)
-        layout.addWidget(self._header_strip)
         top_row = QHBoxLayout()
         top_row.setContentsMargins(0, 0, 0, 0)
         top_row.setSpacing(S.SM)
@@ -381,6 +376,16 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
         top_row.addWidget(self._side_dock)
         self._top_row = top_row
         layout.addLayout(top_row, stretch=1)
+        # Header info strip — brief §2 — now sits BELOW the viewer
+        # row (where the legacy InfoBand used to overlay) and ABOVE
+        # the timeline. User explicitly wanted it relocated here so
+        # the cartouche reads as "info about the frame I'm looking
+        # at" rather than as a separate chrome bar at the top of the
+        # window. Hidden until a sequence loads (gated via
+        # :meth:`HeaderInfoStrip.set_visible_for_sequence`).
+        from img_player.ui.header_strip import HeaderInfoStrip  # noqa: PLC0415
+        self._header_strip = HeaderInfoStrip(self)
+        layout.addWidget(self._header_strip)
         if self._master_timeline_panel is not None:
             layout.addWidget(self._master_timeline_panel)
         else:
