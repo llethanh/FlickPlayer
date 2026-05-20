@@ -44,6 +44,34 @@
 
     <article class="release">
       <div class="release-meta">
+        <span class="ver">v1.7.0</span>
+        <span class="date">2026-05-20</span>
+        <span class="tagline">Cache tiers in colour, white/orange toggle buttons, cleaner New, launcher robustness.</span>
+      </div>
+      <div class="release-body">
+        <h4>New — Disk vs RAM cache, by colour</h4>
+        <ul>
+          <li class="new"><strong>The disk-cache tier now reads as blue</strong>, the RAM tier as orange — on the timeline cache bar AND each channel-menu group fill. Reopen a shot whose frames are warm on disk and the bar pre-paints blue; as playback promotes frames into RAM they turn orange. At a glance you know whether a frame is served from disk or from RAM.</li>
+          <li class="new">The channel menu polls the (heavier) disk scan on a slow ~1.5&nbsp;s cadence while the RAM fill stays at full 250&nbsp;ms cadence — no menu stutter on big multi-AOV sequences.</li>
+        </ul>
+        <h4>Changed — Interface polish</h4>
+        <ul>
+          <li class="new"><strong>Legacy bottom info band removed</strong> — the header info strip is now the single info surface. The ⓘ pill / Ctrl+I toggle drives it via a two-gate model (sequence loaded AND user toggle) so hiding it sticks across loads.</li>
+          <li class="new"><strong>White-at-rest / orange-when-active toggle buttons</strong> — loop, annotation pen, compare and contact-sheet toggles paint white until engaged, orange once on. Play / reverse-play go white when idle, orange while playing.</li>
+          <li class="new"><strong>Larger top toolbar buttons</strong> (34×32) so the primary controls are easier to hit; the BG swatch no longer overlaps its dropdown arrow; the compare / contact-sheet glyphs were redrawn full-bleed for crisper rendering.</li>
+        </ul>
+        <h4>Fixes</h4>
+        <ul>
+          <li class="fix"><strong>Prefetch rear-view re-prioritised</strong> — the small backward-margin window during playback was iterating farthest-frame-first and competing with the forward fill for worker time. It now decodes from the playhead outward and ranks strictly below the forward window, matching the documented intent.</li>
+          <li class="fix"><strong>File → New now fully stops cache filling</strong> — both the RAM decode pool AND the disk-cache writer queue are cleared, so the cache no longer keeps growing after Ctrl+N with the abandoned sequence's frames.</li>
+          <li class="fix"><strong>Launcher robustness</strong> — <code>launch_app.bat</code> / <code>img_player.bat</code> prepend this repo's <code>src</code> to the import path, so they always run the current checkout instead of whatever (possibly stale) <code>img_player</code> is pip-installed in the conda env.</li>
+          <li class="fix"><strong>Splash version no longer drifts</strong> — the boot splash showed a stale version baked into its PNG; the asset is regenerated from <code>__version__</code> on every release.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <div class="release-meta">
         <span class="ver">v1.6.0</span>
         <span class="date">2026-05-20</span>
         <span class="tagline">"Studio Dark v2" — interface redesign: new design system, icon library, header info strip &amp; status bar.</span>
