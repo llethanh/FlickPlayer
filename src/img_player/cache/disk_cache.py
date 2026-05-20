@@ -786,6 +786,33 @@ class DiskCache:
             # opportunistic, not a guarantee.
             log.debug("DiskCache write queue full; dropping put for %s", key[:16])
 
+    def discard_pending_writes(self) -> int:
+        """Drop every queued-but-not-yet-written blob without writing it.
+
+        Called when the app abandons the current sequence (File → New).
+        The queued frames belong to the sequence being torn down, so
+        there is no point spending disk I/O — and disk-cache growth —
+        finishing them. Returns the number of writes discarded.
+
+        Thread-safe. Racing the writer thread is benign: at worst it
+        completes one in-flight write it had already dequeued before
+        this call.
+        """
+        dropped = 0
+        while True:
+            try:
+                task = self._write_queue.get_nowait()
+            except queue.Empty:
+                break
+            if task is _SHUTDOWN_SENTINEL:
+                # Never swallow a shutdown request — re-queue and stop.
+                self._write_queue.put_nowait(_SHUTDOWN_SENTINEL)
+                break
+            dropped += 1
+        if dropped:
+            log.debug("DiskCache discarded %d pending write(s)", dropped)
+        return dropped
+
     def contains_keys(self, keys) -> set[str]:  # type: ignore[no-untyped-def]
         """Bulk-existence query — return the subset of ``keys`` that
         are present in the index.

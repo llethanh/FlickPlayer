@@ -409,12 +409,19 @@ class FrameCache:
                 return False
         return self._pool.submit(priority, frame, lambda: self._decode_and_store(frame, path))
 
-    def request_range(self, start: int, end: int, direction: int = 1) -> None:
+    def request_range(
+        self, start: int, end: int, direction: int = 1,
+        base_priority: int = 0,
+    ) -> None:
         """Prefetch frames from `start` to `end` (inclusive).
 
         ``direction`` only selects the iteration order (so earlier-in-direction
         frames get lower priority numbers and thus decode first). Out-of-sequence
         bounds are clamped.
+
+        ``base_priority`` is added to every frame's priority so a caller can
+        rank one whole range below another — e.g. a low-priority rear-view
+        window that should only decode once the main forward prefetch is done.
         """
         if self._sequence is None:
             return
@@ -426,7 +433,7 @@ class FrameCache:
             return
         frames = range(lo, hi + 1) if direction >= 0 else range(hi, lo - 1, -1)
         for i, f in enumerate(frames):
-            self.request(f, priority=i)
+            self.request(f, priority=base_priority + i)
 
     def wait_idle(self, timeout: float = 5.0) -> bool:
         """Block until the worker pool has nothing left to do. For tests."""

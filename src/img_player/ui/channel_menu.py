@@ -116,12 +116,15 @@ class _ChannelRow(QFrame):  # type: ignore[misc]
         self._label.mousePressEvent = self._on_label_clicked  # type: ignore[method-assign]
         layout.addWidget(self._label, 1)
 
-        # Cache-fill fraction painted as a translucent orange bar in
-        # the label's geometry — same idiom as the timeline cache
-        # bar (``C.CACHE_BAR`` fill + ``C.CACHE_BAR_BORDER`` outline)
-        # so the two readouts feel kin. Negative = "no data, paint
-        # nothing" (multi-layer / no-AOV stacks stay clean).
+        # Cache-fill fractions painted as translucent bars in the
+        # label's geometry — same idiom as the timeline cache bar so
+        # the two readouts feel kin. ``_fraction`` is the RAM tier
+        # (orange ``C.CACHE_BAR``); ``_disk_fraction`` is the on-disk
+        # tier (blue ``C.CACHE_BAR_DISK``) drawn behind it. Negative
+        # = "no data, paint nothing" (multi-layer / no-AOV stacks
+        # stay clean).
         self._fraction: float = -1.0
+        self._disk_fraction: float = -1.0
 
     # -------------------------------------------------- public API
 
@@ -151,6 +154,18 @@ class _ChannelRow(QFrame):  # type: ignore[misc]
             f"Cached: {cached} / {total} frames"
         )
 
+    def set_disk_progress(self, disk_cached: int, total: int) -> None:
+        """Update the row's on-disk fill fraction (blue tier). Polled
+        at a slower cadence than :meth:`set_progress` since the disk
+        scan is heavier. ``total <= 0`` resets to "no data"."""
+        new_fraction = (
+            -1.0 if total <= 0
+            else max(0.0, min(1.0, disk_cached / total))
+        )
+        if new_fraction != self._disk_fraction:
+            self._disk_fraction = new_fraction
+            self.update()
+
     @property
     def radio(self) -> QRadioButton:
         return self._radio
@@ -158,24 +173,22 @@ class _ChannelRow(QFrame):  # type: ignore[misc]
     # -------------------------------------------------- paint
 
     def paintEvent(self, event) -> None:  # type: ignore[no-untyped-def]
-        """Paint the cache-fill bar behind the label, then let Qt
+        """Paint the cache-fill bars behind the label, then let Qt
         render the regular children (radio + label) on top.
 
-        Bar is drawn over the label's geometry only — not the radio
-        — so the indicator stays readable. Same colour idiom as the
-        timeline cache bar (translucent accent fill + opaque accent
-        outline) for visual consistency."""
-        if self._fraction >= 0:
+        Two tiers: the on-disk fill (blue) is drawn first, the RAM
+        fill (orange) overpaints its portion — so a group warm on
+        disk but not promoted to RAM reads as blue, and the in-RAM
+        head of the bar reads as orange. Bars are drawn over the
+        label's geometry only — not the radio — so the indicator
+        stays readable."""
+        if self._fraction >= 0 or self._disk_fraction >= 0:
             painter = QPainter(self)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
             label_geom = self._label.geometry()
             # Start the bar a few pixels before the label's first
             # character so the fill never crashes flush against the
-            # text. We borrow the radio↔label gutter (``S.SM``) — the
-            # bar fills this gap without ever leaking under the radio
-            # ring. The cream overpaint inside the label is keyed off
-            # the same fraction; the small left-side offset stays
-            # purely decorative.
+            # text. We borrow the radio↔label gutter (``S.SM``).
             left_offset = S.SM
             full = QRectF(
                 label_geom.x() - left_offset,
@@ -183,19 +196,28 @@ class _ChannelRow(QFrame):  # type: ignore[misc]
                 label_geom.width() + left_offset,
                 label_geom.height(),
             )
-            fill_w = full.width() * self._fraction
-            if fill_w > 0:
-                fill_rect = QRectF(full.x(), full.y(), fill_w, full.height())
+
+            def _draw_tier(fraction: float, fill, border) -> None:  # type: ignore[no-untyped-def]
+                if fraction <= 0:
+                    return
+                fill_w = full.width() * fraction
+                if fill_w <= 0:
+                    return
+                rect = QRectF(full.x(), full.y(), fill_w, full.height())
                 # Translucent fill — text reads cleanly through it.
                 painter.setPen(Qt.PenStyle.NoPen)
-                painter.setBrush(QBrush(C.CACHE_BAR))
-                painter.drawRect(fill_rect)
+                painter.setBrush(QBrush(fill))
+                painter.drawRect(rect)
                 # Opaque outline tracing the fill — half-pixel inset
-                # so the line lands inside the rect rather than on
-                # the boundary (sub-pixel crispness at any DPI).
+                # so the line lands inside the rect (sub-pixel
+                # crispness at any DPI).
                 painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.setPen(QPen(C.CACHE_BAR_BORDER, 1.0))
-                painter.drawRect(fill_rect.adjusted(0.5, 0.5, -0.5, -0.5))
+                painter.setPen(QPen(border, 1.0))
+                painter.drawRect(rect.adjusted(0.5, 0.5, -0.5, -0.5))
+
+            # Disk tier first so the orange RAM tier overpaints it.
+            _draw_tier(self._disk_fraction, C.CACHE_BAR_DISK, C.CACHE_BAR_DISK_BORDER)
+            _draw_tier(self._fraction, C.CACHE_BAR, C.CACHE_BAR_BORDER)
         super().paintEvent(event)
 
     # -------------------------------------------------- handlers
@@ -243,6 +265,11 @@ class ChannelMenu(QMenu):  # type: ignore[misc]
         # visible to refresh each row's pip. Stays at ``None`` for
         # tests / standalone use of the menu.
         self._progress_provider: Callable[[], dict[str, tuple[int, int]]] | None = None
+        # Disk-cache fill provider — same shape as the RAM one but
+        # heavier (per-frame hash + SQLite query), so it's polled
+        # once every ``_DISK_POLL_EVERY`` ticks rather than each tick.
+        self._disk_progress_provider: Callable[[], dict[str, tuple[int, int]]] | None = None
+        self._disk_poll_tick = 0
         self._progress_timer = QTimer(self)
         self._progress_timer.setInterval(250)
         self._progress_timer.timeout.connect(self._refresh_progress)
@@ -316,17 +343,28 @@ class ChannelMenu(QMenu):  # type: ignore[misc]
         self,
         provider: Callable[[], dict[str, tuple[int, int]]] | None,
     ) -> None:
-        """Wire (or unwire) the cache-fill data source. Called once
-        at app startup with a closure over the cache; subsequent
+        """Wire (or unwire) the RAM cache-fill data source. Called
+        once at app startup with a closure over the cache; subsequent
         ``aboutToShow`` events poll the provider and push the
         ``(cached, total)`` pair into each row's pip."""
         self._progress_provider = provider
+
+    def set_disk_progress_provider(
+        self,
+        provider: Callable[[], dict[str, tuple[int, int]]] | None,
+    ) -> None:
+        """Wire (or unwire) the on-disk cache-fill data source.
+
+        Heavier than the RAM provider, so it's polled once every
+        ``_DISK_POLL_EVERY`` ticks (~1.5 s) rather than each 250 ms
+        tick — see :meth:`_refresh_progress`."""
+        self._disk_progress_provider = provider
 
     def update_progress(
         self, progress: dict[str, tuple[int, int]] | None,
     ) -> None:
         """Push a fresh ``{group_label: (cached, total)}`` map into
-        every row's pip. Missing labels reset their pip to "no
+        every row's RAM pip. Missing labels reset their pip to "no
         data"; unknown labels in the input are silently ignored."""
         if progress is None:
             for row in self._row_by_label.values():
@@ -336,13 +374,47 @@ class ChannelMenu(QMenu):  # type: ignore[misc]
             cached, total = progress.get(label, (0, 0))
             row.set_progress(cached, total)
 
+    def update_disk_progress(
+        self, progress: dict[str, tuple[int, int]] | None,
+    ) -> None:
+        """Push a fresh ``{group_label: (disk_cached, total)}`` map
+        into every row's blue on-disk pip."""
+        if progress is None:
+            for row in self._row_by_label.values():
+                row.set_disk_progress(0, 0)
+            return
+        for label, row in self._row_by_label.items():
+            disk_cached, total = progress.get(label, (0, 0))
+            row.set_disk_progress(disk_cached, total)
+
+    # Poll the (heavier) disk provider once every N RAM ticks.
+    _DISK_POLL_EVERY = 6  # 6 × 250 ms ≈ 1.5 s
+
     def _on_about_to_show(self) -> None:
         # Push a fresh tick immediately so the user doesn't see the
         # previous (stale) progress for 250 ms before the timer fires.
+        # Reset the disk counter so the disk tier is refreshed at once
+        # on open rather than waiting out a partial cycle.
+        self._disk_poll_tick = 0
         self._refresh_progress()
         self._progress_timer.start()
 
+    def _refresh_disk_progress(self) -> None:
+        if self._disk_progress_provider is None:
+            return
+        try:
+            data = self._disk_progress_provider()
+        except Exception:
+            data = None
+        self.update_disk_progress(data)
+
     def _refresh_progress(self) -> None:
+        # On-disk tier — refreshed on the first tick and then once
+        # every ``_DISK_POLL_EVERY`` ticks (the disk scan is heavier
+        # than the RAM one). The RAM tier below stays at full cadence.
+        if self._disk_poll_tick % self._DISK_POLL_EVERY == 0:
+            self._refresh_disk_progress()
+        self._disk_poll_tick += 1
         if self._progress_provider is None:
             return
         try:

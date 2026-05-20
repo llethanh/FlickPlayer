@@ -1000,6 +1000,7 @@ class MasterFrameCache:
 
     def request_range(
         self, start: int, end: int, direction: int = 1,
+        base_priority: int = 0,
     ) -> None:
         """Pre-fetch master frames in ``[start, end]`` (inclusive).
 
@@ -1007,6 +1008,10 @@ class MasterFrameCache:
         in-direction frames get lower priority numbers and decode
         first. Out-of-range bounds are clamped to the stack's
         master range so we don't queue work for empty regions.
+
+        ``base_priority`` is added to every frame's priority so a
+        caller can rank one whole range below another — e.g. a
+        low-priority rear-view window behind the forward prefetch.
         """
         if not self._stack:
             return
@@ -1017,7 +1022,7 @@ class MasterFrameCache:
             return
         frames = range(lo, hi + 1) if direction >= 0 else range(hi, lo - 1, -1)
         for i, f in enumerate(frames):
-            self.request(f, priority=i)
+            self.request(f, priority=base_priority + i)
 
     def set_current_frame(self, master_frame: int) -> None:
         """Inform the cache of the playhead position (used for eviction
@@ -1523,6 +1528,55 @@ class MasterFrameCache:
                         count += 1
                 out[grp.label] = (count, total)
         return out
+
+    def alt_channel_disk_progress(self) -> dict[str, tuple[int, int]]:
+        """Per-channel-group **on-disk** fill ``(disk_cached, total)``
+        for the focused layer — companion to :meth:`alt_channel_progress`
+        (which counts RAM).
+
+        Heavier than the RAM scan: one source-key hash per group ×
+        frame plus a bulk SQLite existence query. Callers poll it at
+        a slower cadence (~1.5 s) than the 250 ms RAM progress.
+
+        Empty when the disk cache is disabled or alt prefetch doesn't
+        apply (multi-layer stack, no groups, empty / hidden layer).
+        """
+        if self._disk_cache is None:
+            return {}
+        layer = self._focused_alt_layer()
+        if layer is None:
+            return {}
+        from img_player.sequence.channels import group_channels
+        groups = group_channels(layer.sequence.channel_names)
+        if not groups:
+            return {}
+        first, last = layer.master_start, layer.master_end
+        total = last - first + 1
+        if total <= 0:
+            return {}
+        if not layer.visible:
+            return {grp.label: (0, total) for grp in groups}
+        # Force the path / mtime index so the per-frame key compute
+        # below doesn't bail out frame-by-frame.
+        self._ensure_index(layer)
+        keys_by_group: dict[str, list[str]] = {}
+        all_keys: set[str] = set()
+        for grp in groups:
+            ks: list[str] = []
+            channels = list(grp.channels)
+            for mf in range(first, last + 1):
+                dk = self._source_key_for_single_layer(layer, mf, channels)
+                if dk is not None:
+                    ks.append(dk)
+                    all_keys.add(dk)
+            keys_by_group[grp.label] = ks
+        present = (
+            self._disk_cache.contains_keys(all_keys) if all_keys else set()
+        )
+        return {
+            label: (sum(1 for k in ks if k in present), total)
+            for label, ks in keys_by_group.items()
+        }
 
     def _signature_at(self, master_frame: int) -> str:
         """Stable string id for the chain × channel-selection tuple

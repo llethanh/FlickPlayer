@@ -1051,6 +1051,12 @@ class ImgPlayerApp:
         w.transport.channel_menu.set_progress_provider(
             self._cache.alt_channel_progress,
         )
+        # On-disk tier (blue pip) — same idea but the disk scan is
+        # heavier (per-frame hash + SQLite query), so the menu polls
+        # this one at a slower cadence than the RAM provider above.
+        w.transport.channel_menu.set_disk_progress_provider(
+            self._cache.alt_channel_disk_progress,
+        )
 
     def _wire_compare(self) -> None:
         """Compare-mode signals: transport button + band + shortcuts."""
@@ -3572,8 +3578,16 @@ class ImgPlayerApp:
         and the timeline get wiped. The user can then File → Open a
         different sequence with all their preferences still in place.
         """
-        # Stop any ongoing playback first; ticking a detached cache
-        # would just spin no-ops.
+        # Null the controller's sequence reference BEFORE pausing.
+        # ``pause()`` runs ``replan_prefetch`` whenever a *playing*
+        # controller stops — which would re-queue the whole sequence
+        # (+ alt-channel) into the worker pool just before we tear it
+        # all down. With ``_sequence`` already None that replan is a
+        # guard-clause no-op, so New doesn't spawn a fresh prefetch
+        # wave it then has to cancel.
+        self._controller._sequence = None  # noqa: SLF001 — there's no public detach
+        # Stop any ongoing playback; ticking a detached cache would
+        # just spin no-ops.
         self._controller.pause()
         # Exit any review mode (compare / contact-sheet) before the
         # layer-stack reset below — otherwise the bands stay
@@ -3591,12 +3605,26 @@ class ImgPlayerApp:
         # state benefits from any RAM the user has freed in the
         # meantime.
         self._retune_for_current_ram()
-        self._controller._sequence = None  # noqa: SLF001 — there's no public detach
         # ``cache.detach()`` empties the LayerStack which cascades
         # via signals to the cache's clear() and the LayerPanel
         # rebuild. With FrameCache the call simply clears its
         # internal state (no stack involvement).
         self._cache.detach()
+        # Explicitly drop the worker pool's pending decode queue so
+        # any prefetch still queued from before Ctrl+N stops — without
+        # this the workers keep decoding into the (now sequence-less)
+        # cache and the user sees the cache bar carry on filling.
+        # ``detach`` clears the pool as a side effect via
+        # ``_on_layers_changed``, but relying on that is fragile —
+        # make the intent explicit, same as ``seek()`` does.
+        self._cache.clear_pending()
+        # The disk cache has its OWN background writer thread with a
+        # queue (up to 128 blobs) fed by the decode workers. Clearing
+        # the RAM worker pool above doesn't touch it, so without this
+        # the disk cache keeps growing after New as the writer thread
+        # drains the abandoned sequence's queued frames. Drop them.
+        if self._disk_cache is not None:
+            self._disk_cache.discard_pending_writes()
         # Clear in-memory annotation + comment data (their sidecar
         # path tracking goes too).
         self._annotation_store.load_from_dict({})

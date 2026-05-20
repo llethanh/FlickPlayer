@@ -38,6 +38,15 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM ---- Force THIS repo's source onto the import path ------------------
+REM ``python -m img_player`` would otherwise import whatever ``img_player``
+REM is pip-installed in the conda env. On a machine whose env has a stale
+REM editable / non-editable install, that can be an OLD version — the
+REM classic "the launcher runs 1.5.5 while the repo is on 1.6" symptom.
+REM Prepending this repo's ``src`` guarantees the launcher always runs
+REM THIS checkout's code, regardless of the env's install state.
+set PYTHONPATH=%~dp0src;%PYTHONPATH%
+
 REM ---- Run the app ----------------------------------------------------
 python -m img_player %*
 set EXIT_CODE=%ERRORLEVEL%

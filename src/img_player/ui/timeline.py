@@ -225,10 +225,10 @@ class Timeline(QWidget):  # type: ignore[misc]
 
     def set_disk_available_frames(self, frames: frozenset[int]) -> None:
         """Frames known to live in the on-disk cache. Painted with a
-        dim orange wash behind the bright "in RAM" cached run, so
-        the user can tell at a glance that a session reopen is
-        already warm on disk before any frame is actually scrubbed
-        back into RAM. Idempotent: same set → no repaint."""
+        blue wash behind the bright orange "in RAM" cached run, so the
+        user can tell at a glance — by colour — which frames are warm
+        on disk vs. promoted to RAM. Idempotent: same set → no
+        repaint."""
         if frames == self._disk_available_frames:
             return
         self._disk_available_frames = frames
@@ -470,14 +470,12 @@ class Timeline(QWidget):  # type: ignore[misc]
             painter.setPen(QPen(QColor("#909090"), 1))
             self._draw_runs(painter, self._gap_frames)
 
-        # Pass 0.5 — dim-orange wash for frames known to be on disk
-        # (but not yet promoted to RAM). Drawn before the bright
-        # "in-RAM" pass so the bright orange overpaints when a frame
-        # ends up in both sets. Set difference removes the RAM /
-        # missing / gap overlap so this pass only paints "disk-only"
-        # frames. Brush is a 50%-saturation accent + 60% alpha → reads
-        # as a subdued version of the cache bar rather than a separate
-        # colour.
+        # Pass 0.5 — blue wash for frames known to be on disk (but not
+        # yet promoted to RAM). Drawn before the bright "in-RAM" pass
+        # so the orange overpaints when a frame ends up in both sets.
+        # Set difference removes the RAM / missing / gap overlap so
+        # this pass only paints "disk-only" frames. Blue keeps the
+        # disk tier visually distinct from the orange RAM cache.
         disk_only = (
             self._disk_available_frames
             - self._cached_frames
@@ -485,8 +483,8 @@ class Timeline(QWidget):  # type: ignore[misc]
             - self._gap_frames
         )
         if disk_only:
-            painter.setBrush(QColor(232, 144, 28, 60))
-            painter.setPen(QPen(QColor(232, 144, 28, 120), 1))
+            painter.setBrush(C.CACHE_BAR_DISK)
+            painter.setPen(QPen(C.CACHE_BAR_DISK_BORDER, 1))
             self._draw_runs(painter, disk_only)
 
         # Pass 1 — orange runs of *real* cached frames (cached minus

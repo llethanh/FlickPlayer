@@ -130,8 +130,14 @@ class C:
     MARKER_IO        = QColor("#DC3C3C")
     RANGE_BAR        = ACC
     CACHE_BAR_BG     = BG_DEEP
-    CACHE_BAR        = QColor(0xE8, 0x90, 0x1C, 128)   # ACCENT @ 50%
+    CACHE_BAR        = QColor(0xE8, 0x90, 0x1C, 128)   # ACCENT @ 50% — RAM cache
     CACHE_BAR_BORDER = ACC
+    # Disk-cache tier — frames that live in the on-disk cache but are
+    # not (yet) promoted to RAM. Blue so it reads as a distinct tier
+    # from the orange RAM cache, on the timeline bar AND the channel
+    # menu's per-group fill.
+    CACHE_BAR_DISK        = QColor(0x3D, 0x9A, 0xE0, 120)  # blue @ ~47%
+    CACHE_BAR_DISK_BORDER = QColor("#5BA8E5")
 
     # Timeline tick colours (kept close to the previous values but
     # nudged toward T_SEC / T_DIM so the timeline reads as a quiet

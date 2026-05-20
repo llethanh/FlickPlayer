@@ -42,6 +42,10 @@ if errorlevel 1 (
 )
 
 pushd "%~dp0"
+REM Force THIS repo's source onto the import path so ``python -m
+REM img_player`` always runs this checkout — not whatever (possibly
+REM stale) ``img_player`` is pip-installed in the conda env.
+set PYTHONPATH=%~dp0src;%PYTHONPATH%
 python -m img_player %*
 set EXIT_CODE=%ERRORLEVEL%
 popd

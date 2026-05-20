@@ -842,21 +842,29 @@ class PlayerController(QObject):  # type: ignore[misc]  # mypy: QObject is Any
         """
         ahead = self._prefetch_ahead
         behind = type(self).PREFETCH_BEHIND
+        # The rear-view window is ranked entirely BELOW the forward
+        # window: ``base_priority = ahead + 1`` puts every rear frame
+        # after every forward frame in the worker min-heap, so the
+        # forward fill always wins decode time. The rear range is also
+        # iterated FROM the playhead outward (direction reversed vs.
+        # the forward window) so the frame just behind the cursor —
+        # the one a quick scrub-back needs first — decodes before the
+        # deeper rear frames.
         if direction >= 0:
             self._cache.request_range(frame, frame + ahead, direction=1)
-            # Rear-view: small set of recent frames, ranked low-priority
-            # so they only land when the forward queue is satisfied.
             self._cache.request_range(
                 max(frame - behind, self._effective_in_frame()),
                 frame,
-                direction=1,
+                direction=-1,
+                base_priority=ahead + 1,
             )
         else:
             self._cache.request_range(frame - ahead, frame, direction=-1)
             self._cache.request_range(
                 frame,
                 min(frame + behind, self._effective_out_frame()),
-                direction=-1,
+                direction=1,
+                base_priority=ahead + 1,
             )
 
     # Frames *behind* the playhead in the current play direction are
