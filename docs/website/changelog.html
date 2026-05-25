@@ -44,6 +44,27 @@
 
     <article class="release">
       <div class="release-meta">
+        <span class="ver">v1.7.1</span>
+        <span class="date">2026-05-21</span>
+        <span class="tagline">Auto-detect colorspace for video, polished review-notes save flow, smaller UI fixes.</span>
+      </div>
+      <div class="release-body">
+        <h4>New</h4>
+        <ul>
+          <li class="new"><strong>Source colorspace auto-detected for video files</strong>, on par with the image-sequence path. Reads the container's FFmpeg / PyAV color tags (<code>color_primaries</code> + <code>color_transfer</code>) and maps them to the active OCIO config: <strong>Rec.709</strong> (the dominant SDR case, also the fallback when tags are unspecified), <strong>HDR PQ</strong> (<code>smpte2084</code>), <strong>HDR HLG</strong> (<code>arib-std-b67</code>), <strong>Rec.2020 SDR</strong>, <strong>Display P3</strong> (<code>smpte432</code> / <code>smpte431</code>), <strong>sRGB</strong> (<code>iec61966-2-1</code>), <strong>Rec.601 NTSC / PAL</strong>. Logged the same way as the image path (<code>auto-detect: source colorspace = …</code>).</li>
+          <li class="new"><strong>"About Flick Player" now shows the running version</strong> — pulled from <code>__version__</code>, same source as <code>--version</code> and the splash, so a release bump propagates everywhere.</li>
+        </ul>
+        <h4>Fixes</h4>
+        <ul>
+          <li class="fix"><strong>"Reveal in Explorer" works for UNC paths and paths with spaces</strong>. The previous list-form invocation had Windows wrap the whole <code>/select,&lt;path&gt;</code> token in quotes when the path contained spaces, which Explorer can't parse — it expects <code>/select,"path"</code>. Switched to a single command-line string with the path quoted, so paths like <code>\\server\share\png upscale Gaia 1\frame.0001.png</code> now highlight the file correctly.</li>
+          <li class="fix"><strong>Save Session also persists pending review notes</strong>. The session file and the annotation / comment sidecar (<code>.img_player_annotations.json</code>) are two distinct stores; <em>Save Session</em> only wrote the first, so the close-time "Save review notes?" prompt fired right after an explicit save. The sidecar save path was extracted into a shared helper and is now called from both flows — explicit saves leave a clean slate, and the close prompt only fires when there's actually something unsaved.</li>
+          <li class="fix"><strong>Color-panel combos no longer truncate item names</strong>. Display / view / source colorspace lists run to ~30 characters ("Rec.1886 Rec.709 - Display", "ST2084-P3-D65 - Display"); the popups now widen to fit the longest entry while the combo button itself keeps its layout width.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <div class="release-meta">
         <span class="ver">v1.7.0</span>
         <span class="date">2026-05-20</span>
         <span class="tagline">Cache tiers in colour, white/orange toggle buttons, cleaner New, launcher robustness.</span>
