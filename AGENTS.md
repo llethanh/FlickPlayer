@@ -21,7 +21,7 @@ Deux emplacements possibles du repo, **selon ce que tu fais** :
 | Emplacement | Quand l'utiliser |
 |---|---|
 | `G:\Mon Drive\_PERSO\IA\VibeCod\img_player\img_player_V001\` | Édition de code, sessions Codex, tests pytest |
-| `C:\Users\<user>\dev\img_player\` | Build PyInstaller (`build_exe.bat`) — Drive sync casse le bundle |
+| `C:\dev\img_player\` | Build PyInstaller (`build_exe.bat`) — Drive sync casse le bundle |
 
 GitHub (`https://github.com/llethanh/img_player.git`) est la source de
 vérité. Drive et le clone local sont deux miroirs synchronisés via
@@ -42,7 +42,7 @@ conda env create -f environment.yml
 conda activate img_player
 
 # Si la machine doit aussi builder (= produire un .exe)
-git clone https://github.com/llethanh/img_player.git C:\Users\<user>\dev\img_player
+git clone https://github.com/llethanh/img_player.git C:\dev\img_player
 ```
 
 Ensuite, sessions normales = juste `git pull` puis on code.
@@ -63,12 +63,12 @@ vs source-frame confusion + obsolete UI feature removed).
 
 ## Builder un bundle
 
-⚠️ Uniquement depuis le clone local (`C:\Users\<user>\dev\img_player`).
+⚠️ Uniquement depuis le clone local (`C:\dev\img_player`).
 Le `.bat` détecte les chemins Drive / OneDrive / Dropbox et refuse de
 tourner.
 
 ```cmd
-cd C:\Users\<user>\dev\img_player
+cd C:\dev\img_player
 git pull
 build_exe.bat
 ```
