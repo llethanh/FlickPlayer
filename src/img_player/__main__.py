@@ -232,7 +232,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "GUI on those sequence(s). Multiple paths trigger the same "
             "multi-source picker as a multi-drop on the viewer area, so "
             "you can drag-drop several folders / sequence files / videos "
-            "directly onto FlickPlayer.exe (or onto img_player.bat) and "
+            "directly onto FlickPlayer.exe (or onto FlickPlayer.bat) and "
             "they all open in one shot."
         ),
     )

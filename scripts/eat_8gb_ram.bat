@@ -1,6 +1,6 @@
 @echo off
 REM Helper to allocate ~4 GB of RAM for testing slice 3's boot-time memory
-REM pressure check. Activates the same conda env as img_player.bat first
+REM pressure check. Activates the same conda env as FlickPlayer.bat first
 REM (otherwise numpy crashes on import — DLLs not in PATH).
 
 setlocal
