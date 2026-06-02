@@ -67,6 +67,14 @@ def user_prefs_dir() -> Path:
     return _appdata_roaming_root() / APP_DIR_NAME
 
 
+def user_burnins_dir() -> Path:
+    """Where user-authored burnin templates live (``*.burnin.json``).
+    Roamed so the templates follow the user across machines on a
+    Windows roaming profile — same rationale as ``user_prefs_dir``.
+    """
+    return _appdata_roaming_root() / APP_DIR_NAME / "burnins"
+
+
 def disk_cache_default_dir() -> Path:
     """Default location for the on-disk frame cache. Local (not roamed)."""
     return _appdata_local_root() / APP_DIR_NAME / "disk_cache"

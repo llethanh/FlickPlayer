@@ -21,6 +21,9 @@ from img_player.annotate import (
     ToolKind,
     save_annotations,
 )
+from img_player.burnins.builtins import BUILTINS as _BURNIN_BUILTINS
+from img_player.burnins.builtins import builtin_template as _builtin_burnin
+from img_player.burnins.tokens import RenderContext as _BurninRenderContext
 # Handlers are hoisted to module top (they were lazy-imported at 17
 # call sites, several of which fire per-frame on ``_on_frame_changed``).
 # All ``*_handler`` modules TYPE_CHECKING-import ImgPlayerApp so the
@@ -783,6 +786,7 @@ class ImgPlayerApp:
         self._wire_color_and_zoom()
         self._wire_annotations()
         self._wire_keyboard_shortcuts()
+        self._wire_burnins()
 
     def _wire_runtime_monitor(self) -> None:
         """Runtime monitor (slice 5) → status bar. The monitor emits
@@ -1278,6 +1282,11 @@ class ImgPlayerApp:
         visibly trail by a frame.
         """
         self._refresh_header_strip_frames(frame)
+        # Burnin overlay follows the same frame-change tick: builds a
+        # fresh RenderContext (frame, layer, sequence, …) and pushes
+        # it to the overlay so the {frame}/{layer_name} tokens stay
+        # live during playback.
+        self._refresh_burnin_context(frame)
         # Re-evaluate the active audio layer — the playhead may have
         # crossed a coverage boundary (entered / exited a clip) which
         # changes whether any layer should be feeding samples. Cheap
@@ -1883,6 +1892,15 @@ class ImgPlayerApp:
                 per_tile_strokes.append(
                     self._annotation_store.strokes_at_for(layer.id, frame),
                 )
+
+        # Burnins are intentionally NOT baked into the contact sheet
+        # — the user's call: in a grid, the per-tile burnin bars
+        # crowded each cell and competed with the actual image for
+        # attention. The Show-burnins toggle therefore only affects
+        # the live single-image overlay; CS composites always come
+        # out clean. The live overlay also stays suppressed while CS
+        # is active (see ``_refresh_burnin_context``), so the burnin
+        # is fully absent in this mode.
         composite = render_contact_sheet(
             tiles,
             names=names,
@@ -1894,6 +1912,8 @@ class ImgPlayerApp:
             label_size=self._contact_sheet_state.label_size,
             output_divisor=self._contact_sheet_state.output_divisor,
             per_tile_strokes=per_tile_strokes,
+            burnin_template=None,
+            per_tile_burnin_contexts=None,
             # Pass the per-layer source dimensions so the bake math
             # can scale strokes from layer-source-space into cell-
             # space. We use the first non-None tile's shape as the
@@ -1911,6 +1931,301 @@ class ImgPlayerApp:
         )
         self._display_array(composite)
         return True
+
+    # ------------------------------------------------------------------ Burnins
+
+    def _wire_burnins(self) -> None:
+        """Initialise the burnin overlay from preferences.
+
+        Loads the active template, pushes it to the overlay, applies
+        the user's on/off toggle and seeds a first :class:`RenderContext`
+        so the overlay paints immediately rather than waiting for the
+        first frame-changed signal. Runs once during ``App.__init__``,
+        after every other widget is wired so the overlay finds the
+        controller / layer-stack / window in their final shape.
+        """
+        self._burnin_user_toggle = bool(self._prefs.burnin_enabled)
+        self._active_burnin_slug = self._prefs.burnin_template_slug
+        # Hook the storage layer up to the live shared-burnin-dir
+        # pref so the editor's combo + the active-template resolver
+        # both see whatever the user last configured. Stored as a
+        # lambda so re-reading the pref always returns the current
+        # value (the user can change the path at any time without
+        # restarting the app).
+        from img_player.burnins.storage import (  # noqa: PLC0415
+            set_shared_dir_provider,
+        )
+        set_shared_dir_provider(lambda: self._prefs.burnin_shared_dir)
+        template = self._load_burnin_template(self._active_burnin_slug)
+        self._window.viewer.burnin_overlay.set_template(template)
+        # Wire the View menu's toggle + template-pick signals through
+        # the App so the menu state, the preference and the overlay
+        # stay in sync.
+        if hasattr(self._window, "burnin_toggle_requested"):
+            self._window.burnin_toggle_requested.connect(
+                self.set_burnin_enabled,
+            )
+        if hasattr(self._window, "burnin_template_requested"):
+            self._window.burnin_template_requested.connect(
+                self.set_burnin_template_slug,
+            )
+        if hasattr(self._window, "burnin_editor_requested"):
+            self._window.burnin_editor_requested.connect(
+                self._open_burnin_editor,
+            )
+        # Mode transitions (compare / contact-sheet) flip the burnin's
+        # effective visibility — refresh immediately rather than
+        # waiting for the next frame_changed (which never fires if
+        # playback is paused at toggle time). The QTimer hop defers
+        # to the next event-loop tick so the mode handler has
+        # finished mutating the state by the time we read it.
+        for sig_name in (
+            "compare_toggle_requested",
+        ):
+            sig = getattr(self._window, sig_name, None)
+            if sig is not None:
+                sig.connect(self._schedule_burnin_refresh)
+        for sig_name in ("compare_toggled", "contact_sheet_toggled"):
+            sig = getattr(self._window.transport, sig_name, None)
+            if sig is not None:
+                sig.connect(self._schedule_burnin_refresh)
+        # Populate the View → Active burnin template submenu with
+        # builtins + any user templates the editor saved in a
+        # previous session.
+        self._refresh_burnin_menu()
+        # Sync the View menu state (checkmark + radio) to match what
+        # we just loaded — without re-firing the toggle / pick signals
+        # (which would write the same value back to prefs).
+        if hasattr(self._window, "set_burnin_menu_state"):
+            self._window.set_burnin_menu_state(
+                self._burnin_user_toggle,
+                self._active_burnin_slug,
+            )
+        # ``current_frame`` may not be set yet at boot — fall back to
+        # 0 so the context build doesn't crash. The first real frame
+        # change overwrites it.
+        cur = getattr(self._controller.state, "current_frame", None) or 0
+        self._refresh_burnin_context(int(cur))
+
+    def _schedule_burnin_refresh(self, *_args, **_kw) -> None:  # type: ignore[no-untyped-def]
+        """Defer a burnin-context refresh to the next event-loop tick.
+        Used by mode-transition signal connections so the refresh
+        observes the *new* state, not the pre-toggle one."""
+        QTimer.singleShot(0, self._refresh_burnin_context_now)
+
+    def _refresh_burnin_context_now(self) -> None:
+        """Refresh the burnin at the current playhead — wrapper for
+        ``QTimer.singleShot`` which needs a no-arg callable."""
+        cur = getattr(self._controller.state, "current_frame", None) or 0
+        self._refresh_burnin_context(int(cur))
+
+    def _load_burnin_template(self, slug: str):  # type: ignore[no-untyped-def]
+        """Resolve a burnin template by slug. User templates (saved
+        by the editor under ``%APPDATA%/FlickPlayer/burnins``) take
+        precedence over builtins of the same slug. Falls back to
+        the shipped ``default`` when the slug is fully unknown — a
+        user template deleted between sessions shouldn't crash
+        boot. Legacy slugs (pre-1.7 ``dailies_default`` /
+        ``minimal`` / ``studio_banner``) are resolved transparently
+        by ``template_for_slug``'s own alias shim."""
+        from img_player.burnins.storage import template_for_slug  # noqa: PLC0415
+        try:
+            return template_for_slug(slug)
+        except KeyError:
+            log.warning(
+                "Burnin template slug %r unknown — falling back to "
+                "'default'.",
+                slug,
+            )
+            return _builtin_burnin("default")
+
+    def _refresh_burnin_menu(self) -> None:
+        """Rebuild the View → Active burnin template submenu from the
+        current on-disk state (user templates may have changed via the
+        editor). Called after the editor closes and on App startup."""
+        from img_player.burnins.storage import list_all_slugs  # noqa: PLC0415
+        if hasattr(self._window, "refresh_burnin_template_menu"):
+            self._window.refresh_burnin_template_menu(
+                list_all_slugs(),
+                getattr(self, "_active_burnin_slug", "default"),
+            )
+
+    def _open_burnin_editor(self) -> None:
+        """Open the burnin template editor — single-instance, raised
+        if already open. Connecting the editor's ``template_applied``
+        signal to :meth:`set_burnin_template_slug` lets "Set as active"
+        push the picked slug into the running viewer immediately.
+
+        Reference safety: we set ``WA_DeleteOnClose`` so the dialog is
+        garbage-collected when the user closes it. Our cached
+        ``self._burnin_editor`` reference would then point at a
+        dangling shiboken handle (Python alive, C++ side gone) — the
+        next ``isVisible()`` raises ``RuntimeError``. Two guards:
+
+        * On ``destroyed`` we ``self._burnin_editor = None`` so the
+          stale handle is discarded.
+        * The probe below catches a leftover stale handle anyway
+          (defensive — covers code paths that didn't go through
+          ``destroyed``, e.g. parent window force-close).
+        """
+        from img_player.ui.burnin_editor import BurninEditorDialog  # noqa: PLC0415
+
+        existing = getattr(self, "_burnin_editor", None)
+        if existing is not None:
+            try:
+                if existing.isVisible():
+                    existing.raise_()
+                    existing.activateWindow()
+                    return
+            except RuntimeError:
+                # ``destroyed`` fired but our cleanup didn't (or the
+                # C++ object died without it). Drop the stale handle
+                # and fall through to create a fresh dialog.
+                self._burnin_editor = None
+        from PySide6.QtCore import Qt  # noqa: PLC0415
+        dialog = BurninEditorDialog(self._window)
+        dialog.setModal(False)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.set_current_slug(
+            getattr(self, "_active_burnin_slug", "default"),
+        )
+        dialog.template_applied.connect(self.set_burnin_template_slug)
+        dialog.shared_dir_changed.connect(self.set_burnin_shared_dir)
+
+        def _on_destroyed(*_a) -> None:  # type: ignore[no-untyped-def]
+            # Drop the cached reference BEFORE refreshing the menu so
+            # the next open path takes the create-fresh branch.
+            self._burnin_editor = None
+            self._refresh_burnin_menu()
+
+        dialog.destroyed.connect(_on_destroyed)
+        self._burnin_editor = dialog
+        dialog.show()
+
+    def set_burnin_enabled(self, on: bool) -> None:
+        """Toggle the burnin overlay on / off. Persists to prefs so
+        the choice survives a restart. Routed through here from the
+        View menu / Ctrl+B shortcut and from the editor's preview
+        toggle. Contact-sheet mode ignores the toggle entirely (CS
+        composites never bake burnins — the user explicitly asked
+        for clean grids), so no CS re-render is kicked here."""
+        on = bool(on)
+        self._burnin_user_toggle = on
+        self._prefs.burnin_enabled = on
+        cur = getattr(self._controller.state, "current_frame", None) or 0
+        self._refresh_burnin_context(int(cur))
+
+    def burnin_enabled(self) -> bool:
+        return getattr(self, "_burnin_user_toggle", False)
+
+    def set_burnin_template_slug(self, slug: str) -> None:
+        """Swap to a different burnin template. Persists the slug
+        for next session. The overlay rebuilds its pixmap on the
+        next paint via the signature change. Contact-sheet mode
+        skips the bake entirely (clean grids — user's call) so we
+        don't kick a CS re-render on template changes either."""
+        self._active_burnin_slug = slug
+        self._prefs.burnin_template_slug = slug
+        template = self._load_burnin_template(slug)
+        self._window.viewer.burnin_overlay.set_template(template)
+        cur = getattr(self._controller.state, "current_frame", None) or 0
+        self._refresh_burnin_context(int(cur))
+
+    def burnin_template_slug(self) -> str:
+        return getattr(self, "_active_burnin_slug", "default")
+
+    def set_burnin_shared_dir(self, path: str) -> None:
+        """Persist the editor-picked shared burnin folder to prefs +
+        refresh the View → Active burnin template submenu so any
+        newly-visible / newly-hidden shared slugs reflect there
+        immediately. The storage layer's
+        :func:`set_shared_dir_provider` already reads ``self._prefs``
+        as a closure so the next storage call sees the new value
+        without re-installing the provider here."""
+        self._prefs.burnin_shared_dir = str(path or "")
+        # Refresh the menu — shared slugs may now appear / disappear,
+        # and the currently-active slug may resolve differently
+        # (e.g. shared shadows builtin).
+        self._refresh_burnin_menu()
+        # Re-load the active template in case it now resolves to a
+        # different file (a freshly-pointed shared library may carry
+        # a "default" override).
+        template = self._load_burnin_template(self._active_burnin_slug)
+        self._window.viewer.burnin_overlay.set_template(template)
+
+    def _refresh_burnin_context(self, master_frame: int) -> None:
+        """Build a fresh :class:`RenderContext` from app state and push
+        it to the overlay. Called from the same hooks as
+        :meth:`_refresh_header_strip_frames` plus the state-change /
+        toggle paths above.
+
+        Also applies the effective visibility — the burnin is
+        suppressed in compare mode (the user explicitly asked for it
+        OFF there) and in contact-sheet mode (per-tile burnins land
+        in a later phase; until then a global overlay over the grid
+        would be confusing).
+        """
+        overlay = getattr(self._window.viewer, "burnin_overlay", None)
+        if overlay is None:
+            return
+        user_on = getattr(self, "_burnin_user_toggle", False)
+        suppressed = (
+            self._compare_state.is_active()
+            or self._contact_sheet_state.is_active()
+        )
+        effective = user_on and not suppressed
+        overlay.set_enabled(effective)
+        if not effective:
+            return
+
+        # Layer at the playhead — same accessor the header strip uses.
+        layer = (
+            self._layer_stack.topmost_visible_at(master_frame)
+            if self._layer_stack else None
+        )
+        # Broad master range upper bound.
+        panel = getattr(self._window, "_layer_panel", None)
+        if panel is not None:
+            _first, last = panel.broad_master_range()
+        elif self._layer_stack:
+            _first, last = self._layer_stack.master_range()
+        elif self._controller.sequence is not None:
+            last = self._controller.sequence.last_frame
+        else:
+            last = 0
+        seq = self._controller.sequence
+        seq_pattern = seq.display_pattern() if seq is not None else ""
+        width = seq.width if seq is not None else None
+        height = seq.height if seq is not None else None
+        # Session name — empty when no session is open.
+        session_path = getattr(self._window, "_current_session_path", None)
+        session_name = session_path.name if session_path is not None else ""
+
+        # Layer-local source frame + range, same numbering the
+        # header strip already shows the user. Empty when no layer
+        # covers the master frame so the burnin shows ``"layer /"``
+        # rather than a wrong number.
+        if layer is not None and layer.covers(master_frame):
+            layer_frame = int(layer.source_frame_at(master_frame))
+            layer_frame_total = max(1, int(layer.layer_out))
+        else:
+            layer_frame = None
+            layer_frame_total = None
+
+        ctx = _BurninRenderContext(
+            frame=int(master_frame),
+            frame_total=int(last) if last and last > 0 else None,
+            layer_frame=layer_frame,
+            layer_frame_total=layer_frame_total,
+            fps=float(self._controller.state.fps)
+            if self._controller.state.fps else None,
+            width=int(width) if width else None,
+            height=int(height) if height else None,
+            sequence=seq_pattern,
+            layer_name=layer.name if layer is not None else "",
+            session_name=session_name,
+        )
+        overlay.set_context(ctx)
 
     def _refresh_header_strip_frames(self, master_frame: int) -> None:
         """Push local-layer / global-timeline frame readouts to the
@@ -3318,6 +3633,7 @@ class ImgPlayerApp:
         # the scrub — without this they only refresh after the
         # debounced seek lands and ``frame_changed`` finally fires.
         self._refresh_header_strip_frames(frame)
+        self._refresh_burnin_context(frame)
         # Defer the expensive part.
         self._pending_seek = frame
         self._scrub_debounce.start()

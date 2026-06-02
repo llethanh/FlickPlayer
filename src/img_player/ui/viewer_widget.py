@@ -83,6 +83,27 @@ class ViewerWidget(QWidget):  # type: ignore[misc]
         self._header_strip = HeaderInfoStrip(self)
         self._header_strip.raise_()
 
+        # Burnin overlay — paints info bars (sequence name, frame
+        # counter, user, date, logos…) over the GL viewport using a
+        # CPU-rendered RGBA pixmap. Hidden by default; the View menu
+        # / Ctrl+B toggles it. Sits BELOW the header strip and the
+        # compare labels in z-order so those review-mode HUDs stay
+        # readable when the user has burnins on. Transparent to
+        # mouse events — clicks fall through to the GL widget.
+        from img_player.ui.burnin_overlay import BurninOverlay  # noqa: PLC0415
+        self._burnin_overlay = BurninOverlay(self)
+        # The overlay needs a handle on the GL widget so it can read
+        # the live image rect (image size × zoom × pan) and follow
+        # the picture on pan / zoom — the burnin sits ON the image,
+        # not on the widget.
+        self._burnin_overlay.attach_gl_viewport(self._gl)
+        # Below the header strip + compare labels but above the GL
+        # widget. We raise the strip + compare labels AFTER to
+        # restore that order.
+        self._burnin_overlay.raise_()
+        self._header_strip.raise_()
+        self._compare_labels.raise_()
+
     @property
     def gl(self) -> GLViewport:
         return self._gl
@@ -102,6 +123,12 @@ class ViewerWidget(QWidget):  # type: ignore[misc]
         See :mod:`img_player.ui.header_strip`."""
         return self._header_strip
 
+    @property
+    def burnin_overlay(self):  # type: ignore[no-untyped-def]
+        """Active burnin overlay — full-widget translucent layer.
+        See :mod:`img_player.ui.burnin_overlay`."""
+        return self._burnin_overlay
+
     def _reposition_header_strip(self) -> None:
         """Pin the header info strip to the bottom edge of the viewer.
         The strip overlays the bottom of the image (the user prefers
@@ -118,6 +145,10 @@ class ViewerWidget(QWidget):  # type: ignore[misc]
         if self._drop_overlay.isVisible():
             self._drop_overlay.setGeometry(self.rect())
         self._reposition_header_strip()
+        # Burnin overlay also tracks the viewer rect — burnins
+        # anchor to the widget edges (not the letterboxed image rect)
+        # so they stay visible regardless of pan / zoom.
+        self._burnin_overlay.setGeometry(self.rect())
         # Compare-mode A/B overlay tracks the viewer rect (it's a
         # plain child, not in the QStackedLayout). Without this it'd
         # stay at its initial 0×0 size and paint nothing.

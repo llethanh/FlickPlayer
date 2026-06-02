@@ -566,6 +566,52 @@ class Preferences:
         self._s.setValue("view/display_timecode", bool(value))
 
     @property
+    def burnin_enabled(self) -> bool:
+        """``True`` if the View → Show burnins toggle was on at last
+        close. The Ctrl+B action and the View menu entry mirror this
+        in the menu state, and the overlay reads it at boot."""
+        return _qbool(self._s.value("view/burnin_enabled", False))
+
+    @burnin_enabled.setter
+    def burnin_enabled(self, value: bool) -> None:
+        self._s.setValue("view/burnin_enabled", bool(value))
+
+    @property
+    def burnin_template_slug(self) -> str:
+        """Active burnin template slug. Defaults to ``"default"`` —
+        the shipped builtin that prints sequence + frame counter on
+        the top bar and user + date on the bottom. Unknown slugs
+        (e.g. a user template that has been deleted) fall back to
+        the builtin at boot rather than rendering an empty overlay.
+        Pre-1.7 prefs that still hold ``"dailies_default"`` /
+        ``"minimal"`` / ``"studio_banner"`` are resolved by the
+        burnin loader's ``resolve_slug`` shim — no migration is
+        needed here."""
+        raw = self._s.value("view/burnin_template_slug", "default")
+        return str(raw) if raw else "default"
+
+    @burnin_template_slug.setter
+    def burnin_template_slug(self, value: str) -> None:
+        self._s.setValue("view/burnin_template_slug", str(value or ""))
+
+    @property
+    def burnin_shared_dir(self) -> str:
+        """Optional path to a shared burnin-templates directory —
+        typically a network share that everyone on a project points
+        at, so the team converges on the same library without
+        manually emailing JSONs around. Empty string when no shared
+        dir is configured; the editor's "Shared folder…" toolbar
+        button is what writes here. Templates in this dir surface
+        in the View → Active burnin template submenu alongside
+        local user templates and the builtin."""
+        raw = self._s.value("view/burnin_shared_dir", "")
+        return str(raw) if raw else ""
+
+    @burnin_shared_dir.setter
+    def burnin_shared_dir(self, value: str) -> None:
+        self._s.setValue("view/burnin_shared_dir", str(value or ""))
+
+    @property
     def side_panel_visible(self) -> bool:
         """Whether the right-hand Color/Comments panel is visible.
 

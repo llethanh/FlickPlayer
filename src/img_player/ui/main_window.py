@@ -106,6 +106,16 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
     # permutes A and B in the band's dropdowns.
     compare_toggle_requested = Signal()
     compare_swap_layers_requested = Signal()
+    # Burnin overlay — View menu / Ctrl+B toggle and active-template pick.
+    # ``burnin_toggle_requested`` carries the new bool (True = show).
+    # ``burnin_template_requested`` carries the slug picked from the
+    # "Active burnin template" submenu (``"default"`` etc).
+    burnin_toggle_requested = Signal(bool)
+    burnin_template_requested = Signal(str)
+    # Open the burnin template editor dialog. The App owns the dialog
+    # instance (single-instance) and connects the editor's
+    # ``template_applied`` back through ``burnin_template_requested``.
+    burnin_editor_requested = Signal()
     new_sequence_requested = Signal()      # File → New (Ctrl+N) — clear the loaded sequence
     add_layer_requested = Signal(list)     # File → Add layer… (v1.0)
                                            #   carries the picked paths
@@ -951,6 +961,41 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
 
             self._show_info_band_act.toggled.connect(_sync_ib_btn)
 
+        # Burnins — Ctrl+B toggles the overlay; the submenu picks the
+        # active template among the shipped builtins. Both go through
+        # signals so the App stays in charge of state + persistence.
+        view_menu.addSeparator()
+        self._show_burnins_act = QAction(
+            "Show &burnins", self, checkable=True,
+        )
+        self._show_burnins_act.setShortcut(QKeySequence("Ctrl+B"))
+        self._show_burnins_act.setChecked(False)   # App overrides from prefs at wire time
+        self._show_burnins_act.toggled.connect(self.burnin_toggle_requested.emit)
+        view_menu.addAction(self._show_burnins_act)
+
+        # Active template submenu — builtins shown at boot; user
+        # templates appear after the editor saves them (the App calls
+        # :meth:`refresh_burnin_template_menu` to repopulate). The
+        # action group is exclusive so only one slug is checked at a
+        # time.
+        from PySide6.QtGui import QActionGroup  # noqa: PLC0415
+        self._burnin_template_menu = view_menu.addMenu("Active burnin &template")
+        self._burnin_template_group = QActionGroup(self)
+        self._burnin_template_group.setExclusive(True)
+        self._burnin_template_actions: dict[str, QAction] = {}
+        # Initial population — the App can call
+        # :meth:`refresh_burnin_template_menu` later to add user
+        # templates the editor has saved.
+        self.refresh_burnin_template_menu(
+            ["default"],
+            "default",
+        )
+
+        # "Edit burnins…" — opens the template editor dialog.
+        edit_act = QAction("&Edit burnins…", self)
+        edit_act.triggered.connect(self.burnin_editor_requested.emit)
+        view_menu.addAction(edit_act)
+
         # The "TC" pill next to the frame readout (built earlier in
         # ``__init__``) drives the same action. Click → trigger the
         # action; the action's toggled signal then mirrors back to
@@ -1643,6 +1688,119 @@ class MainWindow(QMainWindow):  # type: ignore[misc]
             self.setWindowTitle(f"Flick Player — {path.name}")
         else:
             self.setWindowTitle("Flick Player")
+
+    def _silently_check_burnin_slug(self, slug: str) -> None:
+        """Make ``slug`` the single checked entry in the burnin
+        template submenu **without** re-emitting
+        ``burnin_template_requested`` (which would boomerang back to
+        the App and rewrite prefs).
+
+        Key insight: QActionGroup's exclusivity is driven by the
+        action's ``changed`` signal (its private
+        ``_q_actionChanged`` slot), NOT by ``triggered``. And
+        ``setChecked(b)`` emits ``toggled`` + ``changed`` but never
+        ``triggered``. Since our slug-pick lambda is wired to
+        ``triggered`` only, calling ``setChecked(True)`` plainly
+        does two useful things at once:
+
+        * Fires ``changed`` → QActionGroup updates its internal
+          ``current`` pointer to the new target AND auto-unchecks
+          the previously-current sibling. Future user clicks then
+          uncheck the right thing.
+        * Leaves ``triggered`` silent → our lambda doesn't fire,
+          no boomerang re-emit.
+
+        The earlier "wrap in ``blockSignals``" was over-defensive
+        and actively broke exclusivity by hiding ``changed`` from
+        the group too. Result was the two-tick bug:
+        ``default`` silently checked at boot, group's
+        ``current`` stuck at ``None``, then the user's later click
+        on a new preset added a second tick without unchecking
+        the first.
+
+        We still defensively uncheck stale siblings up front (with
+        their own signals blocked — no need to ping the group
+        twice per call) in case a prior bad state left more than
+        one row ticked.
+        """
+        actions = getattr(self, "_burnin_template_actions", {}) or {}
+        target = actions.get(slug)
+        # Uncheck any stale siblings. Block signals on these so
+        # the group's per-action ``changed`` handler doesn't run
+        # repeatedly — we only want it to fire once, on the
+        # final setChecked(True) below, to point ``current`` at
+        # the new target.
+        for other_slug, other_act in actions.items():
+            if other_slug == slug:
+                continue
+            if other_act.isChecked():
+                other_act.blockSignals(True)
+                try:
+                    other_act.setChecked(False)
+                finally:
+                    other_act.blockSignals(False)
+        if target is not None and not target.isChecked():
+            # NO blockSignals here — we WANT ``changed`` to fire so
+            # QActionGroup updates its ``current`` tracker. See
+            # docstring above. ``triggered`` does not fire from
+            # ``setChecked``, so our lambda stays quiet.
+            target.setChecked(True)
+
+    def refresh_burnin_template_menu(
+        self, slugs: list[str], active_slug: str,
+    ) -> None:
+        """Repopulate the View → Active burnin template submenu from a
+        fresh slugs list. Called by the App after the editor saves /
+        deletes a user template so the menu reflects what's on disk.
+
+        Preserves the action-group exclusivity and re-checks the
+        ``active_slug`` entry without re-emitting the
+        ``burnin_template_requested`` signal."""
+        if not hasattr(self, "_burnin_template_menu"):
+            return
+        # Tear down previous actions.
+        for act in list(self._burnin_template_actions.values()):
+            self._burnin_template_group.removeAction(act)
+            self._burnin_template_menu.removeAction(act)
+        self._burnin_template_actions.clear()
+        # Rebuild.
+        for slug in slugs:
+            label = slug.replace("_", " ")
+            act = QAction(label, self, checkable=True)
+            act.setData(slug)
+            self._burnin_template_group.addAction(act)
+            self._burnin_template_menu.addAction(act)
+            self._burnin_template_actions[slug] = act
+            act.triggered.connect(
+                lambda _checked=False, s=slug: (
+                    self.burnin_template_requested.emit(s)
+                ),
+            )
+        # All new actions are unchecked; flip the active one (and
+        # only the active one) via the silent-set helper. We can't
+        # rely on the action group's exclusivity here because the
+        # caller doesn't want to re-emit ``burnin_template_requested``
+        # — see :meth:`_silently_check_burnin_slug` for details.
+        self._silently_check_burnin_slug(active_slug)
+
+    def set_burnin_menu_state(self, enabled: bool, slug: str) -> None:
+        """Sync the View → Show burnins toggle + Active template
+        radios from the App's authoritative state. Called once after
+        the app loads the prefs at boot so the menu reflects what the
+        overlay is actually painting, without re-firing the toggle /
+        pick signals (which would write the same value back to prefs).
+        """
+        if hasattr(self, "_show_burnins_act"):
+            self._show_burnins_act.blockSignals(True)
+            try:
+                self._show_burnins_act.setChecked(bool(enabled))
+            finally:
+                self._show_burnins_act.blockSignals(False)
+        # Use the silent helper rather than ``blockSignals +
+        # setChecked`` — see :meth:`_silently_check_burnin_slug` for
+        # why blocking signals on a checkable action defeats
+        # QActionGroup's exclusivity and leaves two rows ticked.
+        self._silently_check_burnin_slug(slug)
 
     def _show_about(self) -> None:
         # Pull the version from the package's ``__version__`` rather

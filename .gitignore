@@ -51,3 +51,8 @@ tests/fixtures/large/
 # Skills installed via `npx claude-code-templates@latest` go under
 # .claude/skills/ — re-runnable on any clone, no need to commit them.
 .claude/
+
+# Codex / agent workspace cache (skills, transcripts). Same rationale
+# as ``.claude/`` — the AGENTS.md notes ARE versioned (project doc),
+# the per-machine cache is not.
+.agents/

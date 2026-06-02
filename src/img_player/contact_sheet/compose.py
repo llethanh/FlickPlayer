@@ -151,6 +151,8 @@ def render_contact_sheet(
     scrub_indicator: tuple[int, float] | None = None,
     per_tile_strokes: Sequence | None = None,
     source_size: tuple[int, int] | None = None,
+    burnin_template=None,                          # type: ignore[no-untyped-def]
+    per_tile_burnin_contexts: Sequence | None = None,
 ) -> np.ndarray:
     """Compose ``tiles`` into a ``cols × rows`` grid.
 
@@ -270,6 +272,28 @@ def render_contact_sheet(
                 dtype=out_dtype,
                 label_size=label_size,
                 output_divisor=output_divisor,
+            )
+
+        # Per-tile burnin: composite the active burnin template onto
+        # THIS tile's slice with a tile-specific RenderContext (its
+        # own layer name + source frame). The user picked "burnin
+        # per tile" so each tile carries its own info, rather than a
+        # single global bar over the grid. Painted AFTER strokes /
+        # labels so it always reads as the topmost annotation —
+        # exactly the same Z-order as the live single-image overlay.
+        if (
+            burnin_template is not None
+            and per_tile_burnin_contexts is not None
+            and idx < len(per_tile_burnin_contexts)
+            and per_tile_burnin_contexts[idx] is not None
+            and tile is not None
+        ):
+            _paint_burnin_overlay(
+                out[y0:y0 + cell_h, x0:x1],
+                template=burnin_template,
+                context=per_tile_burnin_contexts[idx],
+                n_channels=n_channels,
+                dtype=out_dtype,
             )
 
         # Scrub-progress indicator: a translucent orange bar at the
@@ -653,6 +677,123 @@ def _paint_strokes_overlay(
         src_max = float(np.iinfo(dtype).max) if np.issubdtype(dtype, np.integer) else 1.0
         baked = rgba8.astype(np.float32) / 255.0 * src_max
         tile_region[:, :, : rgba8.shape[2]] = baked[:, :, : tile_region.shape[2]].astype(dtype)
+
+
+# Module-level scratch canvas for the burnin overlay path. Reused
+# across tiles within a single ``render_contact_sheet`` call (and
+# across calls when the tile size doesn't change). Keeps heap
+# pressure flat instead of allocating a fresh ``(tile_h, tile_w, 4)``
+# uint8 buffer for every tile — a 4×4 grid at 1920×1080 was
+# allocating + freeing ~8 MB per frame just for these scratches.
+_BURNIN_SCRATCH: dict[tuple[int, int], np.ndarray] = {}
+
+
+def _get_burnin_scratch(h: int, w: int) -> np.ndarray:
+    """Return a zeroed ``(h, w, 4)`` uint8 buffer, reusing the cache
+    when the dims match the previous call. The cache holds at most
+    one buffer per shape — switching shapes evicts the previous one
+    so we don't grow unboundedly when the user resizes the grid.
+    """
+    cached = _BURNIN_SCRATCH.get((h, w))
+    if cached is not None:
+        cached.fill(0)
+        return cached
+    # Drop any stale buffer for a different shape — we only need one.
+    _BURNIN_SCRATCH.clear()
+    buf = np.zeros((h, w, 4), dtype=np.uint8)
+    _BURNIN_SCRATCH[(h, w)] = buf
+    return buf
+
+
+def _paint_burnin_overlay(
+    tile_region: np.ndarray,
+    *,
+    template,                # type: ignore[no-untyped-def]
+    context,                 # type: ignore[no-untyped-def]
+    n_channels: int,
+    dtype: np.dtype,
+) -> None:
+    """Composite the burnin template + tile-specific context onto a
+    single contact-sheet tile slice.
+
+    The renderer (:mod:`img_player.burnins.renderer`) runs on uint8
+    RGBA. The contact-sheet composite is typically float32 [0, 1]
+    (HDR-capable), so we:
+
+    1. Render the burnin onto a transparent uint8 RGBA canvas matching
+       the tile slice — output carries only the bar pixels (RGB + alpha).
+    2. Find the rows that actually contain painted pixels (the bars
+       only touch ~12 % of the tile height; the empty middle is
+       skipped entirely).
+    3. Convert just that strip to the tile's dtype + value range and
+       alpha-composite onto the tile's RGB.
+
+    Same alpha-composite the live overlay does, just baked INTO the
+    pixels here because the contact sheet is uploaded to GL as one
+    big texture — no live overlay layer per tile.
+    """
+    from img_player.burnins.renderer import render_burnin  # noqa: PLC0415
+
+    h, w = tile_region.shape[:2]
+    if h <= 0 or w <= 0 or template is None or context is None:
+        return
+
+    # Cheap pre-flight: if neither bar will paint, skip every alloc
+    # and the renderer call. Saves the bulk of the per-frame burnin
+    # cost when the user has temporarily disabled both bars but the
+    # CS render path still receives a non-None template.
+    if not template.top_bar.enabled and not template.bottom_bar.enabled:
+        return
+
+    # Reuse the scratch canvas across tiles — saves the per-tile
+    # ``np.zeros`` allocation that was dominating heap churn on
+    # 4×4+ grids. We DO still consume ``render_burnin``'s return
+    # value (which is ``np.array(canvas)``): Pillow's
+    # ``Image.fromarray`` copies the numpy buffer internally for
+    # several stride / alignment cases — relying on PIL's
+    # ``alpha_composite`` to write back through a "shared" buffer
+    # is brittle (broke CS burnins entirely when assumed). The
+    # return path is a single full-tile copy, but it's safe.
+    canvas = _get_burnin_scratch(h, w)
+    try:
+        painted = render_burnin(canvas, template, context)
+    except Exception:  # noqa: BLE001 — never crash CS render on a burnin error
+        log.debug("Contact-sheet burnin render failed for one tile", exc_info=True)
+        return
+
+    # Locate the painted strip. For a typical 6 % top + 6 % bottom
+    # bar layout, ``y_min..y_max`` covers ~12 % of the tile — the
+    # remaining 88 % is empty and we don't want to spend float work
+    # blending zeros. ``alpha.max(axis=1)`` is one pass over the
+    # uint8 alpha channel; cheap relative to the float math it
+    # protects.
+    alpha_max_per_row = painted[..., 3].max(axis=1)
+    nonzero = np.nonzero(alpha_max_per_row)[0]
+    if nonzero.size == 0:
+        return  # both bars disabled or fully transparent — nothing to do
+    y_min = int(nonzero[0])
+    y_max = int(nonzero[-1]) + 1
+
+    # Slice once and run all float math against the strip only.
+    strip = painted[y_min:y_max]
+    rgb_f = strip[..., :3].astype(np.float32) / 255.0
+    alpha_f = strip[..., 3:4].astype(np.float32) / 255.0
+
+    # Scale RGB to the tile's value range so alpha compositing stays
+    # numerically correct across dtypes (uint8 0-255 vs float32 0-1).
+    if np.issubdtype(dtype, np.integer):
+        src_max = float(np.iinfo(dtype).max)
+    else:
+        src_max = 1.0
+    rgb_scaled = rgb_f * src_max
+
+    # Alpha-composite onto the tile's RGB channels (alpha channel of
+    # the tile stays untouched — burnins never punch through the
+    # underlying alpha mask).
+    n = min(3, tile_region.shape[2])
+    tile_rgb = tile_region[y_min:y_max, :, :n].astype(np.float32)
+    blended = tile_rgb * (1.0 - alpha_f) + rgb_scaled[..., :n] * alpha_f
+    tile_region[y_min:y_max, :, :n] = blended.astype(dtype)
 
 
 def _paint_scrub_progress_bar(

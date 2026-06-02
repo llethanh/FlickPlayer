@@ -44,6 +44,37 @@
 
     <article class="release">
       <div class="release-meta">
+        <span class="ver">v1.8.0</span>
+        <span class="date">2026-06-02</span>
+        <span class="tagline">Burnins — composited info bars over the image, editor with live preview, team-shared template library.</span>
+      </div>
+      <div class="release-body">
+        <h4>New — Burnins</h4>
+        <ul>
+          <li class="new"><strong>Top &amp; bottom info bars baked over the image</strong>, following pan / zoom / letterbox. Each bar has its own height, colour and opacity; the elements inside are anchored left / centre / right and styled per-element (font family, size, weight, colour, opacity). The renderer uses Pillow for crisp text and alpha-composites onto the GL viewport at native source resolution, so the burnin looks the same in playback as it does in an export.</li>
+          <li class="new"><strong>HiDPI &amp; resolution-aware rasterisation</strong> — the overlay pixmap is supersampled to <code>max(displayed_rect, source_image) × devicePixelRatio</code> and Qt downscales for display. Crisp glyphs on 125 % / 150 % / 200 % Windows scaling, and the typography stays sharp even when the viewport is zoomed out below the source resolution.</li>
+          <li class="new"><strong>Token substitution</strong> — <code>{sequence}</code>, <code>{frame}</code>, <code>{frame_total}</code>, <code>{layer_frame}</code>, <code>{layer_frame_total}</code>, <code>{timecode}</code>, <code>{fps}</code>, <code>{resolution}</code>, <code>{layer_name}</code>, <code>{session_name}</code>, <code>{date}</code>, <code>{user}</code>. <code>{layer_frame}</code> is new in 1.8 and shows the source-frame number the user sees on disk for the topmost-visible layer at the playhead, paired with <code>{layer_frame_total}</code> for an "N/total" readout.</li>
+          <li class="new"><strong>Burnin template editor</strong> — full-screen dialog with a live preview canvas, an element tree, drag-friendly properties (anchor, X/Y offset, text + token insertion, font family dropdown, size / weight / colour / opacity sliders). Click an element in the preview to select it in the tree. Save / Save As / Delete write JSON to <code>%APPDATA%\FlickPlayer\burnins\</code>.</li>
+          <li class="new"><strong>Team-shared template library</strong> — point the editor at a folder (a network share, a project drive) and every member of the team sees the same burnin templates. Precedence is <em>local user → shared team → builtin</em>, so a reviewer can override a team template locally without changing what the rest of the team sees. Save As asks where to land ("Shared (team)" or "Local (this machine)") when a shared dir is configured.</li>
+          <li class="new"><strong>View → Show burnins (Ctrl+B)</strong> toggles the overlay; <strong>View → Active burnin template</strong> exposes the menu of available slugs and respects QActionGroup exclusivity (exactly one ticked at any time, even after silently syncing the menu at boot).</li>
+          <li class="new"><strong>Builtin <code>default</code> preset</strong> — single shipped template using the player's house style (cream JetBrains&nbsp;Mono Bold over an orange semi-transparent ribbon, 4 % bar height, sequence + master&nbsp;&amp;&nbsp;layer frame counters on top, user / date and resolution / fps on the bottom). Replaces the three older presets; legacy slugs (<code>dailies_default</code>, <code>minimal</code>, <code>studio_banner</code>) still resolve so v1.7 prefs keep working.</li>
+        </ul>
+        <h4>Changed — Mode-aware suppression</h4>
+        <ul>
+          <li class="new"><strong>Burnins are off in contact sheet</strong> and in compare mode — the user explicitly asked for clean grids and uncluttered side-by-side compositing. The single-image live overlay is the only place they paint. The Show-burnins toggle and the active-template menu still update prefs; they just don't affect CS / compare composites.</li>
+        </ul>
+        <h4>Fixes</h4>
+        <ul>
+          <li class="fix"><strong>Two-tick bug in the View &gt; Active burnin template submenu</strong> — wrapping <code>setChecked(True)</code> in <code>blockSignals</code> on a checkable action also hid the action's <code>changed</code> signal from QActionGroup, which is what the group uses for its exclusivity tracking. End result: clicking a new preset added a second tick instead of replacing the old one. The fix routes through a silent helper that lets the group's <code>changed</code> handler fire (clicks safely re-emit, the slug-pick signal stays bound to <code>triggered</code> only — which <code>setChecked</code> never emits).</li>
+          <li class="fix"><strong>Text opacity slider now actually fades the glyphs</strong> — Pillow's <code>ImageDraw.text(fill=(R,G,B,0))</code> overwrites the canvas pixels instead of alpha-compositing, which punched transparent holes through the bar at opacity = 0 (the user saw "dark text" because the GL black showed through). The renderer now paints text onto a transparent layer and <code>alpha_composite</code>s it.</li>
+          <li class="fix"><strong>Descenders no longer clipped, bottom-bar text properly centred</strong> — <code>textbbox</code> + <code>draw.text</code> with the default <code>la</code> anchor put glyphs past the bbox bottom, then the layer's height-only sizing cut them off. Switched both to <code>anchor="lt"</code> so the painted strip equals the bbox dims exactly.</li>
+          <li class="fix"><strong>Contact-sheet burnin path was wasting ~80&nbsp;% of its budget</strong> on float math over empty rows. The compositor now reuses a scratch canvas across tiles, early-outs when both bars are disabled, and only blends the strip of rows where the burnin alpha is non-zero. ~8&times; faster on a 4&times;4 grid (now removed entirely from CS as a separate decision, but the perf work is retained for export bake reuse).</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <div class="release-meta">
         <span class="ver">v1.7.1</span>
         <span class="date">2026-05-21</span>
         <span class="tagline">Auto-detect colorspace for video, polished review-notes save flow, smaller UI fixes.</span>
