@@ -216,6 +216,25 @@ if conda_bin.is_dir():
     # tied to the ``av`` package itself (build-specific layouts).
     av_bins += collect_dynamic_libs("av")
 
+
+# stdlib ``sqlite3`` lives in two pieces on conda-Python:
+#   * ``Lib/sqlite3/_sqlite3.pyd``     — Python binding (PyInstaller picks up via stdlib)
+#   * ``Library/bin/sqlite3.dll``      — the real SQLite engine (PyInstaller MISSES this)
+# The ``.pyd`` delay-loads ``sqlite3.dll`` at import time. PyInstaller's
+# PE walker only follows imports listed in the .pyd's directly-bound
+# import table; delay-loads from conda's Library/bin/ aren't found.
+# Result: the bundle ships ``_sqlite3.pyd`` but no ``sqlite3.dll`` and
+# the first ``import sqlite3`` at runtime crashes with
+# ``ImportError: DLL load failed while importing _sqlite3``. We hit
+# this in v1.8.0 — disk_cache.py is the first module that lands here,
+# so the .exe died on startup. Add ``sqlite3.dll`` to the bundle by
+# hand to fix it permanently.
+stdlib_bins: list[tuple[str, str]] = []
+if conda_bin.is_dir():
+    sqlite_dll = conda_bin / "sqlite3.dll"
+    if sqlite_dll.is_file():
+        stdlib_bins.append((str(sqlite_dll), "."))
+
 # PySide6 has its own opinionated layout that PyInstaller's official
 # hook usually handles. BUT under the conda-forge install (which is
 # our supported env), the Qt6 + Shiboken DLLs live in
@@ -306,7 +325,7 @@ block_cipher = None
 a = Analysis(  # noqa: F821 — Analysis is injected by PyInstaller
     ["src/img_player/__main__.py"],
     pathex=[str(PROJECT_ROOT / "src")],
-    binaries=oiio_bins + ocio_bins + av_bins + pyside_bins,
+    binaries=oiio_bins + ocio_bins + av_bins + pyside_bins + stdlib_bins,
     datas=shader_datas + font_datas + icon_datas + splash_datas + ocio_datas + oiio_datas + sd_datas,
     hiddenimports=hidden,
     hookspath=[],
