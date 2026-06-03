@@ -2759,13 +2759,17 @@ class ImgPlayerApp:
             )
             return
 
-        # Detect video vs image-sequence by extension. Mirrors the
-        # convention used in scan_handler.open_paths — same source
-        # files map to the same kind of Layer regardless of the
-        # entry point. A future refactor could share a "kind from
-        # extension" helper between the two.
-        video_exts = {".mov", ".mp4", ".mkv", ".m4v", ".avi"}
-        is_video_path = path.suffix.lower() in video_exts
+        # Detect video vs image-sequence by extension. Source of truth
+        # is :data:`img_player.media.video_probe.VIDEO_EXTENSIONS` —
+        # importing it (rather than re-listing here) keeps the
+        # drag-and-drop path, ``scan_handler.open_paths``, and the
+        # File→Open dialog in lock-step: when a new container is
+        # opted in (``.webm`` in v1.8.1) it surfaces everywhere at
+        # once instead of half-working.
+        from img_player.media.video_probe import (  # noqa: PLC0415
+            VIDEO_EXTENSIONS as _VIDEO_EXTENSIONS,
+        )
+        is_video_path = path.suffix.lower() in _VIDEO_EXTENSIONS
 
         new_layer: Layer | None = None
         try:

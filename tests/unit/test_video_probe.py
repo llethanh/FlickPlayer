@@ -82,6 +82,18 @@ def test_extension_set_includes_common_containers() -> None:
     assert ".exr" not in VIDEO_EXTENSIONS
 
 
+def test_webm_is_accepted_as_video() -> None:
+    # v1.8.1 opt-in: .webm (VP8/VP9/AV1 + Opus/Vorbis) goes through
+    # the same PyAV path as .mp4. All decoders are bundled (libvpx,
+    # aom, opus, vorbis, ogg), so the router only needed extension
+    # recognition. Pin both the membership in VIDEO_EXTENSIONS and
+    # the is_video_file helper so a refactor can't silently drop
+    # .webm by re-narrowing the set.
+    assert ".webm" in VIDEO_EXTENSIONS
+    assert is_video_file("foo.webm")
+    assert is_video_file(Path("/tmp/clip.WEBM"))  # case-insensitive
+
+
 def test_is_video_file_extension_match() -> None:
     assert is_video_file("foo.mp4")
     assert is_video_file(Path("/tmp/clip.MOV"))  # case-insensitive

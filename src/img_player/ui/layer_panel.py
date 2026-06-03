@@ -1513,7 +1513,7 @@ class LayerPanel(QFrame):  # type: ignore[misc]
         )
         filters = (
             "Image / video files (*.exr *.dpx *.tif *.tiff *.png *.jpg "
-            "*.jpeg *.tga *.bmp *.mov *.mp4 *.mkv *.m4v *.avi);;"
+            "*.jpeg *.tga *.bmp *.mov *.mp4 *.mkv *.m4v *.avi *.webm);;"
             "All files (*.*)"
         )
         picked, _ = QFileDialog.getOpenFileName(

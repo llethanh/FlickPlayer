@@ -23,15 +23,23 @@ log = logging.getLogger(__name__)
 # Containers Flick recognises as video on the drag-and-drop / file-open
 # paths. Routing logic in ``app.py`` / ``scan_handler.py`` checks the
 # extension first; the actual decode is PyAV/FFmpeg's call. Keep this
-# list narrow on purpose — exotic containers (.mxf, .ts, .webm) work
+# list narrow on purpose — exotic containers (.mxf, .ts, …) work
 # through PyAV but we'd rather opt them in once tested than surprise
 # users with half-broken formats.
+#
+# ``.webm`` (added v1.8.1) wraps VP8/VP9/AV1 video + Opus/Vorbis audio.
+# All decoders are bundled (libvpx, aom, opus, vorbis, ogg) so playback
+# Just Works through the existing PyAV pipeline. Auto-detect colorspace
+# falls back to Rec.709 for WebM since the format rarely carries explicit
+# colour tags — same default as untagged .mp4 in
+# :mod:`img_player.color.auto_detect`.
 VIDEO_EXTENSIONS: frozenset[str] = frozenset({
     ".mp4",
     ".mov",
     ".m4v",
     ".mkv",
     ".avi",
+    ".webm",
 })
 
 
