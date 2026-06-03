@@ -341,7 +341,23 @@ def main(argv: list[str] | None = None) -> int:
         except Exception:
             pass
 
+    from PySide6.QtGui import QSurfaceFormat
     from PySide6.QtWidgets import QApplication
+
+    # Install a default surface format that disables vsync **before** the
+    # QApplication is created — Qt copies this default into every new GL
+    # context. Setting it later on the widget alone leaves Qt's
+    # QOpenGLWidget composition path on the standard vsync-gated swap,
+    # which blocks the main thread ~16.67 ms per paint on a 60 Hz monitor
+    # and caps cached 60 fps playback at 30 fps. The cost of asking here
+    # is one cheap call; if the driver overrides via NVIDIA Control Panel
+    # we'd see no change either way.
+    _default_fmt = QSurfaceFormat()
+    _default_fmt.setVersion(4, 1)
+    _default_fmt.setProfile(QSurfaceFormat.CoreProfile)
+    _default_fmt.setDepthBufferSize(0)
+    _default_fmt.setSwapInterval(0)
+    QSurfaceFormat.setDefaultFormat(_default_fmt)
 
     qapp = QApplication.instance() or QApplication(sys.argv)
 

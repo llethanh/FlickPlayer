@@ -1056,6 +1056,33 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
             renderer,
             GL.glGetString(GL.GL_SHADING_LANGUAGE_VERSION).decode("utf-8", errors="replace"),
         )
+        # Confirm what swap interval we actually got — Qt's
+        # ``setSwapInterval(0)`` request can be silently overridden by
+        # the NVIDIA Control Panel's "Vertical Sync" setting (or its
+        # AMD equivalent). The user's diagnostic flick.log shows this
+        # number so we can tell whether the request landed.
+        actual_iv = self.format().swapInterval()
+        log.info("[gl] surface swap interval requested=0 actual=%d", actual_iv)
+        if actual_iv != 0:
+            # Belt + suspenders: even with the format honored, on some
+            # NVIDIA driver builds the swap interval doesn't propagate
+            # to the WGL context until we call wglSwapIntervalEXT
+            # directly. The PyOpenGL binding lives under WGL.EXT.
+            # Failure is non-fatal — log and move on; vsync stays
+            # enabled but the app still runs (capped at monitor rate).
+            try:
+                from OpenGL.WGL.EXT.swap_control import wglSwapIntervalEXT
+                ok = wglSwapIntervalEXT(0)
+                log.info(
+                    "[gl] wglSwapIntervalEXT(0) returned %s (1=success)", ok,
+                )
+            except Exception as err:  # noqa: BLE001
+                log.warning(
+                    "[gl] wglSwapIntervalEXT not available: %s "
+                    "(if you're on 60Hz vsync may cap playback at 30 fps; "
+                    "disable Vertical Sync in NVIDIA Control Panel)",
+                    err,
+                )
         GL.glClearColor(*self.DEFAULT_BG)
         self._make_fullscreen_quad()
         self._make_image_texture()
