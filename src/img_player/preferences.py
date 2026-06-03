@@ -984,6 +984,24 @@ class Preferences:
     def network_staging_budget_gb(self, value: int) -> None:
         _set_user_pref("network_staging.budget_gb", max(0, int(value)))
 
+    # ------------------------------------------------------------------ Video cache
+
+    @property
+    def video_cache_budget_gb(self) -> int:
+        """RAM budget per VideoSource — the per-video-layer LRU
+        cache that holds **float32 RGBA** decoded frames and is fed
+        by the background prefetch worker. Default 8 GB matches the
+        image-sequence cache budget. Per-frame footprint at common
+        resolutions: 14 MB (720p), 32 MB (1080p), 58 MB (1440p),
+        130 MB (4K). Multiply by the number of concurrent video
+        layers to estimate total RAM use; the OS reclaims it when
+        a layer closes."""
+        return max(0, _layered_int("video_cache.budget_gb", 8))
+
+    @video_cache_budget_gb.setter
+    def video_cache_budget_gb(self, value: int) -> None:
+        _set_user_pref("video_cache.budget_gb", max(0, int(value)))
+
     @property
     def disk_cache_compression(self) -> bool:
         """Legacy bool view of :attr:`disk_cache_compression_mode`.

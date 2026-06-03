@@ -361,7 +361,19 @@ class ImgPlayerApp:
         # directly from this manager — long-GOP video has fundamentally
         # different access patterns (sequential cheap, random expensive)
         # that don't fit the cache's per-frame independent model.
-        self._video_sources = VideoSourceManager()
+        #
+        # The per-VideoSource RAM cache budget is read from prefs so
+        # users on workstations with 32+ GB can crank it up beyond
+        # the 8 GB default and have a 30 s 1440p clip fit end-to-end
+        # in cache. Multiplied by the number of concurrent video
+        # layers; the OS reclaims on layer close.
+        video_cache_budget = (
+            int(self._prefs.video_cache_budget_gb) * (1024 ** 3)
+        )
+        self._video_sources = VideoSourceManager(
+            source_cache_budget_bytes=video_cache_budget
+            if video_cache_budget > 0 else None,
+        )
         # Persistent audio output (sounddevice + feeder thread). Stays
         # open from boot through shutdown — option (b) of the design:
         # no play-time latency at the cost of holding the device.

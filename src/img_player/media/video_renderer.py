@@ -58,8 +58,13 @@ class _ThreadedDecoder:
     per layer.
     """
 
-    def __init__(self, path: Path) -> None:
-        self._source = VideoSource(path)
+    def __init__(self, path: Path, *, cache_budget_bytes: int | None = None) -> None:
+        if cache_budget_bytes is not None:
+            self._source = VideoSource(
+                path, cache_budget_bytes=cache_budget_bytes,
+            )
+        else:
+            self._source = VideoSource(path)
         self._lock = threading.Lock()
         # Keyed by ``round(t * fps)`` so float jitter doesn't miss
         # otherwise-identical hits. The worker writes; ``get`` reads.
@@ -239,8 +244,13 @@ class VideoSourceManager:
     worker.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, source_cache_budget_bytes: int | None = None) -> None:
         self._decoders: dict[str, _ThreadedDecoder] = {}
+        # Per-source LRU cache budget plumbed into every
+        # ``_ThreadedDecoder`` we open. None = use VideoSource's
+        # default (8 GB). The App configures this from
+        # ``Preferences.video_cache_budget_gb`` at boot.
+        self._source_cache_budget_bytes: int | None = source_cache_budget_bytes
         # Latched scrub state — new decoders opened mid-scrub inherit
         # the flag so they don't decode-forward on their first frame.
         self._fast_seek: bool = False
@@ -267,7 +277,10 @@ class VideoSourceManager:
         """
         dec = self._decoders.get(layer_id)
         if dec is None:
-            dec = _ThreadedDecoder(path)
+            dec = _ThreadedDecoder(
+                path,
+                cache_budget_bytes=self._source_cache_budget_bytes,
+            )
             # New decoders inherit the manager's scrub state so the
             # first frame request after a layer add during an active
             # drag doesn't pay the precise-decode cost.

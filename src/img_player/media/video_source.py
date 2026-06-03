@@ -38,19 +38,23 @@ log = logging.getLogger(__name__)
 
 
 # Default RAM budget for the per-source frame cache. Tunable via
-# ``Preferences.video_cache_budget_mb``.
+# ``Preferences.video_cache_budget_gb`` and the App constructor.
 #
 # Cached frames are stored as **float32 RGBA** rather than uint8 — that's
 # 4× heavier per frame but lets cache hits skip the
 # ``astype(float32) * (1/255)`` pass in ``decode_at`` (= 23 ms on a
 # 1440p frame, completely dominating any cache-hit savings if the cast
 # stayed downstream). With float32 cache:
-#   1440p frame = 2560×1440×4×4 = 57.6 MB   →  ~70 frames in 4 GB
-#   1080p frame = 1920×1080×4×4 = 31.6 MB   →  ~128 frames in 4 GB
-#    720p frame =  1280×720×4×4 = 14.0 MB   →  ~280 frames in 4 GB
-# Most VFX dailies are 30-90 s of 720p/1080p — fits end-to-end after
-# the prefetch worker finishes its sweep.
-DEFAULT_VIDEO_CACHE_BUDGET_BYTES: int = 4 * 1024 * 1024 * 1024
+#   1440p frame = 2560×1440×4×4 = 57.6 MB   →  ~140 frames in 8 GB
+#   1080p frame = 1920×1080×4×4 = 31.6 MB   →  ~256 frames in 8 GB
+#    720p frame =  1280×720×4×4 = 14.0 MB   →  ~570 frames in 8 GB
+# Most VFX dailies (30-90 s of 720p/1080p) fit end-to-end after the
+# prefetch worker finishes its sweep. Default matches the image-
+# sequence cache's 8 GB so the two stacks have parity.
+#
+# NOTE: budget is **per VideoSource** (one per video layer). A 3-clip
+# compare stack at the default budget uses up to 24 GB total.
+DEFAULT_VIDEO_CACHE_BUDGET_BYTES: int = 8 * 1024 * 1024 * 1024
 
 
 class VideoSource:
