@@ -47,8 +47,8 @@
   <div class="ctas">
     <a
       class="btn btn-primary"
-      href="https://github.com/llethanh/FlickPlayer/releases/download/v1.8.0/FlickPlayer_v1.8.0.zip"
-    >Download for Windows — v1.8.0</a>
+      href="https://github.com/llethanh/FlickPlayer/releases/download/v1.8.1/FlickPlayer_v1.8.1.zip"
+    >Download for Windows — v1.8.1</a>
     <a class="btn btn-ghost" href="#features">See features →</a>
   </div>
   <p class="dl-note" style="margin-top: var(--s-sm); font-size: 0.9em; opacity: 0.6;">
@@ -685,16 +685,15 @@
 <section id="changelog" class="changelog-teaser">
   <h2>What's <span class="accent">new</span>.</h2>
   <p class="lede">
-    Latest release: <strong>v1.8.0</strong> — <strong>burnins</strong>
-    are here: composited top &amp; bottom info bars over the image, with
-    a full editor, live preview, per-element typography, a
-    HiDPI- &amp; resolution-aware rasteriser, and a
-    <strong>team-shared template library</strong> so everyone on a
-    project can converge on the same look by pointing at one folder.
-    New <code>{layer_frame}</code> token shows the on-disk source frame
-    for the current layer alongside the master timeline frame. Builds
-    on <strong>v1.7.1</strong>'s video colorspace auto-detect and
-    <strong>v1.7.0</strong>'s coloured cache tiers (blue = disk,
+    Latest release: <strong>v1.8.1</strong> — <strong>.webm video
+    playback</strong> (VP8/VP9/AV1 + Opus/Vorbis), <em>Save Frame As</em>
+    now captures the right frame on video sources (was always saving
+    frame 1), and three boot-stability fixes for the standalone bundle
+    (missing <code>sqlite3.dll</code>, missing PyAV Cython submodules,
+    and SDL3 preload so the avdevice startup popup is gone). Builds on
+    <strong>v1.8.0</strong>'s burnins (composited info bars + editor +
+    team-shared template library), and on <strong>v1.7.x</strong>'s
+    video colorspace auto-detect + coloured cache tiers (blue = disk,
     orange = RAM). The full history — every public release, what
     changed, why it changed — lives on its own page.
   </p>
@@ -706,7 +705,7 @@
 <!-- ============================================================ Footer -->
 <footer id="download">
   <p>
-    <strong>Flick Player</strong> · open-source VFX sequence viewer · <a href="https://github.com/llethanh/FlickPlayer/releases/download/v1.8.0/FlickPlayer_v1.8.0.zip">Download v1.8.0</a> · <a href="https://github.com/llethanh/FlickPlayer">GitHub</a> · <a href="changelog.html">Changelog</a>
+    <strong>Flick Player</strong> · open-source VFX sequence viewer · <a href="https://github.com/llethanh/FlickPlayer/releases/download/v1.8.1/FlickPlayer_v1.8.1.zip">Download v1.8.1</a> · <a href="https://github.com/llethanh/FlickPlayer">GitHub</a> · <a href="changelog.html">Changelog</a>
   </p>
   <p style="margin-top: var(--s-sm);">
     Built with PySide6, OpenColorIO, OpenImageIO and PyAV. Designed for Windows.

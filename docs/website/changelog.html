@@ -44,6 +44,31 @@
 
     <article class="release">
       <div class="release-meta">
+        <span class="ver">v1.8.1</span>
+        <span class="date">2026-06-03</span>
+        <span class="tagline">WebM playback, Save Frame As fixed on videos, three boot-stability fixes for the bundle.</span>
+      </div>
+      <div class="release-body">
+        <h4>New</h4>
+        <ul>
+          <li class="new"><strong>WebM video playback</strong> — drop a <code>.webm</code> file on Flick and it opens like any other video. The container wraps VP8 / VP9 / AV1 video and Opus / Vorbis audio; every decoder is already bundled (<code>libvpx</code>, <code>aom</code>, <code>opus</code>, <code>vorbis</code>, <code>ogg</code>), so playback Just Works through the existing PyAV pipeline. Auto-detect colorspace falls back to Rec.709 for WebM (the format rarely carries explicit colour tags) — same default as untagged <code>.mp4</code> since v1.7.1. The file picker's "Replace source…" filter now shows <code>*.webm</code> alongside <code>*.mp4</code> / <code>*.mov</code> / etc.</li>
+        </ul>
+        <h4>Fixes</h4>
+        <ul>
+          <li class="fix"><strong>Save Frame As… on a video now captures the frame at the playhead</strong>. Before 1.8.1 it always saved the first frame of the container, regardless of the timeline cursor. Root cause: the export <code>FrameRenderer</code> resolves frame N against a <code>{frame_number → path}</code> dict — for image sequences each entry points at a different file, but for a video every entry points at the same container, and the OIIO-based reader has no seek-to-frame-N concept. Fix routes the decode through the live PyAV path (same code that already feeds the viewport) and then runs the OCIO / resize / annotation tail unchanged.</li>
+          <li class="fix"><strong>Bundle no longer crashes on startup with <code>ImportError: DLL load failed while importing _sqlite3</code></strong>. stdlib <code>sqlite3</code> on conda-Python is two pieces — <code>Lib/sqlite3/_sqlite3.pyd</code> (Python binding, PyInstaller picks up) and <code>Library/bin/sqlite3.dll</code> (the engine, PyInstaller misses via its PE walker because the .pyd delay-loads the .dll by bare name). The spec now pulls <code>sqlite3.dll</code> from <code>$CONDA_PREFIX/Library/bin/</code> explicitly.</li>
+          <li class="fix"><strong>PyAV's Cython-compiled utility submodules are bundled</strong>. <code>collect_submodules("av")</code> walks the package's Python sources for static imports; it silently skips the half-dozen <code>.pyd</code>-only modules PyAV loads lazily at runtime (<code>av.bytesource</code>, <code>av.dictionary</code>, <code>av.utils</code>, <code>av.opaque</code>, <code>av.container.pyio</code>, <code>av.filter.link</code>, <code>av.video.reformatter</code>). End result before 1.8.1: opening any video popup'd <em>"No module named 'av.bytesource'"</em>. Listed as explicit hidden imports now.</li>
+          <li class="fix"><strong>No more "Failed loading SDL3 library." popup at boot</strong>. conda-forge ships <code>SDL2.dll</code> as the <code>sdl2-compat</code> shim — it presents the SDL2 ABI to callers (avdevice links to it) but at first call does <code>LoadLibrary("SDL3.dll")</code> by bare name. Windows' default DLL search order doesn't include PyInstaller's <code>_internal/</code> directory, so the shim never finds our bundled SDL3. The runtime hook now preloads SDL3 + SDL2 by absolute path; subsequent name-based lookups return our cached handles.</li>
+        </ul>
+        <h4>Workflow / build hygiene</h4>
+        <ul>
+          <li class="new">GitHub repo renamed <code>llethanh/img_player</code> → <code>llethanh/FlickPlayer</code> (GitHub auto-redirects the old URL). Local build clone path standardised to <code>C:\dev\FlickPlayer\</code>. Dev launcher unified into a single <code>FlickPlayer.bat</code> (was <code>launch_app.bat</code> + <code>img_player.bat</code>).</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <div class="release-meta">
         <span class="ver">v1.8.0</span>
         <span class="date">2026-06-02</span>
         <span class="tagline">Burnins — composited info bars over the image, editor with live preview, team-shared template library.</span>
