@@ -398,6 +398,22 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
         fmt.setVersion(4, 1)
         fmt.setProfile(QSurfaceFormat.CoreProfile)
         fmt.setDepthBufferSize(0)
+        # Swap interval 0 = present-immediately. Qt's default of 1 makes
+        # ``swapBuffers`` block on the next monitor vsync. On a 60 Hz
+        # display that's a 16.67 ms wall-time sleep INSIDE the main-
+        # thread paint event — i.e. paintGL() reports its body finishing
+        # in ~0 ms (PBO upload is async) but the swap that follows
+        # stalls the main thread until the display tick. Combined with
+        # a 16 ms decode tick body that gave us cycles of:
+        #   tick(16ms) + paint+swap(16ms) = 32ms = 32 fps cap
+        # which matched the user's perceived 30 fps lock on 60 fps
+        # cached playback. Setting swap interval to 0 lets the next
+        # tick fire as soon as the decode finishes, and the GPU
+        # presents whatever's latest at vsync time (= mild tearing
+        # possible during fast pan but a non-issue for a review /
+        # compare workflow — and OpenRV ships the same way for the
+        # same reason).
+        fmt.setSwapInterval(0)
         self.setFormat(fmt)
 
         self._pending_bundle: ShaderBundle | None = None
