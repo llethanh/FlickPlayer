@@ -1062,7 +1062,12 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
         # Bench hook: time the whole paintGL body. Cheap (one branch, one
         # time.monotonic) when disabled.
         bench_enabled = recorder.is_enabled()
-        paint_t0 = time.monotonic() if bench_enabled else 0.0
+        # [v1.8.3 DIAG] Also stamp the start when FLICK_DIAG is on so
+        # the diag-only summary at the bottom of paintGL has a real
+        # baseline — bench_enabled is independent of FLICK_DIAG.
+        paint_t0 = (
+            time.monotonic() if (bench_enabled or _DIAG_ENABLED) else 0.0
+        )
         upload_us = 0.0
 
         GL.glClear(GL.GL_COLOR_BUFFER_BIT)
