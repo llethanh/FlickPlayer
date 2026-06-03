@@ -34,6 +34,30 @@ class FrameReadError(RuntimeError):
     """Raised when a frame cannot be decoded (missing file, bad format, ...)."""
 
 
+# Network-staging hook. The App installs a callable at boot that
+# turns a network path into a local-staged path (or returns ``None``
+# if not yet staged). When set, ``read_frame`` consults it BEFORE
+# opening the file — staged frames decode ~3× faster than direct
+# network reads because EXR / DPX / TIFF libs do many small reads
+# the SMB protocol can't pipeline well. See
+# :mod:`img_player.cache.network_staging` for the manager.
+_staging_lookup: "Callable[[Path], Path | None] | None" = None  # type: ignore[name-defined]
+
+
+def set_staging_lookup(lookup) -> None:  # type: ignore[no-untyped-def]
+    """Install (or clear by passing ``None``) the staging lookup
+    callable. The App wires this at boot to ``self._staging.
+    staged_path_for``. Tests can install a fake to drive
+    ``read_frame`` deterministically."""
+    global _staging_lookup
+    _staging_lookup = lookup
+
+
+# Local Callable import — kept here so the file-top imports stay
+# minimal (we already have collections.abc.Sequence from above).
+from collections.abc import Callable  # noqa: E402
+
+
 def configure_oiio(threads: int | None = None) -> int:
     """Set the OpenImageIO global thread pool size.
 
@@ -107,6 +131,18 @@ def read_frame(
     path = Path(path)
     if not path.exists():
         raise FrameReadError(f"File not found: {path}")
+
+    # Network staging hook: if the path is on a network share and
+    # we've already bulk-copied the file to a local SSD staging
+    # cache, redirect the read to the local copy. Measured ~3×
+    # speedup on a real Maya AOV EXR over SMB because OIIO and
+    # PyOpenEXR both do many small reads that SMB can't pipeline
+    # well; the bulk copy + local-fast reads is a net win even on
+    # first access. See :mod:`img_player.cache.network_staging`.
+    if _staging_lookup is not None:
+        staged = _staging_lookup(path)
+        if staged is not None:
+            path = staged
 
     # EXR fast-path via PyOpenEXR.
     #

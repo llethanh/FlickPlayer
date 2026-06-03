@@ -80,6 +80,14 @@ def disk_cache_default_dir() -> Path:
     return _appdata_local_root() / APP_DIR_NAME / "disk_cache"
 
 
+def network_staging_default_dir() -> Path:
+    """Default location for the network-source staging cache. Local
+    SSD. Holds bulk-copied originals from network paths so the EXR /
+    DPX / TIFF readers don't have to suffer SMB latency on every
+    small read they make. See :mod:`cache.network_staging`."""
+    return _appdata_local_root() / APP_DIR_NAME / "staging"
+
+
 def calibration_profile_path() -> Path:
     """Performance calibration JSON. Local."""
     return _appdata_local_root() / APP_DIR_NAME / "profile.json"

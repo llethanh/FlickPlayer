@@ -325,6 +325,37 @@ class ImgPlayerApp:
             num_workers=num_workers,
             disk_cache=disk_cache,
         )
+        # Network staging cache: bulk-copy network-source frames to a
+        # local SSD so the image readers (OIIO / PyOpenEXR / DPX /
+        # TIFF) see local-fast I/O instead of SMB latency. Hook
+        # installed into ``io.reader`` so every decode automatically
+        # benefits — see :mod:`img_player.cache.network_staging`.
+        from img_player.app_paths import network_staging_default_dir  # noqa: PLC0415
+        from img_player.cache.network_staging import (  # noqa: PLC0415
+            NetworkStagingManager,
+        )
+        from img_player.io.reader import set_staging_lookup  # noqa: PLC0415
+        try:
+            staging_root = (
+                Path(self._prefs.network_staging_path)
+                if self._prefs.network_staging_path
+                else network_staging_default_dir()
+            )
+            self._staging = NetworkStagingManager(
+                staging_root=staging_root,
+                max_total_gb=float(self._prefs.network_staging_budget_gb),
+                enabled=bool(self._prefs.network_staging_enabled),
+            )
+            self._staging.start()
+            # Install the lookup so ``read_frame`` redirects to local
+            # copies once they're available.
+            set_staging_lookup(self._staging.staged_path_for)
+        except Exception:  # noqa: BLE001 — defensive, never block boot
+            log.exception(
+                "NetworkStagingManager init failed; staging disabled "
+                "(reads will go direct to network)",
+            )
+            self._staging = None
         # Video decoders. Image-sequence layers go through ``self._cache``;
         # video layers (mp4 / mov / …) bypass the cache and pull pixels
         # directly from this manager — long-GOP video has fundamentally
@@ -642,6 +673,14 @@ class ImgPlayerApp:
             self._video_sources.shutdown()
         except Exception:  # pragma: no cover — best effort
             log.exception("video sources shutdown failed")
+        # Stop the staging copy thread so the process can exit cleanly
+        # (the worker is daemon but joining is the polite thing).
+        staging = getattr(self, "_staging", None)
+        if staging is not None:
+            try:
+                staging.shutdown()
+            except Exception:  # pragma: no cover — best effort
+                log.exception("staging manager shutdown failed")
         # Close the audio output (stops the feeder thread + closes
         # the sounddevice stream + closes the active AudioSource).
         try:
@@ -2353,6 +2392,38 @@ class ImgPlayerApp:
     def _close_orphan_video_sources(self) -> None:
         _close_orphan_video_sources(self)
 
+    def _refresh_network_staging(self) -> None:
+        """Walk the current layer stack and queue any new
+        image-sequence layers whose source directory is on a network
+        share. Idempotent — the manager skips files already in its
+        in-memory map, so calling this on every layers_changed
+        emission is cheap (a single ``staged_path_for`` check + a
+        ``is_network_path`` syscall per layer, no I/O on the hot
+        path)."""
+        staging = getattr(self, "_staging", None)
+        if staging is None:
+            return
+        playhead = int(getattr(self._controller.state, "current_frame", 0) or 0)
+        for layer in self._layer_stack.layers():
+            seq = getattr(layer, "sequence", None)
+            if seq is None:
+                continue
+            # Video layers don't benefit — VideoSource streams from
+            # the container itself, not per-frame files.
+            if getattr(layer, "is_video", False):
+                continue
+            frame_paths = [fi.path for fi in seq.frames]
+            if not frame_paths:
+                continue
+            try:
+                staging.register_sequence(
+                    seq.directory,
+                    frame_paths,
+                    playhead_frame=playhead - int(getattr(layer, "master_start", 0)),
+                )
+            except Exception:  # noqa: BLE001
+                log.exception("[staging] register_sequence raised")
+
     def _refresh_after_stack_change(self) -> None:
         """Re-prefetch + re-display after a LayerStack mutation.
 
@@ -2380,6 +2451,11 @@ class ImgPlayerApp:
         # Selected-layer readout — a stack mutation can renumber rows
         # (insert / remove) or drop a previously-selected layer.
         self._refresh_status_selected_layers()
+        # Network staging: register any new image-sequence layers
+        # whose source is on a network share. The manager skips
+        # already-registered sequences and no-ops for local paths,
+        # so this is safe to call every refresh.
+        self._refresh_network_staging()
         # Layer mutation may have invalidated decoder caches (offset
         # change → different pixel for the same master frame).
         self._compare_decoder.invalidate()
