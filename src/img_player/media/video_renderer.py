@@ -140,8 +140,11 @@ class _ThreadedDecoder:
                     return np.zeros_like(sample)
             raise RuntimeError("video decode timeout with no fallback")
         with self._lock:
+            # Decoded buffers are RGBA uint8 since v1.8.2 (was RGB);
+            # the fallback shape needs to match so callers don't
+            # crash on a shape mismatch downstream.
             return self._sync_result if self._sync_result is not None \
-                else np.zeros((1, 1, 3), dtype=np.uint8)
+                else np.zeros((1, 1, 4), dtype=np.uint8)
 
     def _idx_for(self, t_seconds: float) -> int:
         return round(t_seconds * self.fps)
