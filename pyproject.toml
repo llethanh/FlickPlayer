@@ -30,6 +30,13 @@ dependencies = [
     # this is technically optional — leaving it in dependencies keeps
     # the fast path universal.
     "lz4>=4.0",
+    # EXR fast-path. PyOpenEXR's C++ ImfMultiPartInputFile reader is
+    # ~30 % faster than OIIO's wrapper on cold-network multipart AOV
+    # EXRs (Maya / Arnold renders). io/reader.py prefers it for .exr
+    # files and falls back to OIIO if the import / decode fails, so
+    # this remains technically optional — but worth keeping in the
+    # always-installed list to make the fast path the default.
+    "openexr>=3.4",
 ]
 
 [project.optional-dependencies]

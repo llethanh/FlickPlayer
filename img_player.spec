@@ -294,6 +294,13 @@ hidden = []
 hidden += collect_submodules("img_player")
 hidden += collect_submodules("OpenImageIO")
 hidden += collect_submodules("PyOpenColorIO")
+# PyOpenEXR — io/reader.py's fast-path for cold-network EXR decode
+# (~30 % faster than OIIO's wrapper on AOV-heavy multipart Maya
+# EXRs). Falls back to OIIO when the import or decode fails, but
+# we always want the wheel bundled in the standalone .exe. The C++
+# OpenEXR DLLs ship with OIIO's transitive deps already.
+hidden += collect_submodules("OpenEXR")
+hidden += collect_dynamic_libs("OpenEXR")
 # PyAV is heavily Cython-based with per-codec submodules loaded at
 # decode-time. Pull the whole tree so demuxer / decoder lookups don't
 # fail with ImportError mid-playback.
