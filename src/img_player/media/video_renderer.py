@@ -5,20 +5,19 @@ layer is added to the stack the manager opens its decoder lazily on
 first frame access; when the layer is removed the manager closes the
 file handle so we don't leak across session loads.
 
-Decoding runs on **per-layer worker threads** wrapped in
-:class:`_ThreadedDecoder`. The main / Qt thread sends frame requests
-through a small command queue and either gets a cached result
-immediately (when the worker has prefetched the upcoming frame —
-the play-time hot path) or waits briefly on a sync decode (scrub /
-seek). VideoSource is intentionally single-threaded; serialising
-every access through the worker means we never have two threads
-fighting the decoder generator.
+Decoding is synchronous from the Qt thread's perspective: each
+:class:`_ThreadedDecoder` is a thin wrapper around a
+:class:`VideoSource` that calls ``frame_at_time`` directly. The
+source itself maintains a multi-hundred-frame LRU + a background
+prefetch thread, so cache hits return in microseconds and never
+race a separate worker (the v1.5–v1.8.2 design had a per-layer
+worker thread that contended with the source's prefetch and could
+time out at 500 ms — see :class:`_ThreadedDecoder` docstring).
 """
 
 from __future__ import annotations
 
 import logging
-import threading
 from pathlib import Path
 
 import numpy as np
@@ -28,34 +27,39 @@ from img_player.media.video_source import VideoSource
 log = logging.getLogger(__name__)
 
 
-# How many frames ahead of the current target the worker tries to
-# keep decoded in the cache. 2 is enough: at 24 fps the worker has
-# ~83 ms to produce the next frame, far more than typical H.264
-# decode-forward (5–15 ms). Bigger windows just bloat memory.
-_PREFETCH_WINDOW = 2
-
-# Maximum cached frames. The worker prunes once this is exceeded —
-# a ring centred on the playhead so backward scrubs within this
-# window stay free of seek overhead. 32 keeps roughly a second of
-# 30 fps content live, which covers most "drag back to compare"
-# motions during review without re-seeking. At HD that's ~200 MB
-# per video layer (32 × 6 MB); 4K caps to ~770 MB — still well
-# under the main image-sequence cache budget.
-_CACHE_CAPACITY = 32
-
-
 class _ThreadedDecoder:
-    """Wrap a :class:`VideoSource` on a dedicated worker thread.
+    """Thin synchronous wrapper around :class:`VideoSource`.
 
-    Public surface is one method — ``get(t_seconds)`` — used by the
-    manager. Internally, the worker continuously prefetches the next
-    frames ahead of the most-recently-requested time; ``get`` returns
-    the cached result instantly when available and falls back to a
-    blocking sync request when the worker has nothing yet (first
-    frame after a fresh open / large seek).
+    History — there used to be a per-layer worker thread + small
+    dict cache + sync_request/sync_done dance here. The intent was
+    a 2-frame prefetch window the main Qt thread could rely on for
+    instant cache hits.
 
-    Not thread-safe to share across multiple managers — one decoder
-    per layer.
+    Since v1.8.3 ``VideoSource`` owns its OWN background prefetch
+    worker (which streams the whole near-playhead window into a
+    multi-hundred-frame float32 LRU). The local worker became
+    strictly redundant — worse, it CONTENDED with the source-level
+    prefetch (both ran ``frame_at_time`` against the same
+    container's seek state), and on cache misses it forced the main
+    thread to wait on a 500 ms sync_done event. When that timed
+    out, decode_at returned a 1×1 black ndarray (visible to the
+    user as a black flicker / freeze).
+
+    The replacement is a pure pass-through: every call to ``get(t)``
+    runs ``self._source.frame_at_time(t)`` directly on the calling
+    thread. The source's LRU is the only cache. Cache hits return
+    in ~0.03 ms (a dict lookup). Cache misses fall back to a real
+    seek + decode in ~10-30 ms on AV1 1440p — no timeout, no black
+    frame.
+
+    Single-threaded access is still enforced because the Qt main
+    thread is the only caller for a given decoder. The source's
+    own prefetch container runs in parallel on a separate
+    container, so the main thread and the prefetch never share the
+    same PyAV decoder state.
+
+    Not thread-safe to share across multiple managers — one
+    decoder per layer.
     """
 
     def __init__(self, path: Path, *, cache_budget_bytes: int | None = None) -> None:
@@ -65,184 +69,41 @@ class _ThreadedDecoder:
             )
         else:
             self._source = VideoSource(path)
-        self._lock = threading.Lock()
-        # Keyed by ``round(t * fps)`` so float jitter doesn't miss
-        # otherwise-identical hits. The worker writes; ``get`` reads.
-        self._cache: dict[int, np.ndarray] = {}
-        # Most-recently-requested frame index — drives prefetch direction.
-        self._target_idx: int | None = None
-        # Pending sync request from the main thread when the cache
-        # missed. Worker services these before any prefetch work so
-        # the GUI never waits behind speculative decodes.
-        self._sync_request_t: float | None = None
-        self._sync_result: np.ndarray | None = None
-        self._sync_done = threading.Event()
-        # Wake the worker when there's new work (a sync request, a
-        # new target, or shutdown).
-        self._wake = threading.Event()
-        self._stop = threading.Event()
-        self._thread = threading.Thread(
-            target=self._loop, name=f"video-decoder-{path.name}", daemon=True,
-        )
-        self._thread.start()
 
     @property
     def fps(self) -> float:
         return float(self._source.fps)
 
     def set_fast_seek(self, enabled: bool) -> None:
-        """Toggle the keyframe-only scrub mode + drop the frame cache.
-
-        We clear ``self._cache`` on **every** transition because fast
-        results are temporally approximate (keyframe ≤ target rather
-        than exact) — leaving them under their target-idx key would
-        let a precise request after scrub release return a stale
-        keyframe instead of re-decoding. Cheap to flush: the worker's
-        prefetch fills it again within a few ticks.
-        """
-        with self._lock:
-            self._source.set_fast_seek(enabled)
-            self._cache.clear()
+        """Toggle the keyframe-only scrub shortcut on the underlying
+        source. No local cache to flush — the source's LRU handles
+        scrub-back correctness on its own (a precise re-decode
+        request post-release populates the exact frame into the
+        same LRU bucket the keyframe occupied)."""
+        self._source.set_fast_seek(enabled)
 
     def get(self, t_seconds: float) -> np.ndarray:
-        """Return the frame at ``t_seconds`` (RGB uint8).
+        """Return the frame at ``t_seconds`` as RGBA float32 in [0, 1].
 
-        Hot path (play tick where the worker already prefetched the
-        target): instant dict lookup, no thread sync. Cold path
-        (scrub, seek, first-frame-after-open): submit a sync request
-        and block until the worker has decoded.
+        Pure synchronous proxy to ``VideoSource.frame_at_time``: the
+        source has its own LRU and prefetch worker, so cache hits
+        are zero-cost and cache misses fall back to a real seek +
+        decode rather than the 500 ms sync_done timeout that the
+        old worker layer imposed.
+
+        Notify the source's prefetch thread of the playhead before
+        the lookup so the prefetcher steers ahead even on a string
+        of hits (where ``frame_at_time`` itself wouldn't need to
+        update the playhead).
         """
-        # Tell the source's background prefetch worker where the
-        # playhead is — without this the prefetcher only knows about
-        # frames it visits itself (= one-shot from t=0). Cheap
-        # (single int write under GIL); the prefetch loop reads it
-        # on its next iteration and follows the playhead from there.
         self._source.notify_playback_position(t_seconds)
-        idx = self._idx_for(t_seconds)
-        with self._lock:
-            arr = self._cache.get(idx)
-            self._target_idx = idx
-        # Wake the worker so it queues the next prefetch (or services
-        # this sync request below if we missed).
-        self._wake.set()
-        if arr is not None:
-            return arr
-        # Cache miss — escalate to a sync request.
-        with self._lock:
-            self._sync_request_t = t_seconds
-            self._sync_done.clear()
-        self._wake.set()
-        # 0.5 s is generous — even a backward seek + decode through
-        # a long GOP usually finishes in <100 ms. If we hit the
-        # timeout the user sees a held frame; better than a UI freeze.
-        if not self._sync_done.wait(timeout=0.5):
-            log.warning("[video] decode timeout at t=%.3f", t_seconds)
-            # Last-resort fallback: try the cache once more in case
-            # the worker landed just after we gave up.
-            with self._lock:
-                fallback = self._cache.get(idx)
-            if fallback is not None:
-                return fallback
-            # Nothing available — return a black frame the same
-            # shape as the most recent cached one if any, else raise.
-            with self._lock:
-                if self._cache:
-                    sample = next(iter(self._cache.values()))
-                    return np.zeros_like(sample)
-            raise RuntimeError("video decode timeout with no fallback")
-        with self._lock:
-            # Decoded buffers are RGBA float32 since v1.8.3 (the
-            # uint8 → float32 cast moved onto the worker thread);
-            # the fallback shape + dtype need to match so callers
-            # don't crash on a dtype mismatch downstream.
-            return self._sync_result if self._sync_result is not None \
-                else np.zeros((1, 1, 4), dtype=np.float32)
-
-    def _idx_for(self, t_seconds: float) -> int:
-        return round(t_seconds * self.fps)
-
-    def _t_for(self, idx: int) -> float:
-        # +half-frame so the requested time falls firmly inside the
-        # frame's display interval (matches VideoSource's bracket
-        # check: ``pts <= t < pts + interval``).
-        return (idx + 0.5) / self.fps
-
-    def _loop(self) -> None:
-        while not self._stop.is_set():
-            # Block until there's something to do. The 50 ms wake-up
-            # makes the worker re-evaluate prefetch after a target
-            # change even if no explicit ``set`` happened.
-            self._wake.wait(timeout=0.05)
-            self._wake.clear()
-            if self._stop.is_set():
-                break
-            # Service any pending sync request first — the main
-            # thread is waiting on it.
-            with self._lock:
-                req_t = self._sync_request_t
-                self._sync_request_t = None
-            if req_t is not None:
-                try:
-                    # VideoSource returns float32 RGBA directly since
-                    # v1.8.3 — its cache stores float32 so cache hits
-                    # are zero-cost end-to-end. No cast needed here.
-                    arr = self._source.frame_at_time(req_t)
-                except Exception:
-                    log.exception("[video] sync decode failed")
-                    arr = None
-                with self._lock:
-                    self._sync_result = arr
-                    if arr is not None:
-                        self._cache[self._idx_for(req_t)] = arr
-                        self._prune_locked()
-                self._sync_done.set()
-                continue
-            # Prefetch: decode the next 1-2 frames ahead of target.
-            with self._lock:
-                target = self._target_idx
-                if target is None:
-                    continue
-                missing = [
-                    target + k for k in range(_PREFETCH_WINDOW + 1)
-                    if (target + k) not in self._cache
-                ]
-            if not missing:
-                continue
-            next_idx = missing[0]
-            try:
-                arr = self._source.frame_at_time(self._t_for(next_idx))
-            except Exception:
-                log.exception("[video] prefetch decode failed at idx=%d", next_idx)
-                continue
-            with self._lock:
-                self._cache[next_idx] = arr
-                self._prune_locked()
-                # If new work arrived during the decode, loop again
-                # to service it instead of sleeping.
-                if self._target_idx != target or self._sync_request_t is not None:
-                    self._wake.set()
-
-    def _prune_locked(self) -> None:
-        """Trim the cache to ``_CACHE_CAPACITY`` keeping the window
-        around the current target. Caller holds ``self._lock``."""
-        if len(self._cache) <= _CACHE_CAPACITY:
-            return
-        target = self._target_idx if self._target_idx is not None else 0
-        # Sort by distance from target, drop the farthest.
-        keys = sorted(self._cache.keys(), key=lambda k: abs(k - target))
-        for k in keys[_CACHE_CAPACITY:]:
-            del self._cache[k]
+        return self._source.frame_at_time(t_seconds)
 
     def close(self) -> None:
-        self._stop.set()
-        self._wake.set()
-        self._thread.join(timeout=1.0)
         try:
             self._source.close()
         except Exception:
             log.exception("[video] error closing VideoSource")
-        with self._lock:
-            self._cache.clear()
 
 
 class VideoSourceManager:
@@ -348,21 +209,18 @@ class VideoSourceManager:
         colour-managed path arrives once we surface the FFmpeg
         color-primaries / transfer enum at the OCIO input picker).
 
-        VideoSource caches uint8 RGBA (= 4× more frames per GB than
-        float32 — matches what OpenRV does). The uint8 → float32
-        cast happens on the ``_ThreadedDecoder`` **worker thread**
-        as part of its decode-into-cache path, NOT here. By the
-        time the main Qt thread asks for ``decode_at``, the worker
-        has already produced the float32 ndarray and the
-        ``dec.get`` call is a pure dict lookup.
-
-        Why the cast moved off the main thread (v1.8.3): doing the
-        ``np.multiply`` cast inline pushed the per-tick budget at
-        60 fps over the 16.7 ms Qt timer interval (the cast alone
-        is ~16 ms on 1440p) — so playback locked at 30 fps even on
-        cache hits. Moving the cast to the worker thread (which has
-        its own time budget independent of the Qt tick rate) gives
-        the main thread a near-zero-cost cache hit on every frame.
+        Implementation:
+          1. ``dec.get(t)`` forwards to ``VideoSource.frame_at_time(t)``
+             since v1.8.3 (the per-layer worker thread + small dict
+             cache was retired — see ``_ThreadedDecoder`` docstring
+             for the reason).
+          2. ``VideoSource`` keeps its own background prefetch thread
+             filling a multi-hundred-frame float32 LRU; cache hits
+             return in ~0.03 ms with no main-thread cast work.
+          3. Cache misses fall back to a real seek + decode on the
+             calling thread (10-30 ms on AV1 1440p) — no 500 ms
+             sync_done timeout that would surface as a black 1×1
+             ndarray.
         """
         dec = self.get_or_open(layer_id, path)
         return dec.get(t_seconds)
