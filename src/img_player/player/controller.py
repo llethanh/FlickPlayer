@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import gc
 import logging
+import os
 import time
 from collections import deque
 from collections.abc import Callable
@@ -22,6 +23,43 @@ from img_player.cache.frame_cache import FrameCache
 from img_player.cache.master_frame_cache import MasterFrameCache
 from img_player.player.state import LoopMode, PlaybackState
 from img_player.sequence.models import SequenceInfo
+
+# ----------------------------------------------------------------------
+# [v1.8.3 DIAG] Temporary instrumentation gated on env var FLICK_DIAG.
+# When set, logs every-30-tick + per-second-summary of tick cadence so
+# we can tell whether the 30 fps user report stems from the controller
+# itself (qt timer / advance cap) or the downstream paint pipeline.
+# Remove this block after the diagnostic is complete.
+# ----------------------------------------------------------------------
+_DIAG_ENABLED = bool(os.environ.get("FLICK_DIAG"))
+_diag_state: dict[str, Any] = {
+    "last_t": None, "count": 0, "intervals": deque(maxlen=240),
+    "last_summary": 0.0,
+}
+
+
+def _diag_log_tick(controller: "PlayerController", next_frame: int) -> None:
+    now = time.monotonic()
+    state = _diag_state
+    if state["last_t"] is not None:
+        state["intervals"].append((now - state["last_t"]) * 1000.0)
+    state["last_t"] = now
+    state["count"] += 1
+    # Per-second summary line.
+    if now - state["last_summary"] >= 1.0 and state["intervals"]:
+        ivals = sorted(state["intervals"])
+        p50 = ivals[len(ivals) // 2]
+        p95 = ivals[int(len(ivals) * 0.95)]
+        max_ = ivals[-1]
+        avg = sum(ivals) / len(ivals)
+        eff = 1000.0 / avg if avg > 0 else 0.0
+        log.warning(
+            "[DIAG] tick cadence: target_fps=%.1f eff_fps=%.1f "
+            "interval_p50=%.1fms p95=%.1fms max=%.1fms (frame=%d, n=%d)",
+            controller._state.fps, eff, p50, p95, max_,
+            next_frame, len(ivals),
+        )
+        state["last_summary"] = now
 
 # Both cache classes present the same public surface (attach,
 # detach, request, get, contains, set_current_frame, …) — the
@@ -722,6 +760,14 @@ class PlayerController(QObject):  # type: ignore[misc]  # mypy: QObject is Any
                 )
                 self._advance_log_budget -= 1
         self.frame_changed.emit(next_frame)
+
+        # [v1.8.3 DIAG] Per-tick effective-fps log gated on env var.
+        # Set FLICK_DIAG=1 then play the video for a few seconds —
+        # the flick.log will show whether the controller is firing
+        # at the expected rate (60 Hz on a 60 fps clip) or being
+        # throttled somewhere upstream. Remove after diagnosis.
+        if _DIAG_ENABLED:
+            _diag_log_tick(self, next_frame)
 
         self._maybe_emit_metrics()
 

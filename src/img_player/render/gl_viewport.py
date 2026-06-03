@@ -25,7 +25,9 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import os
 import time
+from collections import deque
 from dataclasses import dataclass
 
 import numpy as np
@@ -37,6 +39,37 @@ from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
 from img_player.bench import recorder
 from img_player.color.gpu_processor import ShaderBundle, Texture1D, Texture3D
+
+
+# ----------------------------------------------------------------------
+# [v1.8.3 DIAG] Temporary paint instrumentation gated on env var
+# ``FLICK_DIAG`` so we can quantify the paint-side cost of the user's
+# 30 fps cap report. Remove this block after diagnosis.
+# ----------------------------------------------------------------------
+_DIAG_ENABLED = bool(os.environ.get("FLICK_DIAG"))
+_diag_paints: deque[tuple[float, float]] = deque(maxlen=240)
+_diag_last_summary = [0.0]
+
+
+def _diag_record_paint(paint_ms: float, upload_ms: float) -> None:
+    import time as _t
+    _diag_paints.append((paint_ms, upload_ms))
+    now = _t.monotonic()
+    if now - _diag_last_summary[0] >= 1.0 and _diag_paints:
+        paints = sorted(p for p, _ in _diag_paints)
+        uploads = sorted(u for _, u in _diag_paints)
+        p50_p = paints[len(paints) // 2]
+        p95_p = paints[int(len(paints) * 0.95)]
+        max_p = paints[-1]
+        p50_u = uploads[len(uploads) // 2]
+        p95_u = uploads[int(len(uploads) * 0.95)]
+        log_paint = logging.getLogger(__name__)
+        log_paint.warning(
+            "[DIAG] paintGL: total p50=%.1fms p95=%.1fms max=%.1fms "
+            "(upload p50=%.2fms p95=%.2fms) n=%d  budget=16.67ms",
+            p50_p, p95_p, max_p, p50_u, p95_u, len(paints),
+        )
+        _diag_last_summary[0] = now
 
 log = logging.getLogger(__name__)
 
@@ -1130,6 +1163,15 @@ class GLViewport(QOpenGLWidget):  # type: ignore[misc]
                 upload_gpu_us=self._last_upload_gpu_us,
                 upload_gpu_pending=self._last_upload_gpu_pending,
             )
+
+        # [v1.8.3 DIAG] Per-paint instrumentation gated on
+        # ``FLICK_DIAG`` so we can quantify the paint-side cost of
+        # the user's 30 fps cap report — only logs once a second
+        # so the file stays readable, but tracks the full
+        # distribution. Remove after diagnosis.
+        if _DIAG_ENABLED and had_upload:
+            paint_ms = (time.monotonic() - paint_t0) * 1e3
+            _diag_record_paint(paint_ms, upload_us / 1e3)
 
     # ------------------------------------------------------------------ Quad / texture helpers
 
