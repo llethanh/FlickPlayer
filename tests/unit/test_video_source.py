@@ -96,20 +96,21 @@ class TestRamCache:
 
     def test_budget_evicts_oldest(self, tmp_path: Path) -> None:
         p = tmp_path / "v.mp4"
-        # 64×48 RGBA uint8 = 12 288 bytes/frame. With a 30 000-byte
-        # budget the cache fits 2 frames + a sliver, so a 3rd read
-        # must evict the 1st (LRU policy). ``prefetch=False`` keeps
-        # the test deterministic — the background worker would race
-        # with the manual reads.
+        # 64×48 RGBA float32 = 49 152 bytes/frame (4 bytes/component
+        # vs uint8's 1). With a 120 000-byte budget the cache fits
+        # 2 frames + a sliver, so a 3rd read must evict the 1st
+        # (LRU policy). ``prefetch=False`` keeps the test
+        # deterministic — the background worker would race with the
+        # manual reads.
         _make_indexed_video(p, n_frames=8)
         with VideoSource(
-            p, cache_budget_bytes=30_000, prefetch=False,
+            p, cache_budget_bytes=120_000, prefetch=False,
         ) as src:
             src.frame_at_time(0.0 / 24)
             src.frame_at_time(1.0 / 24)
             src.frame_at_time(2.0 / 24)
             stats = src.cache_stats()
-            assert stats["bytes"] <= 30_000
+            assert stats["bytes"] <= 120_000
             # Cache shouldn't have grown past the budget.
             assert stats["frames"] <= 3
 
@@ -193,12 +194,15 @@ class TestRamCache:
 def _frame_index(arr: np.ndarray) -> int:
     """Recover the frame index from its dominant grey level.
 
-    VideoSource returns uint8 RGBA (alpha=255) — the alpha plane
-    would skew the mean if averaged together with RGB. Slice off
-    the alpha then take the mean as before.
+    VideoSource returns **float32 RGBA in [0, 1]** since v1.8.3 (the
+    per-source cache stores float32 so cache hits are zero-cost on
+    the main thread). Frame ``i`` is encoded as solid grey ``i*10``
+    on the [0, 255] scale; the float32 mean of the RGB channels is
+    ``i*10/255``, so we recover ``i`` as ``round(mean * 255 / 10)``.
+    Alpha is always 1.0 — slice it off so it doesn't pull the mean.
     """
     rgb = arr[..., :3]
-    return int(round(float(rgb.mean()) / 10.0))
+    return int(round(float(rgb.mean()) * 255.0 / 10.0))
 
 
 def test_open_close(tmp_path: Path) -> None:
@@ -219,13 +223,16 @@ def test_frame_at_time_first(tmp_path: Path) -> None:
     _make_indexed_video(p, n_frames=24, fps=24)
     with VideoSource(p) as src:
         arr = src.frame_at_time(0.0)
-        # VideoSource caches + returns uint8 RGBA — that's what
-        # swscale produces and what fits 4× more frames per GB than
-        # float32 (= matches OpenRV's cache density). The cast to
-        # float32 happens at the decode_at boundary (= just before
-        # GL upload). The alpha plane is uniform 255 from swscale.
+        # VideoSource caches + returns float32 RGBA in [0, 1] since
+        # v1.8.3 — the cast moved from decode_at (main thread) into
+        # the source itself, so cache hits are zero-cost on the
+        # GUI thread (= 60 fps cached playback unlocked). The alpha
+        # plane is uniform 1.0 (= swscale's 255 normalised).
         assert arr.shape == (48, 64, 4)
-        assert arr.dtype == np.uint8
+        assert arr.dtype == np.float32
+        # Alpha is opaque (1.0) — pin the contract so a regression
+        # to a 255-scale alpha would surface immediately.
+        assert np.allclose(arr[..., 3], 1.0)
         assert _frame_index(arr) == 0
 
 

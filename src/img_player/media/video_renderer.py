@@ -151,11 +151,12 @@ class _ThreadedDecoder:
                     return np.zeros_like(sample)
             raise RuntimeError("video decode timeout with no fallback")
         with self._lock:
-            # Decoded buffers are RGBA uint8 since v1.8.2 (was RGB);
-            # the fallback shape needs to match so callers don't
-            # crash on a shape mismatch downstream.
+            # Decoded buffers are RGBA float32 since v1.8.3 (the
+            # uint8 → float32 cast moved onto the worker thread);
+            # the fallback shape + dtype need to match so callers
+            # don't crash on a dtype mismatch downstream.
             return self._sync_result if self._sync_result is not None \
-                else np.zeros((1, 1, 4), dtype=np.uint8)
+                else np.zeros((1, 1, 4), dtype=np.float32)
 
     def _idx_for(self, t_seconds: float) -> int:
         return round(t_seconds * self.fps)
@@ -182,6 +183,9 @@ class _ThreadedDecoder:
                 self._sync_request_t = None
             if req_t is not None:
                 try:
+                    # VideoSource returns float32 RGBA directly since
+                    # v1.8.3 — its cache stores float32 so cache hits
+                    # are zero-cost end-to-end. No cast needed here.
                     arr = self._source.frame_at_time(req_t)
                 except Exception:
                     log.exception("[video] sync decode failed")
@@ -345,21 +349,20 @@ class VideoSourceManager:
         color-primaries / transfer enum at the OCIO input picker).
 
         VideoSource caches uint8 RGBA (= 4× more frames per GB than
-        float32 — matches what OpenRV does). We do the uint8 →
-        float32 cast here on the way out because the viewport's
-        ``set_frame`` expects float precision.
+        float32 — matches what OpenRV does). The uint8 → float32
+        cast happens on the ``_ThreadedDecoder`` **worker thread**
+        as part of its decode-into-cache path, NOT here. By the
+        time the main Qt thread asks for ``decode_at``, the worker
+        has already produced the float32 ndarray and the
+        ``dec.get`` call is a pure dict lookup.
 
-        Implementation note — the cast is **fused** as a single
-        ``np.multiply(arr, scale, dtype=np.float32)`` ufunc call
-        instead of ``arr.astype(float32) * (1/255)``. The split
-        form does two passes over the data (write 60 MB intermediate
-        on 1440p, then read+write 60 MB again), the fused form does
-        one pass (read 15 MB uint8, write 60 MB float32). On a
-        typical 8 GB/s memory bus that drops the per-frame cast from
-        ~23 ms to ~9 ms — under the 16.7 ms 60 fps budget, so cached
-        playback now lands the 60 fps target instead of capping at
-        30 (every-other-frame-skipped) playback.
+        Why the cast moved off the main thread (v1.8.3): doing the
+        ``np.multiply`` cast inline pushed the per-tick budget at
+        60 fps over the 16.7 ms Qt timer interval (the cast alone
+        is ~16 ms on 1440p) — so playback locked at 30 fps even on
+        cache hits. Moving the cast to the worker thread (which has
+        its own time budget independent of the Qt tick rate) gives
+        the main thread a near-zero-cost cache hit on every frame.
         """
         dec = self.get_or_open(layer_id, path)
-        rgba_u8 = dec.get(t_seconds)
-        return np.multiply(rgba_u8, np.float32(1.0 / 255.0), dtype=np.float32)
+        return dec.get(t_seconds)

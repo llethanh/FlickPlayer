@@ -40,34 +40,50 @@ log = logging.getLogger(__name__)
 # Default RAM budget for the per-source frame cache. Tunable via
 # ``Preferences.video_cache_budget_gb`` and the App constructor.
 #
-# Cached frames are stored as **uint8 RGBA** (= raw output from
-# ``swscale.to_ndarray('rgba')``). That's the same format OpenRV
-# uses in its FBCache and gives 4× more frames per GB than the
-# previous float32 cache:
+# Cached frames are stored as **float32 RGBA** in [0, 1] range —
+# the same format the viewport's GL texture upload pipeline expects.
+# Storing float32 (instead of the more compact uint8 we tried in
+# v1.8.2) means cache hits are TRULY zero-cost on the main thread:
+# no ``np.multiply(uint8, 1/255, dtype=float32)`` cast (the ~16 ms
+# cast on 1440p was exactly the thing pushing cached playback over
+# the 16.67 ms 60 fps tick budget and locking it at 30 fps).
 #
-#   uint8 RGBA per-frame footprint:
-#     1440p  = 2560×1440×4 = 14.4 MB   →  ~570 frames in 8 GB
-#     1080p  = 1920×1080×4 =  8.0 MB   →  ~1020 frames in 8 GB
-#     720p   =  1280×720×4 =  3.5 MB   →  ~2280 frames in 8 GB
+# Trade-off: 4× more memory per cached frame than uint8 would use:
 #
-# At the budget the user typically configures on a modern workstation
-# (e.g. 32 GB on a 51 GB-RAM machine) this caches:
-#     1440p  ~2 280 frames  = 38 s of 60 fps  (matches OpenRV's 2000-ish
-#                                              frames on the same clip)
-#     1080p  ~4 100 frames  = 68 s of 60 fps
-#     720p   ~9 100 frames  = 152 s of 60 fps
+#   float32 RGBA per-frame footprint:
+#     1440p  = 2560×1440×4×4 = 58.6 MB   →  ~140 frames in 8 GB
+#     1080p  = 1920×1080×4×4 = 33.2 MB   →  ~247 frames in 8 GB
+#     720p   = 1280× 720×4×4 = 14.7 MB   →  ~556 frames in 8 GB
 #
-# Trade-off: cache hits now go through a ~23 ms ``astype(float32) *
-# (1/255)`` pass in ``decode_at`` (the same pass that used to live
-# pre-v1.8.2). That caps cached playback at ~43 fps on 1440p; not
-# ideal for 60 fps content but the user explicitly preferred 'lots
-# of frames cached' over 'instant cache hits on a tiny window' after
-# comparing with OpenRV. Default matches the image-sequence cache's
-# 8 GB so the two stacks have parity.
+# On a 51 GB machine the user can crank ``video_cache.budget_gb``
+# to 32 in ``flick.toml`` to land closer to OpenRV's 2000-ish
+# cached frames (at 32 GB: ~560 frames @ 1440p = ~9 s, ~990 @
+# 1080p, ~2220 @ 720p). A full-density uint8 cache + main-thread
+# cast was tried and lost on the 60 fps cap; the dense uint8
+# approach can come back later as part of a viewport refactor that
+# uploads ``GL_RGBA8`` textures and normalises in the shader,
+# avoiding the cast entirely (= best of both worlds — see issue
+# tracker "viewport uint8 fast path").
 #
 # NOTE: budget is **per VideoSource** (one per video layer). A 3-clip
 # compare stack at the default budget uses up to 24 GB total.
 DEFAULT_VIDEO_CACHE_BUDGET_BYTES: int = 8 * 1024 * 1024 * 1024
+
+
+def _frame_to_rgba_f32(frame: object) -> np.ndarray:
+    """Decode a PyAV ``VideoFrame`` to ``(H, W, 4)`` float32 RGBA in
+    [0, 1].
+
+    Extracted so every call site in this module (the foreground
+    decoder + the prefetch worker + the precise/fast-seek branches)
+    does the same fused ``np.multiply(arr_u8, 1/255, dtype=float32)``
+    cast — no chance of half of them storing uint8 while the other
+    half stores float32. The cache stores float32 so cache hits
+    return ready-to-upload arrays with zero main-thread work — see
+    the module-level budget preamble for the trade-off math.
+    """
+    arr_u8 = frame.to_ndarray(format="rgba")  # type: ignore[attr-defined]
+    return np.multiply(arr_u8, np.float32(1.0 / 255.0), dtype=np.float32)
 
 
 class VideoSource:
@@ -294,7 +310,7 @@ class VideoSource:
                 if frame.pts is not None
                 else 0.0
             )
-            target_frame = frame.to_ndarray(format="rgba")
+            target_frame = _frame_to_rgba_f32(frame)
             self._last_pts = pts
             self._last_frame = target_frame
             self._cache_put(int(round(pts * float(self.fps))), target_frame)
@@ -361,7 +377,7 @@ class VideoSource:
                 else 0.0
             )
             if pts <= t < pts + interval:
-                target_frame = frame.to_ndarray(format="rgba")
+                target_frame = _frame_to_rgba_f32(frame)
                 self._last_pts = pts
                 self._last_frame = target_frame
                 self._cache_put(int(round(pts * float(self.fps))), target_frame)
@@ -373,7 +389,7 @@ class VideoSource:
                 # the seek lands past ``t`` (can happen when ``t`` is
                 # before the first keyframe).
                 if retried:
-                    target_frame = frame.to_ndarray(format="rgba")
+                    target_frame = _frame_to_rgba_f32(frame)
                     self._last_pts = pts
                     self._last_frame = target_frame
                     self._cache_put(int(round(pts * float(self.fps))), target_frame)
@@ -390,7 +406,7 @@ class VideoSource:
                 if passing_idx not in self._frame_cache:
                     # Only convert + store if it isn't already there
                     # — avoids re-allocating on a re-traversed range.
-                    passing_arr = frame.to_ndarray(format="rgba")
+                    passing_arr = _frame_to_rgba_f32(frame)
                     self._cache_put(passing_idx, passing_arr)
 
     def set_fast_seek(self, enabled: bool) -> None:
@@ -592,7 +608,7 @@ class VideoSource:
                             self._prefetch_max_cached_idx = idx
                         continue
 
-                arr = frame.to_ndarray(format="rgba")
+                arr = _frame_to_rgba_f32(frame)
                 self._cache_put(idx, arr)
                 # First frame: learn the per-frame footprint so the
                 # throttle uses an accurate capacity estimate.
@@ -608,13 +624,25 @@ class VideoSource:
                 # ahead of the playhead. Beyond that, our new frames
                 # would just trigger LRU eviction of the frames the
                 # user is about to play. Sleep until playback
-                # catches up — checked every 50 ms.
+                # catches up.
+                #
+                # Check interval is **5 ms** (not 50): at 60 fps the
+                # playhead advances every ~16 ms, so a 50 ms sleep
+                # meant we missed 3+ playback ticks per check. Combined
+                # with the AV1 decode cost per refilled frame (~20-
+                # 30 ms), the prefetcher could only sustain ~12 fps —
+                # well below 60 — and fell progressively behind the
+                # playhead until the cache visibly "stopped filling".
+                # 5 ms keeps the throttle responsive (catches the
+                # playhead advancing within ~1 frame at 60 fps) at
+                # negligible CPU cost (the wait is interruptible by
+                # the close-time stop event).
                 throttle_limit = int(frame_capacity * 0.9)
                 while not self._prefetch_stop.is_set():
                     ahead = cur_idx - self._playback_idx
                     if ahead < throttle_limit:
                         break
-                    if self._prefetch_stop.wait(timeout=0.05):
+                    if self._prefetch_stop.wait(timeout=0.005):
                         return
         except Exception:  # noqa: BLE001
             log.debug(
