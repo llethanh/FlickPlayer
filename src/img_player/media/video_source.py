@@ -40,17 +40,30 @@ log = logging.getLogger(__name__)
 # Default RAM budget for the per-source frame cache. Tunable via
 # ``Preferences.video_cache_budget_gb`` and the App constructor.
 #
-# Cached frames are stored as **float32 RGBA** rather than uint8 — that's
-# 4× heavier per frame but lets cache hits skip the
-# ``astype(float32) * (1/255)`` pass in ``decode_at`` (= 23 ms on a
-# 1440p frame, completely dominating any cache-hit savings if the cast
-# stayed downstream). With float32 cache:
-#   1440p frame = 2560×1440×4×4 = 57.6 MB   →  ~140 frames in 8 GB
-#   1080p frame = 1920×1080×4×4 = 31.6 MB   →  ~256 frames in 8 GB
-#    720p frame =  1280×720×4×4 = 14.0 MB   →  ~570 frames in 8 GB
-# Most VFX dailies (30-90 s of 720p/1080p) fit end-to-end after the
-# prefetch worker finishes its sweep. Default matches the image-
-# sequence cache's 8 GB so the two stacks have parity.
+# Cached frames are stored as **uint8 RGBA** (= raw output from
+# ``swscale.to_ndarray('rgba')``). That's the same format OpenRV
+# uses in its FBCache and gives 4× more frames per GB than the
+# previous float32 cache:
+#
+#   uint8 RGBA per-frame footprint:
+#     1440p  = 2560×1440×4 = 14.4 MB   →  ~570 frames in 8 GB
+#     1080p  = 1920×1080×4 =  8.0 MB   →  ~1020 frames in 8 GB
+#     720p   =  1280×720×4 =  3.5 MB   →  ~2280 frames in 8 GB
+#
+# At the budget the user typically configures on a modern workstation
+# (e.g. 32 GB on a 51 GB-RAM machine) this caches:
+#     1440p  ~2 280 frames  = 38 s of 60 fps  (matches OpenRV's 2000-ish
+#                                              frames on the same clip)
+#     1080p  ~4 100 frames  = 68 s of 60 fps
+#     720p   ~9 100 frames  = 152 s of 60 fps
+#
+# Trade-off: cache hits now go through a ~23 ms ``astype(float32) *
+# (1/255)`` pass in ``decode_at`` (the same pass that used to live
+# pre-v1.8.2). That caps cached playback at ~43 fps on 1440p; not
+# ideal for 60 fps content but the user explicitly preferred 'lots
+# of frames cached' over 'instant cache hits on a tiny window' after
+# comparing with OpenRV. Default matches the image-sequence cache's
+# 8 GB so the two stacks have parity.
 #
 # NOTE: budget is **per VideoSource** (one per video layer). A 3-clip
 # compare stack at the default budget uses up to 24 GB total.
@@ -197,27 +210,13 @@ class VideoSource:
     # Decode
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _frame_to_rgba_f32(frame) -> np.ndarray:  # type: ignore[no-untyped-def]
-        """PyAV frame → (H, W, 4) float32 normalised [0,1].
-
-        The float32 conversion is rolled in here so cached frames
-        are display-ready: a cache hit returns immediately without
-        the ~23 ms ``astype(float32) * (1/255)`` pass that used to
-        live in :func:`video_renderer.decode_at`. Trade-off is 4×
-        RAM per cached frame — see the budget defaults in this
-        module's preamble for the math.
-        """
-        rgba_u8 = frame.to_ndarray(format="rgba")
-        return rgba_u8.astype(np.float32, copy=False) * (1.0 / 255.0)
-
     def frame_at_time(self, t_seconds: float) -> np.ndarray:
         """Return the frame whose presentation interval contains ``t``.
 
-        Output is an ``(H, W, 4)`` ``float32`` RGBA ndarray with
-        values in [0, 1] — display-ready, no further conversion in
-        ``decode_at``. The OCIO input transform, when wired, will
-        operate on this same array shape and dtype.
+        Output is an ``(H, W, 4)`` ``uint8`` RGBA ndarray straight from
+        ``swscale.to_ndarray('rgba')`` — same format the cache stores,
+        so cache hits return zero-cost. ``decode_at`` runs the
+        ``astype(float32) * (1/255)`` cast at the GL boundary.
 
         Clamps ``t`` to ``[0, duration)``: requesting before-start
         returns the first frame, after-end returns the last decoded
@@ -288,7 +287,7 @@ class VideoSource:
                 if frame.pts is not None
                 else 0.0
             )
-            target_frame = self._frame_to_rgba_f32(frame)
+            target_frame = frame.to_ndarray(format="rgba")
             self._last_pts = pts
             self._last_frame = target_frame
             self._cache_put(int(round(pts * float(self.fps))), target_frame)
@@ -355,7 +354,7 @@ class VideoSource:
                 else 0.0
             )
             if pts <= t < pts + interval:
-                target_frame = self._frame_to_rgba_f32(frame)
+                target_frame = frame.to_ndarray(format="rgba")
                 self._last_pts = pts
                 self._last_frame = target_frame
                 self._cache_put(int(round(pts * float(self.fps))), target_frame)
@@ -367,7 +366,7 @@ class VideoSource:
                 # the seek lands past ``t`` (can happen when ``t`` is
                 # before the first keyframe).
                 if retried:
-                    target_frame = self._frame_to_rgba_f32(frame)
+                    target_frame = frame.to_ndarray(format="rgba")
                     self._last_pts = pts
                     self._last_frame = target_frame
                     self._cache_put(int(round(pts * float(self.fps))), target_frame)
@@ -384,7 +383,7 @@ class VideoSource:
                 if passing_idx not in self._frame_cache:
                     # Only convert + store if it isn't already there
                     # — avoids re-allocating on a re-traversed range.
-                    passing_arr = self._frame_to_rgba_f32(frame)
+                    passing_arr = frame.to_ndarray(format="rgba")
                     self._cache_put(passing_idx, passing_arr)
 
     def set_fast_seek(self, enabled: bool) -> None:
@@ -498,7 +497,7 @@ class VideoSource:
                         if idx > self._prefetch_max_cached_idx:
                             self._prefetch_max_cached_idx = idx
                         continue
-                arr = self._frame_to_rgba_f32(frame)
+                arr = frame.to_ndarray(format="rgba")
                 self._cache_put(idx, arr)
                 with self._cache_lock:
                     if idx > self._prefetch_max_cached_idx:

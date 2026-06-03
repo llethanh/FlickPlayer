@@ -338,13 +338,16 @@ class VideoSourceManager:
         colour-managed path arrives once we surface the FFmpeg
         color-primaries / transfer enum at the OCIO input picker).
 
-        Since v1.8.2 the conversion to float32 happens inside
-        :class:`VideoSource` (see ``_frame_to_rgba_f32``) so cached
-        frames return display-ready and ``decode_at`` is a pass-
-        through on the hot path. Per-frame cost on a 1440p cache
-        hit drops from ~26 ms (the cast pass) to ~3 ms (just the
-        thread sync) — that's what makes scrub-back / loop feel
-        truly instant rather than just "fast".
+        VideoSource caches uint8 RGBA (= 4× more frames per GB than
+        float32 — matches what OpenRV does). We do the
+        ``astype(float32) * (1/255)`` cast here on the way out
+        because the viewport's ``set_frame`` expects float
+        precision. Per-frame cast cost on 1440p is ~23 ms; cached
+        playback caps at ~43 fps from this alone. The trade-off
+        (more frames cached vs faster per-frame return) was a
+        deliberate v1.8.2 retune — see the budget preamble in
+        :mod:`video_source` for the math.
         """
         dec = self.get_or_open(layer_id, path)
-        return dec.get(t_seconds)
+        rgba_u8 = dec.get(t_seconds)
+        return rgba_u8.astype(np.float32, copy=False) * (1.0 / 255.0)
