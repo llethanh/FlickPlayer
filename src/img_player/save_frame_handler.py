@@ -258,6 +258,22 @@ def _render_single_frame_array(
     # cleanup pass on top of a plate).
     layer = app._layer_stack.topmost_visible_at(master_frame)
 
+    # Video layers cannot route through FrameRenderer's image-sequence
+    # ``read_frame`` (OIIO opens the container and decodes the first
+    # demuxed packet — there's no seek-to-frame-N concept), so a
+    # naive Save Frame on a video would always capture frame 1
+    # regardless of the timeline cursor. Route the decode through the
+    # live PyAV path (the same one that feeds the viewport) and only
+    # use the renderer for the OCIO + resize + annotation tail.
+    if (
+        layer is not None
+        and getattr(layer, "is_video", False)
+        and layer.covers(master_frame)
+    ):
+        return _render_video_frame_array(
+            app, layer, master_frame, settings, out_w, out_h,
+        )
+
     # Compare overlay snapshot — only relevant when compare is live
     # AND the user kept the "Bake compare overlay" checkbox on. The
     # renderer's compare path takes a master frame, decodes both
@@ -335,6 +351,89 @@ def _render_single_frame_array(
     )
     renderer = FrameRenderer(ctx, export_settings)
     return renderer.render(frame_arg, (int(out_w), int(out_h)))
+
+
+def _render_video_frame_array(
+    app: ImgPlayerApp,
+    layer,  # type: ignore[no-untyped-def] — Layer (avoid cyclic import)
+    master_frame: int,
+    settings: SaveFrameSettings,
+    out_w: int,
+    out_h: int,
+) -> np.ndarray | None:
+    """Save Frame path for a video-backed layer.
+
+    Why a separate route: image-sequence layers expose each frame as
+    its own file on disk, so :func:`img_player.io.reader.read_frame`
+    (which the export ``FrameRenderer`` uses) just opens that one
+    file and decodes. A video layer's synthetic
+    :class:`SequenceInfo` instead lists every virtual frame as a
+    ``(video.mp4, frame_number=N)`` pair pointing to the SAME
+    container — and ``read_frame`` ignores the frame number,
+    reading whatever the first demuxed packet decodes to (= the
+    container's frame 1). End result before this helper: every Save
+    Frame on a video captured frame 1, irrespective of the timeline
+    cursor — the bug the user reported.
+
+    Fix: delegate the actual pixel fetch to the same PyAV path the
+    viewport already uses for live playback
+    (``decode_video_layer`` → ``VideoSourceManager`` →
+    ``VideoSource.frame_at_time``), then route the result through
+    the export renderer's post-compose tail so OCIO + resize +
+    annotation bake stay identical to the image-sequence path.
+    """
+    from img_player.media_handler import decode_video_layer  # noqa: PLC0415
+
+    rgba = decode_video_layer(app, layer, master_frame)
+    if rgba is None:
+        # Layer covers the master frame per the model, but the live
+        # decoder couldn't produce pixels (rare — corrupt packet,
+        # fps mismatch in metadata). Surface as "nothing to render"
+        # to the caller so the status bar reads sensibly.
+        log.warning(
+            "[save-frame] video decode returned None for layer %s @ master=%d",
+            getattr(layer, "id", "?"), master_frame,
+        )
+        return None
+
+    # Build a minimal ExportSettings + RenderContext just to drive
+    # the renderer's OCIO / resize / annotation / dtype tail. The
+    # ``in_frame``/``out_frame`` values aren't read by
+    # ``_post_compose`` — they only matter for the iteration loop
+    # in the multi-frame export. We set them to the layer's source
+    # frame for clarity in case the renderer logs them.
+    source_frame = layer.source_frame_at(master_frame)
+    export_settings = ExportSettings(
+        output_dir=settings.path.parent,
+        in_frame=int(source_frame),
+        out_frame=int(source_frame),
+        format_key="png",  # forces uint8 output dtype
+        width=int(out_w),
+        height=int(out_h),
+        apply_display_transform=True,
+        bake_annotations=settings.with_annotations,
+        bake_compare=False,  # compare bake on video sources isn't
+                              # wired (CompareDecoder is image-only);
+                              # the dialog already hides the toggle
+                              # in that case, but be explicit here.
+        missing_frame_policy=MissingFramePolicy.BLACK,
+    )
+    ocio_proc = _build_save_frame_ocio_processor(app)
+    ctx = RenderContext(
+        sequence=layer.sequence,
+        annotation_store=app._annotation_store if settings.with_annotations else None,
+        ocio_cpu_processor=ocio_proc,
+        channel_selection=app._channel_selection,
+        compare=None,
+    )
+    renderer = FrameRenderer(ctx, export_settings)
+    # _post_compose is private by convention but is the single tail
+    # we want to share with the image-sequence path. Using it
+    # directly is preferable to reimplementing OCIO + resize +
+    # annotation here — that would inevitably drift.
+    return renderer._post_compose(  # noqa: SLF001
+        rgba, int(source_frame), int(out_w), int(out_h),
+    )
 
 
 def _build_save_frame_ocio_processor(app: ImgPlayerApp):  # noqa: ANN202
