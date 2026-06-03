@@ -297,7 +297,27 @@ hidden += collect_submodules("PyOpenColorIO")
 # PyAV is heavily Cython-based with per-codec submodules loaded at
 # decode-time. Pull the whole tree so demuxer / decoder lookups don't
 # fail with ImportError mid-playback.
+#
+# ``collect_submodules("av")`` walks the package's Python sources but
+# silently skips compiled-only ``.pyd`` modules that are NOT imported
+# at the top of ``av/__init__.py`` — and PyAV uses several of those
+# as lazy-loaded utility modules (``bytesource``, ``dictionary``,
+# ``utils``, ``opaque``, ``container.pyio``, ``filter.link``,
+# ``video.reformatter``). Without explicit hints they're missing
+# from the bundle, and the first ``av.open(mp4)`` crashes with
+# ``ImportError: No module named 'av.bytesource'``. Listing them
+# here as forced hidden imports — PyInstaller will then bundle the
+# matching ``.pyd`` files automatically.
 hidden += collect_submodules("av")
+hidden += [
+    "av.bytesource",
+    "av.dictionary",
+    "av.utils",
+    "av.opaque",
+    "av.container.pyio",
+    "av.filter.link",
+    "av.video.reformatter",
+]
 # sounddevice + its CFFI shim. ``_sounddevice`` is the compiled bridge.
 hidden += ["sounddevice", "_sounddevice", "_cffi_backend", "cffi"]
 # lz4 is loaded lazily inside ``img_player.cache.disk_cache`` (wrapped in
