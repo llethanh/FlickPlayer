@@ -377,6 +377,18 @@ def main(argv: list[str] | None = None) -> int:
     #   leave a trail for post-mortem debugging.
     _setup_logging(logging.INFO)
 
+    # [v1.8.3 DIAG] Always log whether FLICK_DIAG is set so we can
+    # confirm from the log file that FlickPlayerDiag.bat propagated
+    # the env var. If this line says ``not set`` after running the
+    # diag bat, the bat / cmd scoping is broken — set FLICK_DIAG=1
+    # manually in cmd before launching FlickPlayer.bat instead.
+    import os as _os
+    logging.getLogger("img_player").info(
+        "[diag-env] FLICK_DIAG=%r (instrumentation will %s)",
+        _os.environ.get("FLICK_DIAG", "<not set>"),
+        "FIRE" if _os.environ.get("FLICK_DIAG") else "NOT fire",
+    )
+
     splash.update("Detecting hardware…")
     # Auto-tune layer: the hard-coded defaults from earlier versions
     # (8 GB cache, 6 workers, 1 OIIO thread) are now produced as a
