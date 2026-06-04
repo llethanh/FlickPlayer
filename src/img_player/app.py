@@ -5,62 +5,9 @@ from __future__ import annotations
 import argparse
 import gc
 import logging
-import os
 import re
 import sys
-import time
-from collections import defaultdict, deque
 from pathlib import Path
-
-
-# ----------------------------------------------------------------------
-# [v1.8.3 DIAG] Per-segment timing inside _on_frame_changed, gated on
-# the same FLICK_DIAG env var the controller + viewport already read.
-# Tracks elapsed wall time per segment label so we can tell which step
-# in the dispatch eats the 14-30 ms the user's tick body is showing.
-# Remove this block after diagnosis.
-# ----------------------------------------------------------------------
-_APP_DIAG_ENABLED = bool(os.environ.get("FLICK_DIAG"))
-_app_diag_log = logging.getLogger("img_player.app.diag")
-_app_diag_start: list[float] = []
-_app_diag_samples: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=240))
-_app_diag_last_seg_t: list[float] = []
-_app_diag_last_summary: list[float] = [0.0]
-
-
-def _app_diag_record_start() -> None:
-    now = time.monotonic()
-    _app_diag_start[:] = [now]
-    _app_diag_last_seg_t[:] = [now]
-
-
-def _app_diag_record_segment(label: str) -> None:
-    now = time.monotonic()
-    if not _app_diag_last_seg_t:
-        return
-    dt_ms = (now - _app_diag_last_seg_t[0]) * 1000.0
-    _app_diag_samples[label].append(dt_ms)
-    _app_diag_last_seg_t[0] = now
-
-
-def _app_diag_maybe_summary() -> None:
-    now = time.monotonic()
-    if now - _app_diag_last_summary[0] < 1.0:
-        return
-    if not _app_diag_samples:
-        return
-    parts = []
-    for label, samples in _app_diag_samples.items():
-        if not samples:
-            continue
-        s = sorted(samples)
-        p50 = s[len(s) // 2]
-        p95 = s[int(len(s) * 0.95)]
-        max_ = s[-1]
-        parts.append(f"{label}=p50:{p50:.2f}/p95:{p95:.2f}/max:{max_:.2f}")
-    if parts:
-        _app_diag_log.warning("[DIAG] _on_frame_changed segments: %s", " | ".join(parts))
-    _app_diag_last_summary[0] = now
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
@@ -1365,31 +1312,6 @@ class ImgPlayerApp:
         * :meth:`_handle_no_coverage_gap` / :meth:`_handle_cache_miss`
           — terminal paths for the two remaining branches.
         """
-        # [v1.8.3 DIAG] Per-handler-segment timing gated on FLICK_DIAG
-        # so we can pinpoint which of the 4 segments (UI sync /
-        # compare-or-video / cached-display / cache-miss) dominates
-        # the tick body. Remove after diagnosis.
-        if _APP_DIAG_ENABLED:
-            _app_diag_record_start()
-            self._sync_per_frame_widgets(frame)
-            _app_diag_record_segment("sync_widgets")
-            if self._try_compare_then_video(frame):
-                _app_diag_record_segment("compare_or_video")
-                _app_diag_maybe_summary()
-                return
-            _app_diag_record_segment("compare_or_video_fallthrough")
-            if self._try_display_cached_frame(frame):
-                _app_diag_record_segment("display_cached")
-                _app_diag_maybe_summary()
-                return
-            if self._handle_no_coverage_gap(frame):
-                _app_diag_record_segment("no_coverage_gap")
-                _app_diag_maybe_summary()
-                return
-            self._handle_cache_miss(frame)
-            _app_diag_record_segment("handle_cache_miss")
-            _app_diag_maybe_summary()
-            return
         self._sync_per_frame_widgets(frame)
         if self._try_compare_then_video(frame):
             return

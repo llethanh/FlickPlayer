@@ -25,9 +25,7 @@ re-decoding the same frame on every paint event.
 from __future__ import annotations
 
 import logging
-import os
 import threading
-import time
 from collections import OrderedDict
 from fractions import Fraction
 from pathlib import Path
@@ -35,43 +33,6 @@ from pathlib import Path
 import numpy as np
 
 from img_player.media.video_probe import VideoMetadata, probe_video
-
-
-# ----------------------------------------------------------------------
-# [v1.8.3 DIAG] Cache hit / miss counters per VideoSource call. Gated
-# on FLICK_DIAG so it's free in the normal build. Once-per-second
-# summary tells us whether the prefetcher is keeping up (hit ratio ~1)
-# or always behind (miss ratio ~1 -> compare_or_video=16ms is the slow
-# decode path). Remove after diagnosis.
-# ----------------------------------------------------------------------
-_SRC_DIAG_ENABLED = bool(os.environ.get("FLICK_DIAG"))
-_src_diag_counts: dict[str, int] = {
-    "hit_lru": 0, "hit_last": 0, "miss_decode": 0, "miss_overshoot": 0,
-}
-_src_diag_last_summary = [0.0]
-_src_diag_log = logging.getLogger("img_player.media.video_source.diag")
-
-
-def _src_diag_record(kind: str) -> None:
-    _src_diag_counts[kind] += 1
-    now = time.monotonic()
-    if now - _src_diag_last_summary[0] < 1.0:
-        return
-    total = sum(_src_diag_counts.values())
-    if total == 0:
-        return
-    hit = _src_diag_counts["hit_lru"] + _src_diag_counts["hit_last"]
-    miss = _src_diag_counts["miss_decode"] + _src_diag_counts["miss_overshoot"]
-    _src_diag_log.warning(
-        "[DIAG] frame_at_time: hits=%d (%d lru + %d last) misses=%d "
-        "(%d decode + %d overshoot) hit_ratio=%.2f total=%d",
-        hit, _src_diag_counts["hit_lru"], _src_diag_counts["hit_last"],
-        miss, _src_diag_counts["miss_decode"], _src_diag_counts["miss_overshoot"],
-        hit / total if total else 0.0, total,
-    )
-    for k in _src_diag_counts:
-        _src_diag_counts[k] = 0
-    _src_diag_last_summary[0] = now
 
 log = logging.getLogger(__name__)
 
@@ -308,8 +269,6 @@ class VideoSource:
             # code paths that read ``_last_frame`` still work.
             self._last_pts = target_idx / float(self.fps)
             self._last_frame = cached
-            if _SRC_DIAG_ENABLED:
-                _src_diag_record("hit_lru")
             return cached
 
         # Cache hit: same display interval as the last decoded frame.
@@ -318,8 +277,6 @@ class VideoSource:
         if self._last_frame is not None and self._last_pts is not None:
             interval = 1.0 / float(self.fps)
             if self._last_pts <= t < self._last_pts + interval:
-                if _SRC_DIAG_ENABLED:
-                    _src_diag_record("hit_last")
                 return self._last_frame
 
         interval = 1.0 / float(self.fps)
@@ -421,8 +378,6 @@ class VideoSource:
                 self._last_pts = pts
                 self._last_frame = target_frame
                 self._cache_put(int(round(pts * float(self.fps))), target_frame)
-                if _SRC_DIAG_ENABLED:
-                    _src_diag_record("miss_decode")
                 return target_frame
             if pts > t + interval:
                 # Overshot — the right frame was before this one and
@@ -435,8 +390,6 @@ class VideoSource:
                     self._last_pts = pts
                     self._last_frame = target_frame
                     self._cache_put(int(round(pts * float(self.fps))), target_frame)
-                    if _SRC_DIAG_ENABLED:
-                        _src_diag_record("miss_overshoot")
                     return target_frame
                 self._seek_to(t)
                 retried = True
