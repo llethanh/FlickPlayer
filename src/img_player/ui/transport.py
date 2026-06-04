@@ -461,12 +461,12 @@ class TransportBar(QWidget):  # type: ignore[misc]
         # --- Contact sheet toggle (SVG contact-sheet) -----------------
         # Sibling to the compare toggle. Same white-off / orange-on
         # toggle icon + #btnTopBar treatment so the two review-mode
-        # buttons read as a group. The legacy ``⋯`` kebab menu next to
-        # it (settings popup) remains here for backwards-compat with
-        # main_window.py references but is NOT added to any visible
-        # layout — those settings live in the ContactSheetBand toolbar
-        # that appears above the viewer when the mode is on.
-        from PySide6.QtWidgets import QMenu  # noqa: PLC0415 — local to this section
+        # buttons read as a group. The legacy ``⋯`` kebab settings menu
+        # next to it was removed in v1.8.3 — its menu had been emptied
+        # in an earlier refactor (settings moved to ContactSheetBand)
+        # but the button widget itself stayed orphaned with ``self`` as
+        # parent and was rendered by Qt at position (0, 0) of the
+        # transport bar with a dead empty menu, confusing users.
         self._contact_sheet_btn = _icon_button(
             make_toggle_icon("contact-sheet"),
             "Contact sheet — all layers tiled in a grid (Ctrl+G)",
@@ -490,48 +490,6 @@ class TransportBar(QWidget):  # type: ignore[misc]
             _top_btn.setObjectName("btnTopBar")
             _top_btn.setFixedSize(34, 32)
             _top_btn.setIconSize(QSize(20, 20))
-
-        # Settings popup: tiny QToolButton with the "options" glyph,
-        # InstantPopup so a single click opens the menu. App-side
-        # rebuilds the menu on ``aboutToShow``.
-        self._contact_sheet_menu_btn = QToolButton(self)
-        self._contact_sheet_menu_btn.setText("⋯")
-        self._contact_sheet_menu_btn.setToolTip(
-            "Contact sheet settings (grid, output size, labels)"
-        )
-        self._contact_sheet_menu_btn.setPopupMode(
-            QToolButton.ToolButtonPopupMode.InstantPopup,
-        )
-        self._contact_sheet_menu = QMenu(self._contact_sheet_menu_btn)
-        self._contact_sheet_menu_btn.setMenu(self._contact_sheet_menu)
-        # Compact width — only needs to fit the "⋯" glyph plus a
-        # small padding so it doesn't compete with the icon button
-        # for visual weight.
-        self._contact_sheet_menu_btn.setFixedHeight(G.BTN_TRANSPORT_H)
-        self._contact_sheet_menu_btn.setFixedWidth(20)
-        # Match the toolbar's default transport buttons visually:
-        # thin grey outline that lights up to accent on hover, no
-        # chevron decoration (we replaced that with the centred
-        # "⋯" so the button reads as a kebab menu). User feedback
-        # was that an orange outline at rest made the cadre look
-        # permanently "active".
-        _border_d = f"1px solid {H.BORDER_DEFAULT}"
-        _border_h = f"1px solid {H.ACCENT}"
-        self._contact_sheet_menu_btn.setStyleSheet(
-            f"QToolButton {{"
-            f"  background-color: {H.BG_SURFACE};"
-            f"  color: {H.TEXT_PRIMARY};"
-            f"  border: {_border_d};"
-            f"  border-radius: 3px;"
-            f"  font-size: 14px;"
-            f"  padding: 0;"
-            f"}}"
-            f"QToolButton:hover {{"
-            f"  background-color: {H.BG_HOVER};"
-            f"  border: {_border_h};"
-            f"}}"
-            f"QToolButton::menu-indicator {{ image: none; width: 0; }}"
-        )
 
         # --- FPS ------------------------------------------------------------
         # Plain editable line — no dropdown of presets. The user
@@ -915,18 +873,10 @@ class TransportBar(QWidget):  # type: ignore[misc]
     def contact_sheet_button(self) -> QPushButton:
         return self._contact_sheet_btn
 
-    @property
-    def contact_sheet_menu_button(self) -> "QToolButton":
-        """The tiny "…" button sitting next to the contact-sheet
-        toggle. Hosts the settings menu (grid, output size, labels)."""
-        return self._contact_sheet_menu_btn
-
-    @property
-    def contact_sheet_menu(self) -> "QMenu":
-        """The QMenu attached to ``contact_sheet_menu_button``. The
-        app populates it lazily via ``aboutToShow`` with the current
-        grid / divisor / labels presets."""
-        return self._contact_sheet_menu
+    # NB: ``contact_sheet_menu_button`` / ``contact_sheet_menu`` were
+    # removed in v1.8.3 — the underlying widget had been orphaned
+    # (no layout, dead empty menu) since the settings moved into the
+    # ContactSheetBand toolbar.
 
     def set_contact_sheet_checked(self, on: bool) -> None:
         """Sync the contact-sheet toggle's checked state from
