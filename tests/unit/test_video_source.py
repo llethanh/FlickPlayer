@@ -94,13 +94,18 @@ class TestRamCache:
             src.frame_at_time(0.0)
             assert src.cache_stats()["frames"] == 0
 
-    def test_budget_evicts_oldest(self, tmp_path: Path) -> None:
+    def test_budget_evicts_to_stay_under(self, tmp_path: Path) -> None:
         p = tmp_path / "v.mp4"
         # 64×48 RGBA uint8 = 12 288 bytes/frame. With a 30 000-byte
         # budget the cache fits 2 frames + a sliver, so a 3rd read
-        # must evict the 1st (LRU policy). ``prefetch=False`` keeps
-        # the test deterministic — the background worker would race
-        # with the manual reads.
+        # must trigger one eviction. ``prefetch=False`` keeps the
+        # test deterministic — the background worker would race
+        # with the manual reads. v1.8.3 switched the eviction
+        # policy from LRU-by-recency to distance-from-playhead, so
+        # this test pins the BUDGET CONTRACT (bytes <= budget,
+        # frames bounded) rather than which specific frame is
+        # evicted — that depends on where notify_playback_position
+        # last placed the playhead.
         _make_indexed_video(p, n_frames=8)
         with VideoSource(
             p, cache_budget_bytes=30_000, prefetch=False,
@@ -110,10 +115,43 @@ class TestRamCache:
             src.frame_at_time(2.0 / 24)
             stats = src.cache_stats()
             assert stats["bytes"] <= 30_000
-            # Cache shouldn't have grown past the budget.
             assert stats["frames"] <= 3
 
-    def test_notify_playback_position_steers_prefetch(
+    def test_eviction_keeps_frames_near_playhead(
+        self, tmp_path: Path,
+    ) -> None:
+        """The 2026-06-04 bug: while playing forward, frames just
+        around the playhead were being evicted (donut around the
+        playhead in the cache bar). With the new distance-based
+        policy, the budget should fill with frames near the playhead
+        and evict the far ones first.
+
+        Setup: 24-frame clip, budget tight enough that only ~3
+        frames fit. Drive the playhead to frame 12 (middle of the
+        clip), trigger a few decodes that pull in remote-from-
+        playhead frames, then verify that frames close to the
+        playhead survived eviction.
+        """
+        p = tmp_path / "v.mp4"
+        # ~3 frame budget (3 × 12 288 = 36 864 fits).
+        _make_indexed_video(p, n_frames=24)
+        with VideoSource(
+            p, cache_budget_bytes=40_000, prefetch=False,
+        ) as src:
+            # Move the playhead near the middle.
+            src.notify_playback_position(12 / 24.0)
+            # Read some frames near the playhead — these should stay.
+            src.frame_at_time(11 / 24.0 + 0.001)
+            src.frame_at_time(12 / 24.0 + 0.001)
+            src.frame_at_time(13 / 24.0 + 0.001)
+            # Now hit a frame far ahead — should evict the farthest
+            # from playhead first, NOT the ones right next to it.
+            src.frame_at_time(23 / 24.0 + 0.001)
+            cached = set(src._frame_cache.keys())
+            # 12 (the playhead) should always be cached.
+            assert 12 in cached, (
+                f"Frame 12 (= playhead) evicted; cache={sorted(cached)}"
+            )
         self, tmp_path: Path,
     ) -> None:
         """When the playhead jumps forward, the prefetch worker

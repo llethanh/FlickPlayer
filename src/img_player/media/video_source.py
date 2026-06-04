@@ -656,39 +656,88 @@ class VideoSource:
     # RAM frame cache
     # ------------------------------------------------------------------
 
+    # How many frames behind the playhead we try to keep cached for
+    # scrub-back. ~1 second at 60 fps = enough for a brief reverse
+    # before having to re-decode. The forward buffer gets whatever
+    # the budget leaves over.
+    _BEHIND_KEEP = 60
+
     def _cache_get(self, idx: int) -> np.ndarray | None:
-        """LRU-bump + lookup. Returns ``None`` on miss."""
+        """Lookup. Returns ``None`` on miss.
+
+        No LRU bump — eviction is **distance-from-playhead**, not
+        recency (see ``_cache_put``). For a forward-playing video,
+        access-recency makes the wrong decision: prefetched frames
+        ahead of the playhead would become the oldest as soon as
+        the main thread reads through them, causing the cache to
+        evict frames right under (or just ahead of) the playhead.
+        Distance-based eviction always keeps a hot window centred
+        on the playhead instead.
+        """
         if self._frame_cache_budget <= 0:
             return None
         with self._cache_lock:
-            arr = self._frame_cache.get(idx)
-            if arr is not None:
-                # Move to end = most-recently used.
-                self._frame_cache.move_to_end(idx)
-            return arr
+            return self._frame_cache.get(idx)
 
     def _cache_put(self, idx: int, arr: np.ndarray) -> None:
-        """Store ``arr`` for ``idx``. Idempotent (re-puts bump LRU
-        and don't double-count budget). Evicts the oldest entries
-        when the new total would exceed budget."""
+        """Store ``arr`` for ``idx``. Idempotent. Evicts the frame
+        with the **highest distance-from-playhead score** until back
+        under budget.
+
+        Scoring:
+          * Frames AHEAD of playhead (idx > playhead): cost = idx -
+            playhead. Closer-ahead = lower cost = kept.
+          * Frames BEHIND playhead by more than ``_BEHIND_KEEP``:
+            cost = (playhead - idx) + ``_BEHIND_KEEP``. Heavily
+            penalised — these are evicted before any forward frame.
+          * Frames within ``_BEHIND_KEEP`` behind the playhead: cost
+            = (playhead - idx). Kept alongside forward frames so a
+            brief scrub-back hits cache.
+
+        Net effect: budget always holds a window roughly centred
+        slightly behind the playhead (=  _BEHIND_KEEP frames back +
+        as many as fit forward). LRU-by-recency, which the v1.8.3
+        first cut used, was wrong for forward playback — see the
+        screenshot the user posted on 2026-06-04 with a cache
+        donut around the playhead.
+        """
         if self._frame_cache_budget <= 0 or arr is None:
             return
         nbytes = int(arr.nbytes)
         with self._cache_lock:
-            existing = self._frame_cache.get(idx)
-            if existing is not None:
-                # Re-put with same data — just bump LRU position.
-                self._frame_cache.move_to_end(idx)
+            if idx in self._frame_cache:
+                # Re-put with same data is a no-op — no access-time
+                # tracking to update.
                 return
             self._frame_cache[idx] = arr
             self._frame_cache_bytes += nbytes
-            # Evict from the front (= least-recently used) until
-            # we're back under budget.
+            if self._frame_cache_bytes <= self._frame_cache_budget:
+                return
+            # Over budget — evict by playhead distance. Local copy
+            # of playhead so the value is consistent across the
+            # whole eviction sweep.
+            pb_idx = self._playback_idx
+            behind_keep = self._BEHIND_KEEP
+
+            def cost(i: int) -> int:
+                if i >= pb_idx:
+                    return i - pb_idx  # forward — lower is better
+                gap = pb_idx - i
+                if gap <= behind_keep:
+                    return gap  # within scrub-back window
+                # Far behind — heavy penalty so these go first.
+                return gap + 10 * behind_keep
+
             while (
                 self._frame_cache_bytes > self._frame_cache_budget
                 and len(self._frame_cache) > 1
             ):
-                _, dropped = self._frame_cache.popitem(last=False)
+                # max() over the keys is O(n). At ~500 frames cached
+                # and < 10 evictions per put (steady state: 1), this
+                # is well under 100 µs per put — invisible next to
+                # the 10-20 ms PyAV decode.
+                worst = max(self._frame_cache.keys(), key=cost)
+                dropped = self._frame_cache.pop(worst)
                 self._frame_cache_bytes -= int(dropped.nbytes)
 
     def cache_stats(self) -> dict[str, int]:
