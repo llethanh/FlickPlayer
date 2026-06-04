@@ -36,6 +36,73 @@ _diag_state: dict[str, Any] = {
     "last_t": None, "count": 0, "intervals": deque(maxlen=240),
     "last_summary": 0.0,
 }
+# v1.8.3 DIAG (run 6): four phase markers split the tick into
+# pre-emit / emit-body / post-emit / gap-to-next-tick. Together with
+# tick_interval (= measured between ends of ticks) we can pinpoint
+# the unaccounted 15 ms on a 30-fps-capped 60 fps playback.
+_diag_phase: dict[str, Any] = {
+    "body_start": None, "pre_emit": None, "post_emit": None,
+    "body_end": None, "last_body_end": None,
+    "samples": {
+        "body_total":  deque(maxlen=240),
+        "pre_emit":    deque(maxlen=240),
+        "emit_body":   deque(maxlen=240),
+        "post_emit":   deque(maxlen=240),
+        "gap_to_next": deque(maxlen=240),
+    },
+    "last_phase_summary": 0.0,
+}
+
+
+def _diag_record_tick_body_start() -> None:
+    now = time.monotonic()
+    _diag_phase["body_start"] = now
+    if _diag_phase["last_body_end"] is not None:
+        _diag_phase["samples"]["gap_to_next"].append(
+            (now - _diag_phase["last_body_end"]) * 1000.0,
+        )
+
+
+def _diag_record_pre_emit() -> None:
+    _diag_phase["pre_emit"] = time.monotonic()
+
+
+def _diag_record_post_emit() -> None:
+    _diag_phase["post_emit"] = time.monotonic()
+
+
+def _diag_record_tick_body_end() -> None:
+    now = time.monotonic()
+    _diag_phase["body_end"] = now
+    s = _diag_phase
+    if s["body_start"] is not None:
+        s["samples"]["body_total"].append((now - s["body_start"]) * 1000.0)
+        if s["pre_emit"] is not None:
+            s["samples"]["pre_emit"].append(
+                (s["pre_emit"] - s["body_start"]) * 1000.0,
+            )
+            if s["post_emit"] is not None:
+                s["samples"]["emit_body"].append(
+                    (s["post_emit"] - s["pre_emit"]) * 1000.0,
+                )
+                s["samples"]["post_emit"].append(
+                    (now - s["post_emit"]) * 1000.0,
+                )
+    s["last_body_end"] = now
+    # Per-second summary.
+    if now - s["last_phase_summary"] >= 1.0:
+        parts = []
+        for k, samples in s["samples"].items():
+            if not samples:
+                continue
+            ss = sorted(samples)
+            p50 = ss[len(ss) // 2]
+            p95 = ss[int(len(ss) * 0.95)]
+            max_ = ss[-1]
+            parts.append(f"{k}=p50:{p50:.2f}/p95:{p95:.2f}/max:{max_:.2f}")
+        if parts:
+            log.warning("[DIAG] tick phases: %s", " | ".join(parts))
+        s["last_phase_summary"] = now
 
 
 def _diag_log_tick(controller: "PlayerController", next_frame: int) -> None:
@@ -607,6 +674,12 @@ class PlayerController(QObject):  # type: ignore[misc]  # mypy: QObject is Any
     def _tick(self) -> None:
         if self._sequence is None or not self._state.is_playing:
             return
+        # [v1.8.3 DIAG] Track the gap from the previous tick's end to
+        # now (= timer wait + Qt event-loop processing between ticks)
+        # so we can split tick-period into "body time" and "outside
+        # time". Remove with the other DIAG blocks after diagnosis.
+        if _DIAG_ENABLED:
+            _diag_record_tick_body_start()
         # Stamp the tick *first* so effective_fps() reflects the actual
         # cadence of the QTimer, not the time we spend below in advance/
         # prefetch logic. The status bar reads this every 500 ms.
@@ -759,7 +832,15 @@ class PlayerController(QObject):  # type: ignore[misc]  # mypy: QObject is Any
                     self._state.current_frame, next_frame,
                 )
                 self._advance_log_budget -= 1
+        # [v1.8.3 DIAG] Mark just-before-emit so we can measure how
+        # much of the tick body is upstream of _on_frame_changed.
+        if _DIAG_ENABLED:
+            _diag_record_pre_emit()
         self.frame_changed.emit(next_frame)
+        # [v1.8.3 DIAG] Mark just-after-emit so we can measure how
+        # much time _on_frame_changed (slot) + dispatch costs.
+        if _DIAG_ENABLED:
+            _diag_record_post_emit()
 
         # [v1.8.3 DIAG] Per-tick effective-fps log gated on env var.
         # Set FLICK_DIAG=1 then play the video for a few seconds —
@@ -768,6 +849,7 @@ class PlayerController(QObject):  # type: ignore[misc]  # mypy: QObject is Any
         # throttled somewhere upstream. Remove after diagnosis.
         if _DIAG_ENABLED:
             _diag_log_tick(self, next_frame)
+            _diag_record_tick_body_end()
 
         self._maybe_emit_metrics()
 
