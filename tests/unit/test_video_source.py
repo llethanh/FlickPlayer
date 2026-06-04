@@ -152,6 +152,8 @@ class TestRamCache:
             assert 12 in cached, (
                 f"Frame 12 (= playhead) evicted; cache={sorted(cached)}"
             )
+
+    def test_notify_playback_position_steers_prefetch(
         self, tmp_path: Path,
     ) -> None:
         """When the playhead jumps forward, the prefetch worker
