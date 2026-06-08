@@ -56,3 +56,8 @@ tests/fixtures/large/
 # as ``.claude/`` — the AGENTS.md notes ARE versioned (project doc),
 # the per-machine cache is not.
 .agents/
+
+# Graphify knowledge-graph output (generated via /graphify).
+# Huge: graph.json hits ~7 MB on Flick's 8000+ node corpus. Re-buildable
+# on any clone — no need to ship it with the source tree.
+graphify-out/
