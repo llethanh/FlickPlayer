@@ -36,6 +36,7 @@ desktop.ini
 # App
 logs/
 *.log
+build_log.txt
 
 # Site config — per-studio / per-machine, not project-wide. The
 # documented schema lives in flick.toml.example which IS committed;
