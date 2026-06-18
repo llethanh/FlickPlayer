@@ -1,51 +1,46 @@
 # Flick Player — notes Claude Code
 
-Lu automatiquement à chaque session par Claude Code, ce fichier voyage
-avec le repo (sync via Drive + git). Mets-le à jour en commitant
-quand le workflow change.
+Lu automatiquement à chaque session par Claude Code. Ce fichier
+voyage avec le repo via git. Mets-le à jour en commitant quand
+le workflow change.
 
 ## Au démarrage de chaque session
 
 **Toujours commencer par** :
 ```bash
+cd /c/dev/FlickPlayer
 git pull
 ```
 
-Si je code depuis une nouvelle machine, voir la section "Setup machine
-neuve" plus bas.
+## Workflow — TOUT depuis `C:\dev\FlickPlayer\`
 
-## Workflow scénario 3 (édition Drive + build local)
+**Un seul emplacement de travail** : `C:\dev\FlickPlayer\`.
+Édition du code, sessions Claude Code, tests pytest, builds
+PyInstaller, benchs, scripts ad-hoc, `gh release create` —
+tout tourne depuis ce dossier.
 
-Deux emplacements possibles du repo, **selon ce que tu fais** :
+GitHub (`https://github.com/llethanh/FlickPlayer.git`) est la
+source de vérité. Le clone local pousse / tire depuis là.
 
-| Emplacement | Quand l'utiliser |
-|---|---|
-| `G:\Mon Drive\_PERSO\IA\VibeCod\img_player\img_player_V001\` | Édition de code, sessions Claude Code, tests pytest |
-| `C:\dev\FlickPlayer\` | Build PyInstaller (`build_exe.bat`) — Drive sync casse le bundle |
-
-GitHub (`https://github.com/llethanh/FlickPlayer.git`) est la source de
-vérité. Drive et le clone local sont deux miroirs synchronisés via
-`git pull` / `git push`.
-
-**Règle d'or** : ne jamais éditer simultanément depuis 2 machines.
-Drive ne merge pas ; il crée `file (1).py` et casse git. Toujours
-`git pull` avant de coder, `git push` avant de quitter une machine.
+⚠️ **Drive (`G:\Mon Drive\…\img_player_V001\`) n'est plus utilisé**
+pour le travail courant (juin 2026). Drive Stream corrompt les
+bundles PyInstaller, ses chemins avec espaces + accents (`_PERSO`)
+cassent certains outils, et la séparation "édite sur Drive, run
+sur C:\dev" introduisait trop d'ambiguïté. Si un ancien clone
+Drive existe encore, le laisser en lecture seule.
 
 ## Setup machine neuve
 
 Une seule fois par machine :
 
 ```bash
-# Conda env (Miniforge installé au préalable)
-cd "G:\Mon Drive\_PERSO\IA\VibeCod\img_player\img_player_V001"
+git clone https://github.com/llethanh/FlickPlayer.git C:\dev\FlickPlayer
+cd C:\dev\FlickPlayer
 conda env create -f environment.yml
 conda activate img_player
-
-# Si la machine doit aussi builder (= produire un .exe)
-git clone https://github.com/llethanh/FlickPlayer.git C:\dev\FlickPlayer
 ```
 
-Ensuite, sessions normales = juste `git pull` puis on code.
+Ensuite, sessions normales = `git pull` puis on code.
 
 ## Lancer les tests
 
@@ -63,18 +58,19 @@ vs source-frame confusion + obsolete UI feature removed).
 
 ## Builder un bundle
 
-⚠️ Uniquement depuis le clone local (`C:\dev\FlickPlayer`).
-Le `.bat` détecte les chemins Drive / OneDrive / Dropbox et refuse de
-tourner.
-
 ```cmd
 cd C:\dev\FlickPlayer
 git pull
 build_exe.bat
 ```
 
+Le `.bat` détecte les chemins Drive / OneDrive / Dropbox et
+refuse de tourner — protection contre une rechute accidentelle.
+
 Output : `dist\FlickPlayer_v<X.Y.Z>\` (~380 MB depuis v1.8.0,
-PyInstaller 6.20 dédup plus agressif que les anciennes versions).
+PyInstaller 6.20 dédup plus agressif que les anciennes versions)
++ `dist\FlickPlayer_v<X.Y.Z>.zip`. Le zip part directement sur
+GitHub via `gh release create` — plus de copie vers Drive/dist/.
 
 Pour wrap en installer Inno Setup voir `installer/README.md`.
 
@@ -119,8 +115,9 @@ Pour wrap en installer Inno Setup voir `installer/README.md`.
 
 ## Mémoire transverse (~/.claude/MEMORY.md)
 
-Si tu es sur la machine principale (lam), il existe une mémoire user
-locale plus large dans `C:\Users\lam\.claude\projects\...\memory\`
+Mémoire user locale dans `C:\Users\<user>\.claude\projects\<session-key>\memory\`
 qui couvre : profil user, charte design, feature log, comparaisons
-avec OpenRV, etc. Cette mémoire est locale à la machine et ne
-voyage pas avec git — elle est manuellement maintenue.
+avec OpenRV, etc. Locale à la machine, ne voyage pas avec git —
+manuellement maintenue. Le `<session-key>` est dérivé du `cwd` au
+moment du `claude` initial — depuis le switch C:\dev (juin 2026),
+les nouvelles sessions devraient être keyed sur `C--dev-FlickPlayer`.
