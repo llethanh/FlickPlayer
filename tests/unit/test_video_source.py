@@ -117,40 +117,43 @@ class TestRamCache:
             assert stats["bytes"] <= 30_000
             assert stats["frames"] <= 3
 
-    def test_eviction_keeps_frames_near_playhead(
+    def test_eviction_is_strict_fifo(
         self, tmp_path: Path,
     ) -> None:
-        """The 2026-06-04 bug: while playing forward, frames just
-        around the playhead were being evicted (donut around the
-        playhead in the cache bar). With the new distance-based
-        policy, the budget should fill with frames near the playhead
-        and evict the far ones first.
+        """Strict insertion-order FIFO eviction (v1.8.5).
 
-        Setup: 24-frame clip, budget tight enough that only ~3
-        frames fit. Drive the playhead to frame 12 (middle of the
-        clip), trigger a few decodes that pull in remote-from-
-        playhead frames, then verify that frames close to the
-        playhead survived eviction.
+        Replaces the v1.8.3-v1.8.4 distance-from-playhead cost
+        function after the 2026-06-18 user report. The contract is
+        now: the oldest-inserted frame is the first to go. For
+        forward playback that's the same as "furthest behind the
+        playhead", which is what users expect.
+
+        We exercise _cache_put directly so the test doesn't depend
+        on the decoder's seek path (which fills every intermediate
+        frame on the way to the requested timestamp).
         """
+        import numpy as np
         p = tmp_path / "v.mp4"
-        # ~3 frame budget (3 × 12 288 = 36 864 fits).
-        _make_indexed_video(p, n_frames=24)
+        _make_indexed_video(p, n_frames=4)
+        # 30 000-byte budget = 2 × 12 288 frames fit (24 576 < 30 000),
+        # so the third put forces exactly one eviction.
         with VideoSource(
-            p, cache_budget_bytes=40_000, prefetch=False,
+            p, cache_budget_bytes=30_000, prefetch=False,
         ) as src:
-            # Move the playhead near the middle.
-            src.notify_playback_position(12 / 24.0)
-            # Read some frames near the playhead — these should stay.
-            src.frame_at_time(11 / 24.0 + 0.001)
-            src.frame_at_time(12 / 24.0 + 0.001)
-            src.frame_at_time(13 / 24.0 + 0.001)
-            # Now hit a frame far ahead — should evict the farthest
-            # from playhead first, NOT the ones right next to it.
-            src.frame_at_time(23 / 24.0 + 0.001)
+            frame = np.zeros((48, 64, 4), dtype=np.uint8)  # 12 288 B
+            src._cache_put(10, frame)
+            src._cache_put(11, frame)
+            src._cache_put(12, frame)
             cached = set(src._frame_cache.keys())
-            # 12 (the playhead) should always be cached.
-            assert 12 in cached, (
-                f"Frame 12 (= playhead) evicted; cache={sorted(cached)}"
+            # Oldest insertion (10) evicted; 11 and 12 remain.
+            assert cached == {11, 12}, (
+                f"FIFO broken: expected {{11, 12}}, got {sorted(cached)}"
+            )
+            # One more put — evict 11, keep 12 and 13.
+            src._cache_put(13, frame)
+            cached = set(src._frame_cache.keys())
+            assert cached == {12, 13}, (
+                f"FIFO broken: expected {{12, 13}}, got {sorted(cached)}"
             )
 
     def test_notify_playback_position_steers_prefetch(
