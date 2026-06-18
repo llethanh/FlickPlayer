@@ -47,8 +47,8 @@
   <div class="ctas">
     <a
       class="btn btn-primary"
-      href="https://github.com/llethanh/FlickPlayer/releases/download/v1.8.4/FlickPlayer_v1.8.4.zip"
-    >Download for Windows — v1.8.4</a>
+      href="https://github.com/llethanh/FlickPlayer/releases/download/v1.8.5/FlickPlayer_v1.8.5.zip"
+    >Download for Windows — v1.8.5</a>
     <a class="btn btn-ghost" href="#features">See features →</a>
   </div>
   <p class="dl-note" style="margin-top: var(--s-sm); font-size: 0.9em; opacity: 0.6;">
@@ -743,24 +743,23 @@
 <section id="changelog" class="changelog-teaser">
   <h2>What's <span class="accent">new</span>.</h2>
   <p class="lede">
-    Latest release: <strong>v1.8.4</strong> — <strong>true 60 fps
-    cached video playback</strong>. The viewport now uploads
-    <code>uint8</code> RGBA directly and lets the GPU normalise on
-    upload, killing the per-frame cast that was capping cached
-    playback at 30 fps on 1440p AV1; combined with a vsync-disabled
-    swap chain and a playhead-aware cache eviction policy (no more
-    "donut around the playhead" while playing), 60 fps reviews
-    finally feel like 60 fps. Bonus: the cache is back to
-    <code>uint8</code> storage, so the OpenRV-density parity (~2280
-    cached 1440p frames at a 32 GB budget) returns at zero
-    main-thread cost. Network EXR cold reads land 3× faster via
-    the new local staging cache and the smart PyOpenEXR /
-    OpenImageIO dispatch. New <strong>⚙ Preferences</strong> shortcut
-    in the status-bar bottom-right, with a fresh Video-cache page
-    that surfaces the per-layer RAM budget (live density preview).
-    Builds on <strong>v1.8.1</strong>'s WebM video playback and
-    bundle-stability fixes. The full history — every public
-    release, what changed, why it changed — lives on its own page.
+    Latest release: <strong>v1.8.5</strong> — <strong>cache eviction
+    follows the playhead</strong>. On a long image sequence played in
+    loop mode, once the budget filled the cache used to punch a hole
+    <em>just behind the cursor</em> and eat leftward — keeping
+    far-behind frames and dropping the ones you'd just scrubbed past.
+    Root cause: the loop-aware score ranked a frame just behind the
+    playhead as "won't replay until a whole loop later" = highest
+    eviction priority. Eviction is now a plain signed-distance window
+    around the playhead (provably contiguous — no hole mid-sequence),
+    dropping the <em>timeline start</em> first, with the loop wrap
+    target protected only in the last 64 frames before the wrap.
+    Confirmed three ways: a monotone-score proof, a static repro, and
+    a full forward-playback simulation. The video RAM cache also moved
+    to strict insertion-order FIFO. Builds on <strong>v1.8.4</strong>'s
+    true 60 fps cached video playback and 3× faster network EXR cold
+    reads. The full history — every public release, what changed, why
+    it changed — lives on its own page.
   </p>
   <p style="margin-top: var(--s-md);">
     <a class="btn btn-primary" href="changelog.html">Read the full changelog →</a>
@@ -770,7 +769,7 @@
 <!-- ============================================================ Footer -->
 <footer id="download">
   <p>
-    <strong>Flick Player</strong> · open-source VFX sequence viewer · <a href="https://github.com/llethanh/FlickPlayer/releases/download/v1.8.4/FlickPlayer_v1.8.4.zip">Download v1.8.4</a> · <a href="https://github.com/llethanh/FlickPlayer">GitHub</a> · <a href="changelog.html">Changelog</a>
+    <strong>Flick Player</strong> · open-source VFX sequence viewer · <a href="https://github.com/llethanh/FlickPlayer/releases/download/v1.8.5/FlickPlayer_v1.8.5.zip">Download v1.8.5</a> · <a href="https://github.com/llethanh/FlickPlayer">GitHub</a> · <a href="changelog.html">Changelog</a>
   </p>
   <p style="margin-top: var(--s-sm);">
     Built with PySide6, OpenColorIO, OpenImageIO and PyAV. Designed for Windows.

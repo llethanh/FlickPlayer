@@ -44,6 +44,22 @@
 
     <article class="release">
       <div class="release-meta">
+        <span class="ver">v1.8.5</span>
+        <span class="date">2026-06-18</span>
+        <span class="tagline">Cache eviction follows the playhead — no more hole behind the cursor on long sequences in loop playback.</span>
+      </div>
+      <div class="release-body">
+        <h4>Cache</h4>
+        <ul>
+          <li class="fix"><strong>The RAM cache no longer empties from just behind the playhead.</strong> On a long image sequence (2252-frame 4K PNG) played in loop mode, once the cache budget filled, the eviction punched a hole <em>right behind</em> the cursor and ate leftward — keeping far-behind frames the user no longer cared about and dropping the ones they'd just scrubbed past. Root cause: the loop-aware eviction scored each frame by its <em>forward ring distance</em> — how many frames until it plays again going round the loop. A frame just behind the playhead only replays after a whole loop, so it scored the <em>maximum</em> and was evicted first. Confirmed with eviction-trace logging on the real session: at playhead 698, frame 689 (9 frames behind) scored 2243 (= (689−698) mod 2252) and was first to go, while frame 0 (689 behind) scored 1154 and was kept.</li>
+          <li class="fix"><strong>Eviction now keeps a contiguous window around the playhead and drops the timeline start first.</strong> The score is back to plain signed distance from the playhead (frames behind weighted ×3 so the next-to-play frames win), which is provably a single contiguous interval centred on the cursor — a hole is mathematically impossible mid-sequence. The loop wrap target is protected <em>only</em> in the last 64 frames before the loop end (the frames about to play after the wrap), so the loop doesn't decode-then-instantly-re-evict its start into an infinite stall — but a mid-sequence playhead still evicts the timeline start first, exactly as a reviewer expects. Verified three independent ways: the monotone-score proof, a static eviction repro, and a full forward-playback simulation that lands a single contiguous window at the screenshot playhead.</li>
+          <li class="fix"><strong>Video RAM cache switched to strict insertion-order FIFO.</strong> The per-source video cache (mp4 / mov / ProRes) now evicts the oldest-decoded frame first. For forward playback that's always the frame furthest behind the playhead — the simple "drop the oldest" behaviour, with no tuning knobs.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <div class="release-meta">
         <span class="ver">v1.8.4</span>
         <span class="date">2026-06-04</span>
         <span class="tagline">True 60 fps cached video playback (1440p AV1), 3× faster network EXR cold reads, Preferences shortcut in the status bar.</span>
