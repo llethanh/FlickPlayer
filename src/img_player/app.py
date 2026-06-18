@@ -3714,6 +3714,17 @@ class ImgPlayerApp:
         # Immediate visual feedback: show whatever's closest in cache.
         self._show_best_available(frame)
         self._window.timeline.set_current_frame(frame)
+        # Push the playhead into the CACHE right away, not only via the
+        # debounced ``controller.seek`` 20 ms later. Eviction scores
+        # frames by distance from ``_current_frame``; if a budget-full
+        # prefetch wave evicts while the cache still thinks the
+        # playhead is back where the drag *started*, it drops frames
+        # around the user's actual cursor and keeps the now-irrelevant
+        # far side — the "cache empties just left of the cursor,
+        # right-to-left" report (2026-06-18). Keeping the cache
+        # playhead in lock-step with the visual cursor closes that
+        # window. Cheap: one locked int write.
+        self._cache.set_current_frame(frame)
         # Push the requested frame straight into the readout. Without
         # this, the number lags by one debounce window (~20 ms) plus
         # whatever decode time the seek racks up — the cursor jumps

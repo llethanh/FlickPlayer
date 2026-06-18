@@ -31,6 +31,7 @@ LayerStack and then forget about invalidation.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 
@@ -64,6 +65,13 @@ log = logging.getLogger(__name__)
 # *maximum* score and evicts them instantly — turning every quick
 # scrub-back into a wait-timer poll.
 _NEAR_REAR_WINDOW = 8
+
+# Diagnostic: set FLICK_DIAG_EVICT=1 to log, at most every ~1 s, the
+# playhead + which cached frames are about to be evicted vs kept and
+# their sort keys. Used to debug "the cache empties just behind the
+# playhead instead of far-behind" reports (2026-06-18, root-caused to
+# the loop-ring eviction score).
+_DIAG_EVICT = os.environ.get("FLICK_DIAG_EVICT") == "1"
 
 
 def _ensure_rgba(arr: np.ndarray) -> np.ndarray:
@@ -214,6 +222,11 @@ class MasterFrameCache:
         self._stack = stack
         self._budget = budget_bytes
         self._lock = threading.RLock()
+        if _DIAG_EVICT:
+            log.info(
+                "[diag-evict] eviction diagnostics ENABLED "
+                "(budget=%.1f GB)", budget_bytes / 1024**3,
+            )  # pragma: no cover
         # Optional second cache tier on disk — survives close/reopen.
         # When set, decode workers check it before hitting ``read_frame``
         # and write successful decodes back so the next session can
@@ -2767,6 +2780,9 @@ class MasterFrameCache:
             reverse=True,
         )
 
+        if _DIAG_EVICT:
+            self._diag_log_eviction(by_priority, visible_ids)
+
         self._evict_in_order(by_priority)
 
         # Cull queued alt-channel tasks. Without this the worker
@@ -2778,6 +2794,60 @@ class MasterFrameCache:
 
     # --- Eviction helpers ---------------------------------------------------
 
+    _diag_last_log_t = 0.0
+
+    def _diag_log_eviction(
+        self, by_priority: list[tuple[int, str]], visible_ids: set[str],
+    ) -> None:
+        """Throttled diagnostic: dump the eviction order so we can see
+        whether near-behind frames are (wrongly) evicted before
+        far-behind ones. Off unless ``FLICK_DIAG_EVICT=1``."""
+        now = time.monotonic()
+        if now - type(self)._diag_last_log_t < 1.0:
+            return
+        type(self)._diag_last_log_t = now
+
+        cur = self._current_frame
+        cached_mf = sorted(mf for mf, _sig in self._frames.keys())
+        if not cached_mf:
+            return
+        # The prefix of by_priority that will actually be evicted to
+        # get back under budget (approx — assumes uniform frame size).
+        bytes_used = self._bytes_used
+        budget = self._budget
+        to_evict: list[int] = []
+        approx = bytes_used
+        for mf, sig in by_priority:
+            if approx <= budget:
+                break
+            arr = self._frames.get((mf, sig))
+            if arr is not None:
+                approx -= arr.nbytes
+                to_evict.append(mf)
+
+        def keyrepr(mf: int) -> str:
+            sig = self._signature_at(mf)
+            item = (mf, sig)
+            t, a, s, d = self._eviction_sort_key(item, visible_ids)
+            return f"mf={mf} key=(tier={-t},age={a:.0f},dist={d:.0f})"
+
+        log.info(
+            "[diag-evict] playhead=%d cached=%d [%d..%d] "
+            "used=%.1fGB budget=%.1fGB → evicting %d frames "
+            "[%s..%s]",
+            cur, len(cached_mf), cached_mf[0], cached_mf[-1],
+            bytes_used / 1024**3, budget / 1024**3,
+            len(to_evict),
+            min(to_evict) if to_evict else "-",
+            max(to_evict) if to_evict else "-",
+        )
+        # Show the top-5 first-to-evict + 3 last-to-keep sort keys so
+        # we can see what's actually driving the order.
+        head = ", ".join(keyrepr(mf) for mf, _ in by_priority[:5])
+        tail = ", ".join(keyrepr(mf) for mf, _ in by_priority[-3:])
+        log.info("[diag-evict]   first-to-evict: %s", head)
+        log.info("[diag-evict]   last-to-keep:   %s", tail)
+
     def _visible_layer_ids_snapshot(self) -> set[str]:
         """Set of layer ids currently flagged visible. Snapshotted
         once at the start of an eviction round so we don't pay the
@@ -2785,17 +2855,17 @@ class MasterFrameCache:
         return {layer.id for layer in self._stack.layers() if layer.visible}
 
     def _eviction_distance_score(self, frame: int) -> float:
-        """Score a frame by its signed distance from the playhead,
-        with behind-penalty + loop-ring awareness. Lower = closer to
-        the playhead = preserved longer.
+        """Score a frame by its distance from the playhead, with
+        behind-penalty + loop-ring awareness. Lower = closer to the
+        playhead = preserved longer.
 
-        Encodes the three core eviction policies:
+        Encodes the core eviction policies:
 
         * Frames in a small "near-rear window" behind the playhead
           stay cheap so a quick scrub-back doesn't fall off cache.
-        * Frames inside an active loop range use modular distance
-          (= a frame "behind" the playhead in loop mode is one
-          full ring trip ahead, the cheapest of all).
+        * In an active loop range, the score keeps a **window around
+          the playhead** (some behind + more ahead) and still pins
+          the wrap target cheap when the playhead nears the loop end.
         * Frames truly behind (no loop, outside near-rear) get
           multiplied by :data:`_BEHIND_PLAYHEAD_PENALTY` — we'd
           rather drop them than the frames coming up next.
@@ -2814,9 +2884,28 @@ class MasterFrameCache:
             and loop_lo <= frame <= loop_hi
         ):
             ring_size = loop_hi - loop_lo + 1
+            # ``fwd`` = frames until this one plays again going
+            # forward round the loop; ``behind`` = how far back it
+            # sits from the playhead. Pure forward ring distance gave
+            # the frame *just* behind the playhead the MAXIMUM score
+            # (it only replays after a whole loop), so eviction
+            # punched a hole right behind the cursor and ate leftward
+            # — the 2026-06-18 "cache empties just behind the
+            # playhead, right-to-left" report. Scoring by
+            # ``min(fwd, penalty * behind)`` instead keeps a window
+            # around the playhead: recent-behind frames stay cheaper
+            # than far ones, while the wrap target is still pinned
+            # cheap (its ``fwd`` is tiny when the playhead nears the
+            # loop end). Result: eviction drops the frames farthest
+            # from the playhead in BOTH directions first, never the
+            # one just behind it.
             if d >= 0:
-                return float((frame - cur) % ring_size)
-            return float((cur - frame) % ring_size)
+                fwd = (frame - cur) % ring_size
+                behind = (cur - frame) % ring_size
+            else:
+                fwd = (cur - frame) % ring_size
+                behind = (frame - cur) % ring_size
+            return float(min(fwd, _BEHIND_PLAYHEAD_PENALTY * behind))
         if delta_signed < 0:
             return -delta_signed * _BEHIND_PLAYHEAD_PENALTY
         return float(delta_signed)

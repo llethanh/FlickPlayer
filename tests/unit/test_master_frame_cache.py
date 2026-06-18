@@ -97,6 +97,87 @@ class TestResolution:
 
 
 # ============================================================================
+# Eviction scoring (loop-mode window)
+# ============================================================================
+
+
+class TestLoopEvictionScoring:
+    """Pin the 2026-06-18 fix: in a full-sequence LOOP, eviction must
+    keep a window AROUND the playhead, not punch a hole just behind it.
+
+    Root cause: the old loop-ring score gave the frame *just* behind
+    the playhead the maximum value (it only replays after a whole
+    loop), so the cache evicted near-behind frames before far-behind
+    ones — the user saw the cache empty right behind the cursor and
+    eat leftward.
+    """
+
+    def _cache_in_loop(self, cur: int, lo: int, hi: int):
+        stack = LayerStack()
+        stack.add(_layer(first=lo, last=hi, offset=0))
+        cache = MasterFrameCache(stack, num_workers=1)
+        cache.set_loop_range(lo, hi, enabled=True)
+        cache.set_current_frame(cur)
+        cache.set_direction(1)
+        return cache
+
+    def test_near_behind_cheaper_than_far_behind(self, qtbot) -> None:
+        cache = self._cache_in_loop(cur=100, lo=0, hi=200)
+        try:
+            # Frame 91 sits 9 behind the playhead (just outside the
+            # 8-frame near-rear window); frame 5 is 95 behind.
+            near = cache._eviction_distance_score(91)
+            far = cache._eviction_distance_score(5)
+            assert near < far, (
+                f"near-behind (91) scored {near} >= far-behind (5) "
+                f"{far} — eviction would punch a hole behind the "
+                f"playhead"
+            )
+        finally:
+            cache.shutdown()
+
+    def test_wrap_target_stays_cheap_near_loop_end(self, qtbot) -> None:
+        # Playhead near the loop end: the wrap target (lo) plays next
+        # and must stay cheap so the loop doesn't stall at hi.
+        cache = self._cache_in_loop(cur=198, lo=0, hi=200)
+        try:
+            wrap = cache._eviction_distance_score(0)
+            mid_behind = cache._eviction_distance_score(100)
+            assert wrap < mid_behind, (
+                f"wrap target (0) scored {wrap} >= mid-behind (100) "
+                f"{mid_behind} — the loop wrap would be evicted first"
+            )
+        finally:
+            cache.shutdown()
+
+    def test_near_behind_survives_budget_eviction(self, qtbot) -> None:
+        """End-to-end: fill [0..120] under budget pressure with the
+        playhead at 100, full-range loop. The frames just behind the
+        playhead must survive; the hole (if any) lands far away."""
+        cache = self._cache_in_loop(cur=100, lo=0, hi=200)
+        try:
+            frame = np.zeros((64, 64, 3), dtype=np.float32)  # ~48 KB
+            fb = frame.nbytes
+            for mf in range(0, 121):
+                sig = cache._signature_at(mf)
+                cache._frames[(mf, sig)] = frame
+            cache._bytes_used = len(cache._frames) * fb
+            # Room for 60 of the 121 frames → forces eviction.
+            cache._budget = 60 * fb
+            cache._evict_if_over_budget()
+            survivors = {mf for mf, _sig in cache._frames.keys()}
+            # The 10 frames immediately behind the playhead must all
+            # survive (no hole right behind the cursor).
+            for mf in range(90, 100):
+                assert mf in survivors, (
+                    f"frame {mf} (just behind playhead 100) was "
+                    f"evicted; survivors={sorted(survivors)}"
+                )
+        finally:
+            cache.shutdown()
+
+
+# ============================================================================
 # Invalidation on stack changes
 # ============================================================================
 
