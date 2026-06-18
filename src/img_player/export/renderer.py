@@ -28,6 +28,7 @@ from img_player.export.settings import ExportSettings, MissingFramePolicy
 from img_player.export.stroke_painter import paint_strokes
 from img_player.export.writers.image_seq import output_dtype_for
 from img_player.io.reader import read_frame
+from img_player.media.video_probe import is_video_file
 from img_player.sequence.channels import ChannelSelection
 from img_player.sequence.models import SequenceInfo
 
@@ -96,6 +97,24 @@ class FrameRenderer:
         self._frame_paths: dict[int, Path] = {
             fi.frame_number: fi.path for fi in context.sequence.frames
         }
+        # Video source detection. A video layer's SequenceInfo is
+        # synthetic — every virtual frame points at the same container
+        # file (see ``Layer.from_video``), so OIIO can't read it. When
+        # the source is a video we decode through PyAV instead, lazily
+        # opening a :class:`VideoSource` on first render and closing it
+        # in :meth:`close`. ``source_frame`` is the 0-based video frame
+        # index, mapped to a timestamp via the sequence fps.
+        first_path = (
+            context.sequence.frames[0].path
+            if context.sequence.frames else None
+        )
+        self._is_video = first_path is not None and is_video_file(first_path)
+        self._video_path: Path | None = first_path if self._is_video else None
+        self._video_fps = float(context.sequence.fps_default or 24.0)
+        self._video_source = None  # lazy VideoSource for the active source
+        # Per-path VideoSource pool for the A/B compare path (each
+        # compare layer may be a different video file).
+        self._compare_video_sources: dict[Path, object] = {}
         # Output dtype contract for the writer.
         if settings.is_image_sequence:
             self._writer_dtype = output_dtype_for(settings.format_key)
@@ -144,6 +163,12 @@ class FrameRenderer:
                 )
             # Fallthrough — at least one side is out of range, we
             # render the active sequence's frame normally.
+
+        # Video source: decode through PyAV, not OIIO. ``source_frame``
+        # is the 0-based video frame index.
+        if self._is_video:
+            arr = self._ensure_rgba(self._decode_video_frame(source_frame))
+            return self._post_compose(arr, source_frame, out_w, out_h)
 
         if source_frame not in self._frame_paths:
             policy = self._settings.missing_frame_policy
@@ -274,17 +299,92 @@ class FrameRenderer:
         # RGBA for the rest of the pipeline.
         return self._ensure_rgba(composed)
 
-    def _read_layer_frame(self, layer, master_frame: int) -> np.ndarray | None:
-        """OIIO read of ``layer`` at the given master frame.
+    def _decode_video_frame(self, source_frame: int) -> np.ndarray:
+        """Decode the active video source at ``source_frame`` (0-based
+        video frame index) and return float32 RGBA in [0, 1].
 
-        Mirrors :class:`img_player.compare.decode.CompareDecoder`'s
-        image-sequence path but stays self-contained so the export
-        worker doesn't have to share state with the live
-        ``CompareDecoder`` (which is keyed on the live video source
-        manager).
+        The :class:`VideoSource` is opened lazily and reused across the
+        whole export; sequential frame requests hit its forward-decode
+        path. ``prefetch=False`` keeps it single-threaded — the export
+        loop already reads frames in order, so a background prefetch
+        thread would only contend.
+        """
+        if self._video_source is None:
+            from img_player.media.video_source import VideoSource
+            self._video_source = VideoSource(
+                self._video_path, prefetch=False,
+            )
+        t = source_frame / self._video_fps if self._video_fps > 0 else 0.0
+        arr = self._video_source.frame_at_time(t)  # (H, W, 4) uint8 RGBA
+        return arr.astype(np.float32) * np.float32(1.0 / 255.0)
+
+    def _decode_compare_video(
+        self, layer, master_frame: int,
+    ) -> np.ndarray | None:
+        """Decode a video compare layer at ``master_frame`` → float32
+        RGBA. Mirrors :meth:`_decode_video_frame` but keys a
+        per-source-path :class:`VideoSource` pool so A and B (possibly
+        different files) each get their own decoder."""
+        meta = getattr(layer, "video_metadata", None)
+        if meta is None or not meta.fps or meta.fps <= 0:
+            return None
+        source_idx = master_frame - layer.master_start
+        if source_idx < 0:
+            return None
+        vs = self._compare_video_sources.get(meta.path)
+        if vs is None:
+            from img_player.media.video_source import VideoSource
+            try:
+                vs = VideoSource(meta.path, prefetch=False)
+            except Exception:
+                log.warning(
+                    "[export-compare] failed to open video %s",
+                    meta.path, exc_info=True,
+                )
+                return None
+            self._compare_video_sources[meta.path] = vs
+        t = source_idx / float(meta.fps)
+        try:
+            arr = vs.frame_at_time(t)  # uint8 RGBA
+        except Exception:
+            log.warning(
+                "[export-compare] video decode failed for layer=%s "
+                "master=%d", layer.id, master_frame, exc_info=True,
+            )
+            return None
+        return arr.astype(np.float32) * np.float32(1.0 / 255.0)
+
+    def close(self) -> None:
+        """Release any lazily-opened video decoders. Called by the
+        engine once the export loop finishes (success, cancel, or
+        error). Idempotent."""
+        if self._video_source is not None:
+            try:
+                self._video_source.close()
+            except Exception:  # pragma: no cover — defensive
+                log.debug("[export] video source close failed", exc_info=True)
+            self._video_source = None
+        for vs in self._compare_video_sources.values():
+            try:
+                vs.close()
+            except Exception:  # pragma: no cover — defensive
+                log.debug("[export] compare source close failed", exc_info=True)
+        self._compare_video_sources.clear()
+
+    def _read_layer_frame(self, layer, master_frame: int) -> np.ndarray | None:
+        """Read ``layer`` at the given master frame (compare path).
+
+        Video layers go through PyAV (:meth:`_decode_compare_video`);
+        image-sequence layers mirror
+        :class:`img_player.compare.decode.CompareDecoder`'s OIIO path
+        but stay self-contained so the export worker doesn't share
+        state with the live ``CompareDecoder``.
         """
         if not layer.covers(master_frame):
             return None
+        if getattr(layer, "is_video", False):
+            arr = self._decode_compare_video(layer, master_frame)
+            return self._ensure_rgba(arr) if arr is not None else None
         source_frame = layer.source_frame_at(master_frame)
         path = None
         for fi in layer.sequence.frames:

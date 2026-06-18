@@ -350,7 +350,10 @@ def _render_single_frame_array(
         compare=compare_ctx,
     )
     renderer = FrameRenderer(ctx, export_settings)
-    return renderer.render(frame_arg, (int(out_w), int(out_h)))
+    try:
+        return renderer.render(frame_arg, (int(out_w), int(out_h)))
+    finally:
+        renderer.close()
 
 
 def _render_video_frame_array(

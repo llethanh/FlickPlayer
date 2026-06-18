@@ -4,13 +4,38 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import av
+import numpy as np
 import pytest
 from PySide6.QtWidgets import QApplication
 
 from img_player.annotate.store import AnnotationStore
 from img_player.export.engine import ExportEngine
 from img_player.export.settings import ExportSettings
+from img_player.layers import Layer
+from img_player.media.video_probe import probe_video
 from img_player.sequence.scanner import scan
+
+
+def _make_test_video(path: Path, n_frames: int = 8) -> None:
+    """Encode a tiny all-keyframe h264 mp4 (no audio) so any frame is
+    seekable. Each frame is a flat grey ramp so a decode failure (vs
+    the OIIO-can't-read-mov crash) is distinguishable."""
+    container = av.open(str(path), mode="w")
+    vstream = container.add_stream("h264", rate=24)
+    vstream.width = 64
+    vstream.height = 48
+    vstream.pix_fmt = "yuv420p"
+    vstream.options = {"g": "1"}
+    for i in range(n_frames):
+        arr = np.full((48, 64, 3), (i * 20) % 256, dtype=np.uint8)
+        frame = av.VideoFrame.from_ndarray(arr, format="rgb24")
+        frame.pts = i
+        for packet in vstream.encode(frame):
+            container.mux(packet)
+    for packet in vstream.encode(None):
+        container.mux(packet)
+    container.close()
 
 
 @pytest.fixture(scope="session")
@@ -84,6 +109,52 @@ class TestEndToEndImageSeq:
 # ============================================================================
 # Cancellation
 # ============================================================================
+
+
+class TestEndToEndVideo:
+    """The 2026-06-18 bug: exporting a video LAYER (.mov / .mp4) blew
+    up because the renderer fed the container path to OpenImageIO,
+    which can't read video. The renderer now decodes video sources
+    through PyAV."""
+
+    def test_exports_video_layer_to_png_sequence(
+        self, store, tmp_path: Path, _qapp,
+    ) -> None:
+        vid = tmp_path / "clip.mp4"
+        _make_test_video(vid, n_frames=8)
+        layer = Layer.from_video(probe_video(vid))
+        seq = layer.sequence  # synthetic: frames 0..7 → clip.mp4
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        settings = ExportSettings(
+            output_dir=out_dir,
+            in_frame=seq.first_frame, out_frame=seq.last_frame,
+            format_key="png",
+            start_frame=0,
+            apply_display_transform=False,
+            bake_annotations=False,
+        )
+        engine = ExportEngine(
+            settings=settings,
+            sequence=seq,
+            annotation_store=store,
+            ocio_manager=None,
+            source_colorspace=None,
+            display=None,
+            view=None,
+        )
+        result = engine.run()
+        assert result.canceled is False
+        assert result.frames_written == 8
+        files = sorted(out_dir.glob("*.png"))
+        assert len(files) == 8
+        # Sanity: the first PNG is a real image, not a 1×1 black stub.
+        import OpenImageIO as oiio
+        inp = oiio.ImageInput.open(str(files[0]))
+        assert inp is not None
+        spec = inp.spec()
+        inp.close()
+        assert (spec.width, spec.height) == (64, 48)
 
 
 class TestCancel:

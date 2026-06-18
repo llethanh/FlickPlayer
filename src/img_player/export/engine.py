@@ -225,6 +225,13 @@ class ExportEngine:
             except Exception:  # pragma: no cover — defensive
                 log.exception("[export] secondary error during abort")
             raise
+        finally:
+            # Release any video decoders the renderer opened (no-op for
+            # image-sequence exports).
+            try:
+                self._renderer.close()
+            except Exception:  # pragma: no cover — defensive
+                log.debug("[export] renderer close failed", exc_info=True)
 
     # ------------------------------------------------------------------ Internals
 
