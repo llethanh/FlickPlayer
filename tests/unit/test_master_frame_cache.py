@@ -136,6 +136,28 @@ class TestLoopEvictionScoring:
         finally:
             cache.shutdown()
 
+    def test_loop_start_evicted_first_mid_sequence(self, qtbot) -> None:
+        """The 2026-06-18 follow-up: mid-sequence (playhead far from
+        the loop end), the START of the timeline must be evicted
+        before the frames around the playhead — no permanent
+        'wrap island' kept at frame 0."""
+        cache = self._cache_in_loop(cur=1107, lo=0, hi=2251)
+        try:
+            start = cache._eviction_distance_score(5)      # near lo
+            near_ahead = cache._eviction_distance_score(1180)
+            near_behind = cache._eviction_distance_score(1050)
+            assert start > near_ahead, (
+                f"timeline start (5) scored {start} <= near-ahead "
+                f"(1180) {near_ahead} — start would be KEPT (wrap "
+                f"island), not evicted first"
+            )
+            assert start > near_behind, (
+                f"timeline start (5) scored {start} <= near-behind "
+                f"(1050) {near_behind}"
+            )
+        finally:
+            cache.shutdown()
+
     def test_wrap_target_stays_cheap_near_loop_end(self, qtbot) -> None:
         # Playhead near the loop end: the wrap target (lo) plays next
         # and must stay cheap so the loop doesn't stall at hi.

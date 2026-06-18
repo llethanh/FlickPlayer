@@ -66,6 +66,14 @@ log = logging.getLogger(__name__)
 # scrub-back into a wait-timer poll.
 _NEAR_REAR_WINDOW = 8
 
+# How many frames before the loop end we start protecting the loop's
+# first frames from eviction. Mirrors the controller's forward
+# prefetch window so the wrap target is warm exactly when playback is
+# about to reach it — but NOT before, so a mid-sequence playhead still
+# evicts the timeline start first (the 2026-06-18 "keep the wrap
+# island forever" complaint).
+_WRAP_LOOKAHEAD = 64
+
 # Diagnostic: set FLICK_DIAG_EVICT=1 to log, at most every ~1 s, the
 # playhead + which cached frames are about to be evicted vs kept and
 # their sort keys. Used to debug "the cache empties just behind the
@@ -2863,18 +2871,39 @@ class MasterFrameCache:
 
         * Frames in a small "near-rear window" behind the playhead
           stay cheap so a quick scrub-back doesn't fall off cache.
-        * In an active loop range, the score keeps a **window around
-          the playhead** (some behind + more ahead) and still pins
-          the wrap target cheap when the playhead nears the loop end.
-        * Frames truly behind (no loop, outside near-rear) get
-          multiplied by :data:`_BEHIND_PLAYHEAD_PENALTY` — we'd
-          rather drop them than the frames coming up next.
+        * Otherwise the score is the **signed distance** from the
+          playhead, with frames behind multiplied by
+          :data:`_BEHIND_PLAYHEAD_PENALTY`. This keeps a linear
+          window around the playhead and evicts the FAR side first —
+          for forward playback that's the **start of the timeline**,
+          which is what reviewers expect ("drop the oldest / the
+          beginning, not the frames I'm about to scrub back to").
+        * Loop wrap is protected **only just before the wrap**: when
+          the playhead is within :data:`_WRAP_LOOKAHEAD` of the loop
+          end, the first few frames of the loop are about to play, so
+          they get an "imminent" score and survive. Outside that
+          window the loop start scores as a normal far-behind frame
+          and is evicted first.
         """
         cur = self._current_frame
         d = self._direction
         delta_signed = (frame - cur) * d
         if -_NEAR_REAR_WINDOW <= delta_signed < 0:
             return -delta_signed  # 1, 2, 3, ... 8
+        # Base linear score — far side (timeline start, for forward
+        # play) evicted first.
+        if delta_signed < 0:
+            base = -delta_signed * _BEHIND_PLAYHEAD_PENALTY
+        else:
+            base = float(delta_signed)
+        # Loop wrap protection, narrow + only near the wrap. Without
+        # it, plain signed distance evicts the loop start the instant
+        # it's decoded while the playhead waits at the loop end —
+        # decode → evict → decode → … an infinite wrap stall. With it,
+        # only the handful of loop-start frames that play within
+        # ``_WRAP_LOOKAHEAD`` of the wrap are pinned cheap, so the
+        # mid-sequence timeline start is still evicted first (the
+        # 2026-06-18 "keep the wrap island forever" complaint).
         loop_lo = self._loop_lo
         loop_hi = self._loop_hi
         if (
@@ -2883,32 +2912,17 @@ class MasterFrameCache:
             and loop_hi is not None
             and loop_lo <= frame <= loop_hi
         ):
-            ring_size = loop_hi - loop_lo + 1
-            # ``fwd`` = frames until this one plays again going
-            # forward round the loop; ``behind`` = how far back it
-            # sits from the playhead. Pure forward ring distance gave
-            # the frame *just* behind the playhead the MAXIMUM score
-            # (it only replays after a whole loop), so eviction
-            # punched a hole right behind the cursor and ate leftward
-            # — the 2026-06-18 "cache empties just behind the
-            # playhead, right-to-left" report. Scoring by
-            # ``min(fwd, penalty * behind)`` instead keeps a window
-            # around the playhead: recent-behind frames stay cheaper
-            # than far ones, while the wrap target is still pinned
-            # cheap (its ``fwd`` is tiny when the playhead nears the
-            # loop end). Result: eviction drops the frames farthest
-            # from the playhead in BOTH directions first, never the
-            # one just behind it.
             if d >= 0:
-                fwd = (frame - cur) % ring_size
-                behind = (cur - frame) % ring_size
+                frames_to_wrap = loop_hi - cur
+                offset_into_loop = frame - loop_lo
             else:
-                fwd = (cur - frame) % ring_size
-                behind = (frame - cur) % ring_size
-            return float(min(fwd, _BEHIND_PLAYHEAD_PENALTY * behind))
-        if delta_signed < 0:
-            return -delta_signed * _BEHIND_PLAYHEAD_PENALTY
-        return float(delta_signed)
+                frames_to_wrap = cur - loop_lo
+                offset_into_loop = loop_hi - frame
+            if 0 <= frames_to_wrap < _WRAP_LOOKAHEAD:
+                plays_in = frames_to_wrap + offset_into_loop + 1
+                if plays_in <= _WRAP_LOOKAHEAD:
+                    return float(min(base, plays_in))
+        return base
 
     @staticmethod
     def _signature_refs_invisible(sig: str, visible_ids: set[str]) -> bool:
