@@ -527,6 +527,16 @@ class VideoSource:
             stream = container.streams.video[0]
             stream.thread_type = "AUTO"
             fps = float(self.fps)
+            # One-shot boot marker so we can confirm from flick.log
+            # WHICH eviction policy is actually running (the v1.8.5
+            # FIFO rewrite vs an older stale checkout). Cheap, fires
+            # once per opened source.
+            log.info(
+                "[video-prefetch] start %s — policy=FIFO(v1.8.5) "
+                "budget=%.2f GB",
+                self._path.name,
+                self._frame_cache_budget / 1024**3,
+            )
             # Per-frame footprint — learned from the first decoded
             # frame, used to translate the byte budget into a
             # frame-capacity for throttling. Default to 200 as a
