@@ -53,7 +53,61 @@ def _contiguous_runs(nums: list[int]) -> list[tuple[int, int]]:
     return runs
 
 
+def simulate_playback() -> None:
+    """Dynamic check: replay forward playback from frame 0, filling
+    ahead of the playhead and evicting each step, in full-range LOOP.
+    Dump the cache shape at playhead 1107 (the user's screenshot) and
+    assert it's a single contiguous window with the start evicted."""
+    first, last = 0, 2251
+    target_playhead = 1107
+    ahead = 64
+    frame_bytes = 1024 * 1024
+    arr = np.zeros(frame_bytes // 4, dtype=np.float32)
+    budget_frames = 992
+
+    stack = LayerStack()
+    stack.add(Layer.from_sequence(_seq(first, last), offset=0))
+    cache = MasterFrameCache(stack, num_workers=1)
+    try:
+        cache.set_loop_range(first, last, enabled=True)
+        cache.set_direction(1)
+        cache._budget = budget_frames * frame_bytes
+
+        for p in range(0, target_playhead + 1):
+            cache._current_frame = p
+            # Prefetch fills the playhead..playhead+ahead window.
+            for f in range(p, min(p + ahead, last) + 1):
+                sig = cache._signature_at(f)
+                key = (f, sig)
+                if key not in cache._frames:
+                    cache._frames[key] = arr
+                    cache._bytes_used += frame_bytes
+            cache._evict_if_over_budget()
+
+        survivors = sorted(mf for mf, _sig in cache._frames.keys())
+        runs = _contiguous_runs(survivors)
+        print(f"SIM @ playhead={target_playhead}: "
+              f"{len(survivors)} cached, runs={runs}")
+        ok = (
+            len(runs) == 1
+            and runs[0][0] > first            # start evicted
+            and runs[0][0] <= target_playhead <= runs[0][1]  # spans cur
+        )
+        if ok:
+            print(f"  [OK] single contiguous window {runs[0]} around "
+                  f"the playhead; timeline start ({first}) evicted.")
+        else:
+            print(f"  [BUG] expected one window spanning the playhead "
+                  f"with the start evicted; got {runs}")
+    finally:
+        cache.shutdown()
+
+
 def main() -> None:
+    import os as _os
+    if _os.environ.get("SIM") == "1":
+        simulate_playback()
+        return
     first, last = 0, 2251
     playhead = 1016
     cached_lo, cached_hi = 0, 1016  # 1017 frames cached
