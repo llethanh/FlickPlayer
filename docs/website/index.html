@@ -47,8 +47,8 @@
   <div class="ctas">
     <a
       class="btn btn-primary"
-      href="https://github.com/llethanh/FlickPlayer/releases/download/v1.8.5/FlickPlayer_v1.8.5.zip"
-    >Download for Windows — v1.8.5</a>
+      href="https://github.com/llethanh/FlickPlayer/releases/download/v1.8.6/FlickPlayer_v1.8.6.zip"
+    >Download for Windows — v1.8.6</a>
     <a class="btn btn-ghost" href="#features">See features →</a>
   </div>
   <p class="dl-note" style="margin-top: var(--s-sm); font-size: 0.9em; opacity: 0.6;">
@@ -743,23 +743,20 @@
 <section id="changelog" class="changelog-teaser">
   <h2>What's <span class="accent">new</span>.</h2>
   <p class="lede">
-    Latest release: <strong>v1.8.5</strong> — <strong>cache eviction
-    follows the playhead</strong>. On a long image sequence played in
-    loop mode, once the budget filled the cache used to punch a hole
-    <em>just behind the cursor</em> and eat leftward — keeping
-    far-behind frames and dropping the ones you'd just scrubbed past.
-    Root cause: the loop-aware score ranked a frame just behind the
-    playhead as "won't replay until a whole loop later" = highest
-    eviction priority. Eviction is now a plain signed-distance window
-    around the playhead (provably contiguous — no hole mid-sequence),
-    dropping the <em>timeline start</em> first, with the loop wrap
-    target protected only in the last 64 frames before the wrap.
-    Confirmed three ways: a monotone-score proof, a static repro, and
-    a full forward-playback simulation. The video RAM cache also moved
-    to strict insertion-order FIFO. Builds on <strong>v1.8.4</strong>'s
-    true 60 fps cached video playback and 3× faster network EXR cold
-    reads. The full history — every public release, what changed, why
-    it changed — lives on its own page.
+    Latest release: <strong>v1.8.6</strong> — <strong>export video
+    layers</strong>. Decoding a <code>.mov</code> / <code>.mp4</code>
+    source to a sequence or a reel used to crash with "OpenImageIO
+    could not find a format reader" — a video layer's synthetic
+    sequence points every frame at the same container, and the export
+    was handing that to the still-image loader. The renderer now
+    detects a video source and decodes each frame through PyAV (the
+    same decoder the live viewport uses) before the OCIO / resize /
+    annotation / burn-in steps, including the A/B compare bake.
+    Follows <strong>v1.8.5</strong>, where cache eviction started
+    following the playhead — no more hole behind the cursor on long
+    sequences in loop playback, the timeline start is evicted first.
+    The full history — every public release, what changed, why it
+    changed — lives on its own page.
   </p>
   <p style="margin-top: var(--s-md);">
     <a class="btn btn-primary" href="changelog.html">Read the full changelog →</a>
@@ -769,7 +766,7 @@
 <!-- ============================================================ Footer -->
 <footer id="download">
   <p>
-    <strong>Flick Player</strong> · open-source VFX sequence viewer · <a href="https://github.com/llethanh/FlickPlayer/releases/download/v1.8.5/FlickPlayer_v1.8.5.zip">Download v1.8.5</a> · <a href="https://github.com/llethanh/FlickPlayer">GitHub</a> · <a href="changelog.html">Changelog</a>
+    <strong>Flick Player</strong> · open-source VFX sequence viewer · <a href="https://github.com/llethanh/FlickPlayer/releases/download/v1.8.6/FlickPlayer_v1.8.6.zip">Download v1.8.6</a> · <a href="https://github.com/llethanh/FlickPlayer">GitHub</a> · <a href="changelog.html">Changelog</a>
   </p>
   <p style="margin-top: var(--s-sm);">
     Built with PySide6, OpenColorIO, OpenImageIO and PyAV. Designed for Windows.

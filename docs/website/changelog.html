@@ -44,6 +44,20 @@
 
     <article class="release">
       <div class="release-meta">
+        <span class="ver">v1.8.6</span>
+        <span class="date">2026-06-18</span>
+        <span class="tagline">Export video layers — decoding a .mov / .mp4 source to a sequence or reel no longer crashes.</span>
+      </div>
+      <div class="release-body">
+        <h4>Export</h4>
+        <ul>
+          <li class="fix"><strong>Exporting a video layer no longer fails with "OpenImageIO could not find a format reader".</strong> A video layer carries a <em>synthetic</em> sequence — every virtual frame points at the same container file — and the export renderer was handing that path to OpenImageIO, which only reads still images. It now detects a video source and decodes each frame through PyAV (<code>VideoSource.frame_at_time</code>, the same decoder the live viewport uses), converting to the float pipeline for the existing OCIO / resize / annotation / burn-in steps. Works for image-sequence <em>and</em> video output, and for the A/B compare bake when one or both sides are video.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <div class="release-meta">
         <span class="ver">v1.8.5</span>
         <span class="date">2026-06-18</span>
         <span class="tagline">Cache eviction follows the playhead — no more hole behind the cursor on long sequences in loop playback.</span>
