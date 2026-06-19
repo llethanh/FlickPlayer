@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QRadioButton,
+    QSlider,
     QSpinBox,
     QStackedWidget,
     QVBoxLayout,
@@ -814,16 +815,25 @@ class _NetworkPage(QWidget):
         lbl.setStyleSheet("font-weight: 600; margin-top: 6px;")
         layout.addWidget(lbl)
 
+        # Slider (1..32) with a live value read-out. 1 = strictly
+        # sequential fill; 32 = effectively unlimited for a typical
+        # worker pool. 4 is the balanced default.
         row = QHBoxLayout()
-        self._spin = QSpinBox()
-        # 1 = strictly sequential fill; 32 = effectively unlimited for
-        # a typical worker pool. 4 is the balanced default.
-        self._spin.setRange(1, 32)
-        self._spin.setSuffix(" frames at once")
-        self._spin.setValue(self._initial)
-        row.addWidget(self._spin)
-        row.addStretch(1)
+        self._slider = QSlider(Qt.Orientation.Horizontal)
+        self._slider.setRange(1, 32)
+        self._slider.setValue(self._initial)
+        self._slider.setMinimumWidth(240)
+        self._slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self._slider.setTickInterval(4)
+        row.addWidget(self._slider, 1)
+        self._value_label = QLabel()
+        self._value_label.setMinimumWidth(120)
+        self._value_label.setStyleSheet("color: #ddd;")
+        row.addWidget(self._value_label)
         layout.addLayout(row)
+
+        self._slider.valueChanged.connect(self._refresh_value_label)
+        self._refresh_value_label(self._initial)
 
         hint = QLabel(
             "<i>Default 4. Lower = cleaner left-to-right fill; 1 = "
@@ -837,8 +847,19 @@ class _NetworkPage(QWidget):
 
         layout.addStretch(1)
 
+    def _refresh_value_label(self, value: int) -> None:
+        if value <= 1:
+            extra = "sequential"
+        elif value <= 6:
+            extra = "clean fill"
+        else:
+            extra = "fast link"
+        self._value_label.setText(
+            f"{value} frame{'s' if value > 1 else ''} · {extra}"
+        )
+
     def apply(self) -> bool:
-        new = int(self._spin.value())
+        new = int(self._slider.value())
         if new == self._initial:
             return False
         self._prefs.network_decode_workers = new
