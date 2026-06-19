@@ -144,43 +144,42 @@ def read_frame(
         if staged is not None:
             path = staged
 
-    # EXR dispatch — choose between PyOpenEXR and OIIO based on
-    # where the file lives.
+    # EXR dispatch — always OIIO's channel-subset read (the chbegin/
+    # chend path below); PyOpenEXR is a fallback only if OIIO can't
+    # open the file.
     #
-    # Measured on the AOV-heavy Maya CHARS sequence (1920×900,
-    # 158 raw / 50 grouped channels, 232 MB per frame, zips):
+    # Why OIIO wins in THIS app (revised 2026-06-18): decoding runs in
+    # a 12-worker thread pool, and **OIIO releases the GIL during
+    # decode while PyOpenEXR holds it through the zlib decompress**.
+    # Measured on the AOV-heavy Maya CHARS sequence (1920×900, 48
+    # grouped channels, 325 MB/frame, ZIPS), 24 frames:
     #
-    #   from M:\ (SMB)  : PyOpenEXR 1.0 s   OIIO 1.9 s   → use PyOpenEXR
-    #   from local SSD : PyOpenEXR 1.0 s   OIIO 0.14 s  → use OIIO
+    #            1 thread        12 threads     scaling
+    #   PyOpenEXR full   0.8 fps     1.6 fps     ~2x  (GIL-bound)
+    #   OIIO RGBA-subset 0.7 fps     8.2 fps     ~12x (scales)
     #
-    # Why the asymmetry: PyOpenEXR decodes ALL channels eagerly into
-    # per-key ndarrays — fast on SMB (it makes one optimal bulk read
-    # of the whole file) but slow on local (CPU-bound decompress of
-    # data we don't need). OIIO does the opposite: many small reads
-    # to skip AOVs and decode only the requested ones — terrible on
-    # SMB (RTT-bound), great on local SSD.
-    #
-    # With the staging cache in play, network-source frames get
-    # bulk-copied to local; from that point on we should switch to
-    # OIIO. The path translation above (``_staging_lookup``) means
-    # ``path`` is already the LOCAL staged copy at this point, so
-    # the check below correctly routes staged frames through OIIO.
-    if path.suffix.lower() == ".exr":
-        from img_player.cache.network_staging import is_network_path  # noqa: PLC0415
-        if is_network_path(path):
-            # On-network read: PyOpenEXR is the fast path.
+    # A single-threaded SMB read does favour PyOpenEXR (one bulk read
+    # vs OIIO's RTT-bound small reads), which is what the old routing
+    # optimised for — but that's the WRONG axis: the dominant pattern
+    # is batch cache-fill across all 12 workers, where the parallel
+    # reads overlap the per-read RTT and OIIO's GIL release lets every
+    # core decompress at once. Net: ~5x faster sequence load (the
+    # ">1 min vs OpenRV's 15 s" report). OIIO also decodes only the
+    # requested RGBA channels, not all 48.
+    inp = oiio.ImageInput.open(str(path))
+    if inp is None:
+        # OIIO couldn't open it — last-resort PyOpenEXR for EXR before
+        # giving up (handles the rare file OIIO's reader chokes on).
+        if path.suffix.lower() == ".exr":
             try:
                 arr = _read_exr_pyopenexr(path, channels, as_half)
                 if arr is not None:
                     return arr
-            except Exception:  # noqa: BLE001 — fall through to OIIO
+            except Exception:  # noqa: BLE001
                 log.debug(
-                    "PyOpenEXR fast-path failed for %s; falling back to OIIO",
-                    path, exc_info=True,
+                    "PyOpenEXR fallback also failed for %s", path,
+                    exc_info=True,
                 )
-
-    inp = oiio.ImageInput.open(str(path))
-    if inp is None:
         raise FrameReadError(f"Failed to open {path}: {oiio.geterror()}")
 
     oiio_type = oiio.HALF if as_half else oiio.FLOAT
