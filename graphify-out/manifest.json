@@ -1493,5 +1493,1640 @@
     "mtime": 1780571236.077,
     "ast_hash": "0b284ef8c0043fcd67e60653a109bbdd",
     "semantic_hash": "0b284ef8c0043fcd67e60653a109bbdd"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\branding\\generate_icon.py": {
+    "mtime": 1778153342.1667957,
+    "ast_hash": "821a8b158534f0f8d3fd672523f08380",
+    "semantic_hash": "821a8b158534f0f8d3fd672523f08380"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\baseline.json": {
+    "mtime": 1778153342.176307,
+    "ast_hash": "d97563e0a06da85fbf33927f4783ac26",
+    "semantic_hash": "d97563e0a06da85fbf33927f4783ac26"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\baseline_igpu_780m.json": {
+    "mtime": 1778153342.176307,
+    "ast_hash": "8778e46da318a7e2837c3112ca020490",
+    "semantic_hash": "8778e46da318a7e2837c3112ca020490"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\baseline_rtx5070.json": {
+    "mtime": 1778153342.1768098,
+    "ast_hash": "5f12be0aec0ee742e5f9a7d771fc3484",
+    "semantic_hash": "5f12be0aec0ee742e5f9a7d771fc3484"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\baseline_rtx5070_postreboot.json": {
+    "mtime": 1778153342.1768098,
+    "ast_hash": "0e60824854c3c54c9b8ef4901dd31af7",
+    "semantic_hash": "0e60824854c3c54c9b8ef4901dd31af7"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\contact_sheet_nonreg.json": {
+    "mtime": 1779107188.3981986,
+    "ast_hash": "df482854ac76e67d1cf2c9f809511dd4",
+    "semantic_hash": "df482854ac76e67d1cf2c9f809511dd4"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\contact_sheet_play_test.json": {
+    "mtime": 1779274883.5237215,
+    "ast_hash": "809bc36b100d483dd133fa27d9f7c27c",
+    "semantic_hash": "809bc36b100d483dd133fa27d9f7c27c"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\optim_full.json": {
+    "mtime": 1778153342.1768098,
+    "ast_hash": "b1554a2c010ca248724603eafb26ca28",
+    "semantic_hash": "b1554a2c010ca248724603eafb26ca28"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\optim_full_2gb.json": {
+    "mtime": 1778153342.1768098,
+    "ast_hash": "b7273bb9d6a3c403370e70d036165156",
+    "semantic_hash": "b7273bb9d6a3c403370e70d036165156"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\optim_gc.json": {
+    "mtime": 1778153342.1768098,
+    "ast_hash": "79adc7202471af0599b1243a1593b51a",
+    "semantic_hash": "79adc7202471af0599b1243a1593b51a"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\optim_oiio_t1.json": {
+    "mtime": 1778153342.1768098,
+    "ast_hash": "41ac1ee602a0bc3feb7e8868655a5797",
+    "semantic_hash": "41ac1ee602a0bc3feb7e8868655a5797"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\optim_oiio_threads.json": {
+    "mtime": 1778153342.1778126,
+    "ast_hash": "bbeaf3f12664c304af1cfedfdaa52bb3",
+    "semantic_hash": "bbeaf3f12664c304af1cfedfdaa52bb3"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\optim_pbo.json": {
+    "mtime": 1778153342.1778126,
+    "ast_hash": "0253e447fdc55ad41427f752a5fd0cdf",
+    "semantic_hash": "0253e447fdc55ad41427f752a5fd0cdf"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\postopti_slice2_autotune_unknown.json": {
+    "mtime": 1778153342.1778126,
+    "ast_hash": "804cd755ddf263c8368e66559a0b3841",
+    "semantic_hash": "804cd755ddf263c8368e66559a0b3841"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\postopti_slice2_overrides_match_baseline.json": {
+    "mtime": 1778153342.1778126,
+    "ast_hash": "c42a1dd45becb8e687104f5ee8656559",
+    "semantic_hash": "c42a1dd45becb8e687104f5ee8656559"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\postopti_slice3_runtime_check.json": {
+    "mtime": 1778153342.178815,
+    "ast_hash": "63ecb73133d16be471d5bc871049f658",
+    "semantic_hash": "63ecb73133d16be471d5bc871049f658"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\postopti_slice4_autotune_no_pbo.json": {
+    "mtime": 1778153342.178815,
+    "ast_hash": "8b11a391025a0b1b145b615979e389a2",
+    "semantic_hash": "8b11a391025a0b1b145b615979e389a2"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\postopti_slice4_autotune_pbo.json": {
+    "mtime": 1778153342.178815,
+    "ast_hash": "69c95183247cd2fe1af82b131d00ec31",
+    "semantic_hash": "69c95183247cd2fe1af82b131d00ec31"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\postopti_slice4_clean_no_pbo.json": {
+    "mtime": 1778153342.178815,
+    "ast_hash": "57eb748e4ec625f5e8bfeece855809a5",
+    "semantic_hash": "57eb748e4ec625f5e8bfeece855809a5"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\postopti_slice4_clean_pbo.json": {
+    "mtime": 1778153342.1798153,
+    "ast_hash": "fc9e102f591003dc422532662a9b1ba7",
+    "semantic_hash": "fc9e102f591003dc422532662a9b1ba7"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\postopti_slice4_clean_pbo_oiio1.json": {
+    "mtime": 1778153342.1798153,
+    "ast_hash": "0d7a5535706d1dc3c0ad6b054b155372",
+    "semantic_hash": "0d7a5535706d1dc3c0ad6b054b155372"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\postopti_slice4_fix_oiio_formula.json": {
+    "mtime": 1778153342.1798153,
+    "ast_hash": "20c87bc2885c7c825b9418c403b802dc",
+    "semantic_hash": "20c87bc2885c7c825b9418c403b802dc"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\postopti_slice5_runtime_monitor.json": {
+    "mtime": 1778153342.1798153,
+    "ast_hash": "0f0ea76b7fbe6a9f3df3953f192d4aef",
+    "semantic_hash": "0f0ea76b7fbe6a9f3df3953f192d4aef"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\postopti_slice6_final_run1.json": {
+    "mtime": 1778153342.1798153,
+    "ast_hash": "d0febd74141d8136fc61d743c94ff78b",
+    "semantic_hash": "d0febd74141d8136fc61d743c94ff78b"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\postopti_slice6_final_run2.json": {
+    "mtime": 1778153342.1808157,
+    "ast_hash": "3a07dd5ea6fa4fe85d8ed6688edf91b2",
+    "semantic_hash": "3a07dd5ea6fa4fe85d8ed6688edf91b2"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\test_igpu.json": {
+    "mtime": 1778153342.1808157,
+    "ast_hash": "9b01a1986a66b374779576b2a6222614",
+    "semantic_hash": "9b01a1986a66b374779576b2a6222614"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\tier1_baseline.json": {
+    "mtime": 1778769896.064906,
+    "ast_hash": "b13a3ab96ae0e480f8e2f3a0ee4f6d40",
+    "semantic_hash": "b13a3ab96ae0e480f8e2f3a0ee4f6d40"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\tier1_cold_baseline.json": {
+    "mtime": 1778769896.064906,
+    "ast_hash": "e761ef5748234548b802108e63fb8733",
+    "semantic_hash": "e761ef5748234548b802108e63fb8733"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\tier1_cold_post.json": {
+    "mtime": 1778769896.064906,
+    "ast_hash": "32db0128f9db0953ef7e6a745fc2523d",
+    "semantic_hash": "32db0128f9db0953ef7e6a745fc2523d"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\tier1_post.json": {
+    "mtime": 1778769896.064906,
+    "ast_hash": "52d6fca6d65d1cf29191fbdfaf91d558",
+    "semantic_hash": "52d6fca6d65d1cf29191fbdfaf91d558"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\tier2_final_post.json": {
+    "mtime": 1778769896.064906,
+    "ast_hash": "c90bdfc76021536057ab2e2f91a72a6a",
+    "semantic_hash": "c90bdfc76021536057ab2e2f91a72a6a"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\tier2_post.json": {
+    "mtime": 1778769896.064906,
+    "ast_hash": "21ea9f588d07311219bf985b5b327e50",
+    "semantic_hash": "21ea9f588d07311219bf985b5b327e50"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\tier3_baseline.json": {
+    "mtime": 1778769896.064906,
+    "ast_hash": "9374f86ff44515af8909f7d2a46ac09d",
+    "semantic_hash": "9374f86ff44515af8909f7d2a46ac09d"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\tier3_post.json": {
+    "mtime": 1778769896.064906,
+    "ast_hash": "d2cfd2ac4d32972d77c52be69fe1d120",
+    "semantic_hash": "d2cfd2ac4d32972d77c52be69fe1d120"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\variance_run1.json": {
+    "mtime": 1778153342.1808157,
+    "ast_hash": "5a70a795408b9df0b34de2d42e1e4345",
+    "semantic_hash": "5a70a795408b9df0b34de2d42e1e4345"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\variance_run2.json": {
+    "mtime": 1778153342.1808157,
+    "ast_hash": "911659190f3beb466a32b842adf8d553",
+    "semantic_hash": "911659190f3beb466a32b842adf8d553"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\variance_run3.json": {
+    "mtime": 1778153342.1818168,
+    "ast_hash": "86101adb120c90e95724ccf0ee33f347",
+    "semantic_hash": "86101adb120c90e95724ccf0ee33f347"
+  },
+  "C:\\dev\\FlickPlayer\\pyi_rth_dll_priority.py": {
+    "mtime": 1780477100.6581395,
+    "ast_hash": "5e0b98e56f4d35d74dabc3edb7619048",
+    "semantic_hash": "5e0b98e56f4d35d74dabc3edb7619048"
+  },
+  "C:\\dev\\FlickPlayer\\scripts\\headless_player.py": {
+    "mtime": 1778153342.1828167,
+    "ast_hash": "3459b216829dcd2f45fd1ad25f84d309",
+    "semantic_hash": "3459b216829dcd2f45fd1ad25f84d309"
+  },
+  "C:\\dev\\FlickPlayer\\scripts\\ram_eater.py": {
+    "mtime": 1778153342.1828167,
+    "ast_hash": "225fa8e7f2822440f9837a22b8dc3179",
+    "semantic_hash": "225fa8e7f2822440f9837a22b8dc3179"
+  },
+  "C:\\dev\\FlickPlayer\\scripts\\show_frame.py": {
+    "mtime": 1778153342.1828167,
+    "ast_hash": "6d08c1577af17ba3442b72c56409fc59",
+    "semantic_hash": "6d08c1577af17ba3442b72c56409fc59"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\__init__.py": {
+    "mtime": 1781874826.090473,
+    "ast_hash": "510fb9054e70fe8f3fdfd5115e8acc05",
+    "semantic_hash": "510fb9054e70fe8f3fdfd5115e8acc05"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\__main__.py": {
+    "mtime": 1780565565.7502992,
+    "ast_hash": "243f225eff4b81044656578cec4c3d6b",
+    "semantic_hash": "243f225eff4b81044656578cec4c3d6b"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\_value_coerce.py": {
+    "mtime": 1778769896.0664084,
+    "ast_hash": "97771878a668864ecc1259818a7ac2bb",
+    "semantic_hash": "97771878a668864ecc1259818a7ac2bb"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\annotate\\__init__.py": {
+    "mtime": 1778153342.1838152,
+    "ast_hash": "d8f1939c7ab47fe1c6f9bcc4e2b6ff2f",
+    "semantic_hash": "d8f1939c7ab47fe1c6f9bcc4e2b6ff2f"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\annotate\\ephemeral.py": {
+    "mtime": 1778153342.1838152,
+    "ast_hash": "f681458e2dc20415e12718f35358c0e6",
+    "semantic_hash": "f681458e2dc20415e12718f35358c0e6"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\annotate\\overlay.py": {
+    "mtime": 1778153342.184815,
+    "ast_hash": "91793f729f78f645bf7d1a96c3805796",
+    "semantic_hash": "91793f729f78f645bf7d1a96c3805796"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\annotate\\persistence.py": {
+    "mtime": 1779107188.3991988,
+    "ast_hash": "e6fc2010543182a3b4c691d5812863a1",
+    "semantic_hash": "e6fc2010543182a3b4c691d5812863a1"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\annotate\\store.py": {
+    "mtime": 1779107188.3991988,
+    "ast_hash": "5d4f6bfdc8e1eee85ab08240ffd23ffe",
+    "semantic_hash": "5d4f6bfdc8e1eee85ab08240ffd23ffe"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\annotate\\stroke.py": {
+    "mtime": 1778153342.184815,
+    "ast_hash": "3a3cc933a28e0930877d212964f93984",
+    "semantic_hash": "3a3cc933a28e0930877d212964f93984"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\annotate\\toolbar.py": {
+    "mtime": 1778576137.4209158,
+    "ast_hash": "8e13cf1d38adeffc6a6a2f50ded6bca8",
+    "semantic_hash": "8e13cf1d38adeffc6a6a2f50ded6bca8"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\app.py": {
+    "mtime": 1781873905.6538005,
+    "ast_hash": "6a0f7ce6701398f0827979130fe75a01",
+    "semantic_hash": "6a0f7ce6701398f0827979130fe75a01"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\app_paths.py": {
+    "mtime": 1780507912.0604825,
+    "ast_hash": "0f04315dcfe1ad5ec1a4016b16dbc685",
+    "semantic_hash": "0f04315dcfe1ad5ec1a4016b16dbc685"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\bench\\__init__.py": {
+    "mtime": 1778153342.1903276,
+    "ast_hash": "68eedcb987d4443d92afa6ea41c58996",
+    "semantic_hash": "68eedcb987d4443d92afa6ea41c58996"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\bench\\recorder.py": {
+    "mtime": 1778153342.1903276,
+    "ast_hash": "12ed2f1970acf4308f96590992637d8d",
+    "semantic_hash": "12ed2f1970acf4308f96590992637d8d"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\bench\\runner.py": {
+    "mtime": 1778153342.1903276,
+    "ast_hash": "50c11eca3b6d194ca37886a5d4ab6549",
+    "semantic_hash": "50c11eca3b6d194ca37886a5d4ab6549"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\bench\\summarize.py": {
+    "mtime": 1778576137.422916,
+    "ast_hash": "daabd05d713e2d407b2c5e9da5e82be6",
+    "semantic_hash": "daabd05d713e2d407b2c5e9da5e82be6"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\burnins\\__init__.py": {
+    "mtime": 1780392280.0158806,
+    "ast_hash": "84b593ff60ad426ff80ac94bf3b5f426",
+    "semantic_hash": "84b593ff60ad426ff80ac94bf3b5f426"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\burnins\\builtins.py": {
+    "mtime": 1780392280.0158806,
+    "ast_hash": "7bbf6d41fed83aad7b5f4896efa6358e",
+    "semantic_hash": "7bbf6d41fed83aad7b5f4896efa6358e"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\burnins\\model.py": {
+    "mtime": 1780392280.0158806,
+    "ast_hash": "118e916ec94cbf4b2ee43045a22bc31f",
+    "semantic_hash": "118e916ec94cbf4b2ee43045a22bc31f"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\burnins\\renderer.py": {
+    "mtime": 1780392280.0168805,
+    "ast_hash": "cfa33d7eec8413ab6f3a98e4a9a4c95e",
+    "semantic_hash": "cfa33d7eec8413ab6f3a98e4a9a4c95e"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\burnins\\storage.py": {
+    "mtime": 1780392280.0168805,
+    "ast_hash": "08da397bed89a20199392980ad3d021b",
+    "semantic_hash": "08da397bed89a20199392980ad3d021b"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\cache\\__init__.py": {
+    "mtime": 1778153342.191328,
+    "ast_hash": "5a4caebaa1fd1cb08f032fa2308447c9",
+    "semantic_hash": "5a4caebaa1fd1cb08f032fa2308447c9"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\cache\\_common.py": {
+    "mtime": 1778769896.068411,
+    "ast_hash": "7bd267e0ade23ca0cf72a01eb3ce57c1",
+    "semantic_hash": "7bd267e0ade23ca0cf72a01eb3ce57c1"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\cache\\disk_cache.py": {
+    "mtime": 1779274883.5272257,
+    "ast_hash": "e6eb2d716252885cab9d3dcb5ca72b1a",
+    "semantic_hash": "e6eb2d716252885cab9d3dcb5ca72b1a"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\cache\\frame_cache.py": {
+    "mtime": 1779274883.5282261,
+    "ast_hash": "5075a31480885c5667c2309ea0232838",
+    "semantic_hash": "5075a31480885c5667c2309ea0232838"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\cache\\master_frame_cache.py": {
+    "mtime": 1781873885.1463,
+    "ast_hash": "50bcbc4b238ad0b5fa8edf9c012f75fd",
+    "semantic_hash": "50bcbc4b238ad0b5fa8edf9c012f75fd"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\cache\\missing_frame.py": {
+    "mtime": 1779274883.5297306,
+    "ast_hash": "d75f4974ed767d599b2a5a71dbfc4134",
+    "semantic_hash": "d75f4974ed767d599b2a5a71dbfc4134"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\cache\\missing_placeholder.py": {
+    "mtime": 1778587281.7644083,
+    "ast_hash": "3c0455dd50e7d465f46a39a049e8e8e1",
+    "semantic_hash": "3c0455dd50e7d465f46a39a049e8e8e1"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\cache\\network_staging.py": {
+    "mtime": 1781859774.1703308,
+    "ast_hash": "fca8fed5291dff3341103473aab347ae",
+    "semantic_hash": "fca8fed5291dff3341103473aab347ae"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\cache\\source_key.py": {
+    "mtime": 1778769896.0694113,
+    "ast_hash": "3b9a11f0fb5a99078a861ed323fc0958",
+    "semantic_hash": "3b9a11f0fb5a99078a861ed323fc0958"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\cache\\worker_pool.py": {
+    "mtime": 1781867182.1688445,
+    "ast_hash": "5ec11cd4a09451866ff2a82b0ada0a9c",
+    "semantic_hash": "5ec11cd4a09451866ff2a82b0ada0a9c"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\channel_handler.py": {
+    "mtime": 1778153342.19333,
+    "ast_hash": "b36442e458adc5d30897412398bb32d6",
+    "semantic_hash": "b36442e458adc5d30897412398bb32d6"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\color\\__init__.py": {
+    "mtime": 1778153342.19333,
+    "ast_hash": "f32be4686eccbe7b11b1c938deef109b",
+    "semantic_hash": "f32be4686eccbe7b11b1c938deef109b"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\color\\auto_detect.py": {
+    "mtime": 1779731315.454064,
+    "ast_hash": "823d28e2517649dbd2a0f221209465b7",
+    "semantic_hash": "823d28e2517649dbd2a0f221209465b7"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\color\\gpu_processor.py": {
+    "mtime": 1778769896.070913,
+    "ast_hash": "fb185460d371e2caed54b9158a208366",
+    "semantic_hash": "fb185460d371e2caed54b9158a208366"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\color\\ocio_manager.py": {
+    "mtime": 1778769896.071917,
+    "ast_hash": "720f05f825de4ed068a74d673f78a046",
+    "semantic_hash": "720f05f825de4ed068a74d673f78a046"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\comment\\__init__.py": {
+    "mtime": 1778153342.1943283,
+    "ast_hash": "b33290ca54a6f3cf60d464fd4974fbde",
+    "semantic_hash": "b33290ca54a6f3cf60d464fd4974fbde"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\comment\\comment.py": {
+    "mtime": 1778153342.1943283,
+    "ast_hash": "72fd88c25b0860b03ba8716cf3d83e9f",
+    "semantic_hash": "72fd88c25b0860b03ba8716cf3d83e9f"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\comment\\persistence.py": {
+    "mtime": 1779107188.402199,
+    "ast_hash": "8d7bb1aaa9b698660e66708a9ad30a1a",
+    "semantic_hash": "8d7bb1aaa9b698660e66708a9ad30a1a"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\comment\\store.py": {
+    "mtime": 1779107188.402199,
+    "ast_hash": "0a1ec2b2eea0447c620abd965d286dba",
+    "semantic_hash": "0a1ec2b2eea0447c620abd965d286dba"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\compare\\__init__.py": {
+    "mtime": 1778153342.195328,
+    "ast_hash": "1daef5ae309e6d96a9feef177925eb49",
+    "semantic_hash": "1daef5ae309e6d96a9feef177925eb49"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\compare\\compose.py": {
+    "mtime": 1778769896.071917,
+    "ast_hash": "10a25fdec43a63b71e46364e06000d8f",
+    "semantic_hash": "10a25fdec43a63b71e46364e06000d8f"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\compare\\decode.py": {
+    "mtime": 1778153342.195328,
+    "ast_hash": "2cca4301aa215d58380f8adec3124fe3",
+    "semantic_hash": "2cca4301aa215d58380f8adec3124fe3"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\compare\\state.py": {
+    "mtime": 1778576137.4269161,
+    "ast_hash": "ccfdb6ce6837849fe1230705f46d08f6",
+    "semantic_hash": "ccfdb6ce6837849fe1230705f46d08f6"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\compare_handler.py": {
+    "mtime": 1778587281.765409,
+    "ast_hash": "9e2c376d621f879f7f0e8abe613c3a64",
+    "semantic_hash": "9e2c376d621f879f7f0e8abe613c3a64"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\contact_sheet\\__init__.py": {
+    "mtime": 1779107188.4031994,
+    "ast_hash": "5cbb8a8fb09767d9a193c3ec06f03a6e",
+    "semantic_hash": "5cbb8a8fb09767d9a193c3ec06f03a6e"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\contact_sheet\\compose.py": {
+    "mtime": 1780392280.0178807,
+    "ast_hash": "814c073f64cf87b9a65302ce47812884",
+    "semantic_hash": "814c073f64cf87b9a65302ce47812884"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\contact_sheet\\decoder.py": {
+    "mtime": 1779107188.4031994,
+    "ast_hash": "db5fd168ece56f76f15bb8f750599e41",
+    "semantic_hash": "db5fd168ece56f76f15bb8f750599e41"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\contact_sheet\\state.py": {
+    "mtime": 1779274883.5307302,
+    "ast_hash": "85aa8358fc708ea582249438b3420710",
+    "semantic_hash": "85aa8358fc708ea582249438b3420710"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\export\\__init__.py": {
+    "mtime": 1778153342.1968303,
+    "ast_hash": "bd5fb61a146739baf5532ac857fd6a90",
+    "semantic_hash": "bd5fb61a146739baf5532ac857fd6a90"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\export\\dialog.py": {
+    "mtime": 1778576137.4284182,
+    "ast_hash": "3bd5323c165f153e4eb60c2a32a57862",
+    "semantic_hash": "3bd5323c165f153e4eb60c2a32a57862"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\export\\engine.py": {
+    "mtime": 1781801827.149394,
+    "ast_hash": "b34fcb5935864e19e69457a246a536d5",
+    "semantic_hash": "b34fcb5935864e19e69457a246a536d5"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\export\\progress_dialog.py": {
+    "mtime": 1778576137.4284182,
+    "ast_hash": "c9debaaaa413ae7a78cb9908e9a19758",
+    "semantic_hash": "c9debaaaa413ae7a78cb9908e9a19758"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\export\\renderer.py": {
+    "mtime": 1781801820.4415143,
+    "ast_hash": "43d47a89369740eea4c3255adac08160",
+    "semantic_hash": "43d47a89369740eea4c3255adac08160"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\export\\settings.py": {
+    "mtime": 1778769896.072921,
+    "ast_hash": "1a8c046a7bdca7a7540d56ef9a65957f",
+    "semantic_hash": "1a8c046a7bdca7a7540d56ef9a65957f"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\export\\stroke_painter.py": {
+    "mtime": 1778153342.1988394,
+    "ast_hash": "040b2d887f6c87a6c815007a0a651c84",
+    "semantic_hash": "040b2d887f6c87a6c815007a0a651c84"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\export\\worker.py": {
+    "mtime": 1778153342.1988394,
+    "ast_hash": "e7066c8e92b3b53e39d45554bcfdc114",
+    "semantic_hash": "e7066c8e92b3b53e39d45554bcfdc114"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\export\\writers\\__init__.py": {
+    "mtime": 1778153342.1988394,
+    "ast_hash": "2dffa53401ba08b41a0388cad3a6560f",
+    "semantic_hash": "2dffa53401ba08b41a0388cad3a6560f"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\export\\writers\\base.py": {
+    "mtime": 1778153342.1988394,
+    "ast_hash": "34fc0fa8c5e47ae2d5025e4138fcaaab",
+    "semantic_hash": "34fc0fa8c5e47ae2d5025e4138fcaaab"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\export\\writers\\image_seq.py": {
+    "mtime": 1778153342.1998382,
+    "ast_hash": "f50e8b2a7abd9a33bb213f435575c4d7",
+    "semantic_hash": "f50e8b2a7abd9a33bb213f435575c4d7"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\export\\writers\\video.py": {
+    "mtime": 1778769896.072921,
+    "ast_hash": "72c22afc9caa5cde0e44ee12e3c7f314",
+    "semantic_hash": "72c22afc9caa5cde0e44ee12e3c7f314"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\export_handler.py": {
+    "mtime": 1778576137.4294205,
+    "ast_hash": "36be11977656341e2deea71709fb5a3c",
+    "semantic_hash": "36be11977656341e2deea71709fb5a3c"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\io\\__init__.py": {
+    "mtime": 1778153342.2008376,
+    "ast_hash": "6d7f2f174766fe6f8954625cc9d63650",
+    "semantic_hash": "6d7f2f174766fe6f8954625cc9d63650"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\io\\formats.py": {
+    "mtime": 1778769896.0739245,
+    "ast_hash": "881d5fe9130f9a0d109ad980fe9e7a0b",
+    "semantic_hash": "881d5fe9130f9a0d109ad980fe9e7a0b"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\io\\reader.py": {
+    "mtime": 1781860536.2114432,
+    "ast_hash": "9a7ea6a3a86838a2d40aa57a3718df0b",
+    "semantic_hash": "9a7ea6a3a86838a2d40aa57a3718df0b"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\layers\\__init__.py": {
+    "mtime": 1778153342.2008376,
+    "ast_hash": "8bd8e9c25de77903559095858582407f",
+    "semantic_hash": "8bd8e9c25de77903559095858582407f"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\layers\\models.py": {
+    "mtime": 1778769896.0739245,
+    "ast_hash": "be85ea9020418762d7ed081e9c88b3b1",
+    "semantic_hash": "be85ea9020418762d7ed081e9c88b3b1"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\layers\\session.py": {
+    "mtime": 1778769896.0739245,
+    "ast_hash": "587ea1dc4b4f97ff12a7b6d63c3d99df",
+    "semantic_hash": "587ea1dc4b4f97ff12a7b6d63c3d99df"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\layers\\stack.py": {
+    "mtime": 1778769896.074924,
+    "ast_hash": "651d21b31a6ab54ca0818506fe938928",
+    "semantic_hash": "651d21b31a6ab54ca0818506fe938928"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\media\\__init__.py": {
+    "mtime": 1778153342.2023401,
+    "ast_hash": "75ac275794b9c6d05eb408f2ebbd51ea",
+    "semantic_hash": "75ac275794b9c6d05eb408f2ebbd51ea"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\media\\audio_output.py": {
+    "mtime": 1778769896.074924,
+    "ast_hash": "d73997792c368e3c5e43ccef1ee8015d",
+    "semantic_hash": "d73997792c368e3c5e43ccef1ee8015d"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\media\\audio_source.py": {
+    "mtime": 1778153342.203346,
+    "ast_hash": "59839f30e6be629a06eaab43dc202db8",
+    "semantic_hash": "59839f30e6be629a06eaab43dc202db8"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\media\\video_probe.py": {
+    "mtime": 1780476214.6008458,
+    "ast_hash": "f0dc1e453522c2aaf8c3132297b91c04",
+    "semantic_hash": "f0dc1e453522c2aaf8c3132297b91c04"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\media\\video_renderer.py": {
+    "mtime": 1780569854.4003563,
+    "ast_hash": "f1e517129f03260cac6fe288853f0778",
+    "semantic_hash": "f1e517129f03260cac6fe288853f0778"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\media\\video_source.py": {
+    "mtime": 1781795697.4388,
+    "ast_hash": "c5eb9948a5ca59c6a899c74d174ec9c6",
+    "semantic_hash": "c5eb9948a5ca59c6a899c74d174ec9c6"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\media_handler.py": {
+    "mtime": 1779731315.4550664,
+    "ast_hash": "054f238b6b3c2492f69d1974cc0339d4",
+    "semantic_hash": "054f238b6b3c2492f69d1974cc0339d4"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\perf\\__init__.py": {
+    "mtime": 1778153342.2043438,
+    "ast_hash": "3b03267567ccefe34280eddaf9832ebc",
+    "semantic_hash": "3b03267567ccefe34280eddaf9832ebc"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\perf\\calibration.py": {
+    "mtime": 1778673137.1921709,
+    "ast_hash": "0073dd77d2262279acaccfc1d2ff7dc0",
+    "semantic_hash": "0073dd77d2262279acaccfc1d2ff7dc0"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\perf\\hardware.py": {
+    "mtime": 1778153342.2053432,
+    "ast_hash": "d7b335dae5346110728ed6af9ff88907",
+    "semantic_hash": "d7b335dae5346110728ed6af9ff88907"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\perf\\runtime_monitor.py": {
+    "mtime": 1778153342.2053432,
+    "ast_hash": "9f9b9dfb2aecae55adb3ff869132788e",
+    "semantic_hash": "9f9b9dfb2aecae55adb3ff869132788e"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\perf\\runtime_state.py": {
+    "mtime": 1778153342.2053432,
+    "ast_hash": "460453a4fb71f8cd1b56783d0613ed9f",
+    "semantic_hash": "460453a4fb71f8cd1b56783d0613ed9f"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\player\\__init__.py": {
+    "mtime": 1778153342.2063432,
+    "ast_hash": "c397114021ece9fdae649dd82cf1b3b0",
+    "semantic_hash": "c397114021ece9fdae649dd82cf1b3b0"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\player\\controller.py": {
+    "mtime": 1781866026.0481997,
+    "ast_hash": "3ee8d57cd693736f83ffb27410829f71",
+    "semantic_hash": "3ee8d57cd693736f83ffb27410829f71"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\player\\state.py": {
+    "mtime": 1778153342.2071784,
+    "ast_hash": "164be7c5a4f74d7322794677c6ed78a5",
+    "semantic_hash": "164be7c5a4f74d7322794677c6ed78a5"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\preferences.py": {
+    "mtime": 1781873759.3421886,
+    "ast_hash": "5c967067e928fa372013342a1117ce39",
+    "semantic_hash": "5c967067e928fa372013342a1117ce39"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\render\\__init__.py": {
+    "mtime": 1778153342.2076802,
+    "ast_hash": "af6d14d408ef484e949cb72c61474454",
+    "semantic_hash": "af6d14d408ef484e949cb72c61474454"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\render\\gl_viewport.py": {
+    "mtime": 1780565501.9209166,
+    "ast_hash": "6b0cc54a7482a8a5392461af99cbae5c",
+    "semantic_hash": "6b0cc54a7482a8a5392461af99cbae5c"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\render\\shaders\\__init__.py": {
+    "mtime": 1778153342.2076802,
+    "ast_hash": "e4877d2119f555dbd332e186259e1235",
+    "semantic_hash": "e4877d2119f555dbd332e186259e1235"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\save_frame_handler.py": {
+    "mtime": 1781801861.470309,
+    "ast_hash": "9bdfbe43f62cd6576b11bf24b0fa0c4a",
+    "semantic_hash": "9bdfbe43f62cd6576b11bf24b0fa0c4a"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\scan_handler.py": {
+    "mtime": 1781874039.6162868,
+    "ast_hash": "aaa66c495f34d90033e3bd667bec424c",
+    "semantic_hash": "aaa66c495f34d90033e3bd667bec424c"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\sequence\\__init__.py": {
+    "mtime": 1778153342.2096832,
+    "ast_hash": "00125e2f0a401e5df6097abcce45c2e4",
+    "semantic_hash": "00125e2f0a401e5df6097abcce45c2e4"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\sequence\\channels.py": {
+    "mtime": 1780503025.8759747,
+    "ast_hash": "18cf8a833817e60ea07a56bbe06f5406",
+    "semantic_hash": "18cf8a833817e60ea07a56bbe06f5406"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\sequence\\models.py": {
+    "mtime": 1778153342.2096832,
+    "ast_hash": "f896722bb688ec353edd96c212d32b2a",
+    "semantic_hash": "f896722bb688ec353edd96c212d32b2a"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\sequence\\scanner.py": {
+    "mtime": 1778769896.0779238,
+    "ast_hash": "20d9b016d73bc245efb27ec17d5bc3f9",
+    "semantic_hash": "20d9b016d73bc245efb27ec17d5bc3f9"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\sequence\\source_watcher.py": {
+    "mtime": 1778617496.7313406,
+    "ast_hash": "73a6465a7c88b263d3aaab6a29bc5d1e",
+    "semantic_hash": "73a6465a7c88b263d3aaab6a29bc5d1e"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\site_config.py": {
+    "mtime": 1778669367.061257,
+    "ast_hash": "62c50b3920af2de9198ba0de6b852969",
+    "semantic_hash": "62c50b3920af2de9198ba0de6b852969"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\splash.py": {
+    "mtime": 1778587717.8897324,
+    "ast_hash": "ae087b24f95fe75ee54d9327fd682de3",
+    "semantic_hash": "ae087b24f95fe75ee54d9327fd682de3"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\__init__.py": {
+    "mtime": 1778153342.2106829,
+    "ast_hash": "ac06f1d74d54b5c8b92e7122426d6ce6",
+    "semantic_hash": "ac06f1d74d54b5c8b92e7122426d6ce6"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\brackets_overlay.py": {
+    "mtime": 1778153342.2106829,
+    "ast_hash": "87450d2f57ddcc109a70a6ad338264c3",
+    "semantic_hash": "87450d2f57ddcc109a70a6ad338264c3"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\burnin_editor.py": {
+    "mtime": 1780392280.0188806,
+    "ast_hash": "b63fea648fce1dbe5d505cb44876ce14",
+    "semantic_hash": "b63fea648fce1dbe5d505cb44876ce14"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\burnin_overlay.py": {
+    "mtime": 1780392280.0188806,
+    "ast_hash": "35af1380b6d5b2fa1e94f449c2e0423d",
+    "semantic_hash": "35af1380b6d5b2fa1e94f449c2e0423d"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\channel_menu.py": {
+    "mtime": 1780499402.2259405,
+    "ast_hash": "bebf0c135d719a9b60d788142d7546eb",
+    "semantic_hash": "bebf0c135d719a9b60d788142d7546eb"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\channel_panel.py": {
+    "mtime": 1778153342.2116842,
+    "ast_hash": "390ab6f66d7e978db4e2597ef4cb6fa8",
+    "semantic_hash": "390ab6f66d7e978db4e2597ef4cb6fa8"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\color_panel.py": {
+    "mtime": 1779731315.4550664,
+    "ast_hash": "1196ee0a48a1b20d8c2b95afada85225",
+    "semantic_hash": "1196ee0a48a1b20d8c2b95afada85225"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\comment_panel.py": {
+    "mtime": 1778153342.2116842,
+    "ast_hash": "f8f1e78d5c0360b8ce15e2d6695357e0",
+    "semantic_hash": "f8f1e78d5c0360b8ce15e2d6695357e0"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\compare_band.py": {
+    "mtime": 1779274883.5337305,
+    "ast_hash": "d03a20d749402bf848c89c0ca1040c5d",
+    "semantic_hash": "d03a20d749402bf848c89c0ca1040c5d"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\compare_labels_overlay.py": {
+    "mtime": 1778587281.765409,
+    "ast_hash": "9bd30196719a6bd5d47213a137b5b351",
+    "semantic_hash": "9bd30196719a6bd5d47213a137b5b351"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\contact_sheet_band.py": {
+    "mtime": 1779274883.5347304,
+    "ast_hash": "7004c1499b013fbdc59e10d6ffc0e04c",
+    "semantic_hash": "7004c1499b013fbdc59e10d6ffc0e04c"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\drop_action_dialog.py": {
+    "mtime": 1778153342.2126832,
+    "ast_hash": "550f0adc74230859ceda456e9e7ed3d3",
+    "semantic_hash": "550f0adc74230859ceda456e9e7ed3d3"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\drop_zone.py": {
+    "mtime": 1778153342.2126832,
+    "ast_hash": "999f9de04234304e86a35342cb5c9c24",
+    "semantic_hash": "999f9de04234304e86a35342cb5c9c24"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\flush_indicator.py": {
+    "mtime": 1778617496.7313406,
+    "ast_hash": "b78e6e7d3d2377568a100c9c1d702ef8",
+    "semantic_hash": "b78e6e7d3d2377568a100c9c1d702ef8"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\frame_display.py": {
+    "mtime": 1778153342.2126832,
+    "ast_hash": "22d2b09d396f7da179cae328e1615fc1",
+    "semantic_hash": "22d2b09d396f7da179cae328e1615fc1"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\header_strip.py": {
+    "mtime": 1779274883.5347304,
+    "ast_hash": "b0b59c91615193b17bf21234a86d1ceb",
+    "semantic_hash": "b0b59c91615193b17bf21234a86d1ceb"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\icons.py": {
+    "mtime": 1780568865.1195347,
+    "ast_hash": "9fe07f3ee8af063ee2423453f238920c",
+    "semantic_hash": "9fe07f3ee8af063ee2423453f238920c"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\layer_bar.py": {
+    "mtime": 1778153342.2136831,
+    "ast_hash": "9c3ac5b88ec746107d1bf3f25fe4e2ff",
+    "semantic_hash": "9c3ac5b88ec746107d1bf3f25fe4e2ff"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\layer_panel.py": {
+    "mtime": 1780476214.601845,
+    "ast_hash": "d89391154a9e6682e376685e5abb47ae",
+    "semantic_hash": "d89391154a9e6682e376685e5abb47ae"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\main_window.py": {
+    "mtime": 1780568113.0693333,
+    "ast_hash": "4c21376e5bb427e5d80845aee2c110eb",
+    "semantic_hash": "4c21376e5bb427e5d80845aee2c110eb"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\preferences_dialog.py": {
+    "mtime": 1781874695.2097387,
+    "ast_hash": "e3741989d6db72996eb80c57f877fec7",
+    "semantic_hash": "e3741989d6db72996eb80c57f877fec7"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\save_frame_dialog.py": {
+    "mtime": 1779107188.4087036,
+    "ast_hash": "8826bf77f82e159c6fa3d35574a4524a",
+    "semantic_hash": "8826bf77f82e159c6fa3d35574a4524a"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\sequence_picker.py": {
+    "mtime": 1778587281.7674081,
+    "ast_hash": "f353bd441402d7a15ff81f22515a757e",
+    "semantic_hash": "f353bd441402d7a15ff81f22515a757e"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\shortcuts_dialog.py": {
+    "mtime": 1778576137.439927,
+    "ast_hash": "73e1d437dc630b81b93832479ed66134",
+    "semantic_hash": "73e1d437dc630b81b93832479ed66134"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\status_bar.py": {
+    "mtime": 1780568096.035226,
+    "ast_hash": "8da0b5318a97b0f389e2eb611f6fe897",
+    "semantic_hash": "8da0b5318a97b0f389e2eb611f6fe897"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\status_format.py": {
+    "mtime": 1778170894.30627,
+    "ast_hash": "ba15f5300944b8925124773eaade3f39",
+    "semantic_hash": "ba15f5300944b8925124773eaade3f39"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\theme.py": {
+    "mtime": 1779274883.5372367,
+    "ast_hash": "1492bd1101e8b9e362f442d5c63e7a48",
+    "semantic_hash": "1492bd1101e8b9e362f442d5c63e7a48"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\timeline.py": {
+    "mtime": 1779274883.5372367,
+    "ast_hash": "c453ed2d23b88fc60eba14ac934b48ae",
+    "semantic_hash": "c453ed2d23b88fc60eba14ac934b48ae"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\transport.py": {
+    "mtime": 1780568485.053933,
+    "ast_hash": "170b90e0738c402122b0e1a5733d93f6",
+    "semantic_hash": "170b90e0738c402122b0e1a5733d93f6"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\ui\\viewer_widget.py": {
+    "mtime": 1780392280.0198808,
+    "ast_hash": "552e0dfd18b249b4dab74ad7beff5862",
+    "semantic_hash": "552e0dfd18b249b4dab74ad7beff5862"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\user_prefs.py": {
+    "mtime": 1778673137.193674,
+    "ast_hash": "b63582dbfcfb858f5f3cef667de4b559",
+    "semantic_hash": "b63582dbfcfb858f5f3cef667de4b559"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\__init__.py": {
+    "mtime": 1778153342.2171912,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\conftest.py": {
+    "mtime": 1778769896.078924,
+    "ast_hash": "594e31c2bb24e77d1daadc7a15fafc87",
+    "semantic_hash": "594e31c2bb24e77d1daadc7a15fafc87"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\integration\\__init__.py": {
+    "mtime": 1778153342.2181914,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\integration\\test_controller.py": {
+    "mtime": 1778769896.078924,
+    "ast_hash": "b56ea371a8851f016aa476a7e64bda6d",
+    "semantic_hash": "b56ea371a8851f016aa476a7e64bda6d"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\integration\\test_disk_cache_integration.py": {
+    "mtime": 1778617496.7338426,
+    "ast_hash": "8776759095d9827134af077f96059186",
+    "semantic_hash": "8776759095d9827134af077f96059186"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\__init__.py": {
+    "mtime": 1778153342.2181914,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_annotation_overlay_math.py": {
+    "mtime": 1778153342.219194,
+    "ast_hash": "df76b1a40a97685a34677efec25897ef",
+    "semantic_hash": "df76b1a40a97685a34677efec25897ef"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_annotation_persistence.py": {
+    "mtime": 1779107188.4107034,
+    "ast_hash": "849912849c097c63fbced516cbfa0cd6",
+    "semantic_hash": "849912849c097c63fbced516cbfa0cd6"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_annotation_store.py": {
+    "mtime": 1779107188.4107034,
+    "ast_hash": "5c1991ce8cfbfe392179fffd7fcfe4bd",
+    "semantic_hash": "5c1991ce8cfbfe392179fffd7fcfe4bd"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_annotation_stroke.py": {
+    "mtime": 1778153342.219194,
+    "ast_hash": "725f15bc18974f260f27665d1f2d7d8c",
+    "semantic_hash": "725f15bc18974f260f27665d1f2d7d8c"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_annotation_timeline_transport.py": {
+    "mtime": 1778153342.219194,
+    "ast_hash": "379e6764d6f244461561d054c5968295",
+    "semantic_hash": "379e6764d6f244461561d054c5968295"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_annotation_toolbar.py": {
+    "mtime": 1778153342.220194,
+    "ast_hash": "429e81a97a60c197132dd8f13b43e496",
+    "semantic_hash": "429e81a97a60c197132dd8f13b43e496"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_app_paths.py": {
+    "mtime": 1778673137.194678,
+    "ast_hash": "639fde5068c30aab478df183cd7784e8",
+    "semantic_hash": "639fde5068c30aab478df183cd7784e8"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_audio_output.py": {
+    "mtime": 1778153342.220194,
+    "ast_hash": "0e4b8f12a0683ae832c515564156e297",
+    "semantic_hash": "0e4b8f12a0683ae832c515564156e297"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_audio_source.py": {
+    "mtime": 1778153342.220194,
+    "ast_hash": "7216c5848e73427bd2da59898d9358aa",
+    "semantic_hash": "7216c5848e73427bd2da59898d9358aa"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_auto_detect.py": {
+    "mtime": 1779731315.4575686,
+    "ast_hash": "15fff2e8fc01615d195d56ada8f31968",
+    "semantic_hash": "15fff2e8fc01615d195d56ada8f31968"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_brackets_overlay.py": {
+    "mtime": 1778153342.220194,
+    "ast_hash": "b743985dfa2aa1c2915aec858c56bb29",
+    "semantic_hash": "b743985dfa2aa1c2915aec858c56bb29"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_burnin_contact_sheet.py": {
+    "mtime": 1780392280.0208807,
+    "ast_hash": "8630becc730e75b9f25022fa8788baf0",
+    "semantic_hash": "8630becc730e75b9f25022fa8788baf0"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_burnin_editor.py": {
+    "mtime": 1780392280.0213826,
+    "ast_hash": "d3ca9fba626b61214458b212238e2aa3",
+    "semantic_hash": "d3ca9fba626b61214458b212238e2aa3"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_burnin_model.py": {
+    "mtime": 1780392280.0213826,
+    "ast_hash": "b10bc45c105bbf605de98dd460d72b9b",
+    "semantic_hash": "b10bc45c105bbf605de98dd460d72b9b"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_burnin_overlay.py": {
+    "mtime": 1780392280.0213826,
+    "ast_hash": "bc800f5e38eeda3815ce087ea81b3312",
+    "semantic_hash": "bc800f5e38eeda3815ce087ea81b3312"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_burnin_renderer.py": {
+    "mtime": 1780392280.022385,
+    "ast_hash": "1f0700fc34d0bbaf09f00a99a525c3f7",
+    "semantic_hash": "1f0700fc34d0bbaf09f00a99a525c3f7"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_burnin_storage.py": {
+    "mtime": 1780392280.022385,
+    "ast_hash": "8a2021b3a1ac0fe8621148cbbf012ad8",
+    "semantic_hash": "8a2021b3a1ac0fe8621148cbbf012ad8"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_calibration.py": {
+    "mtime": 1778153342.221194,
+    "ast_hash": "fc112e917fd494fd61667fbceb8b6f12",
+    "semantic_hash": "fc112e917fd494fd61667fbceb8b6f12"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_channel_groups.py": {
+    "mtime": 1780503025.876595,
+    "ast_hash": "2d570bebf23825ba88afa9a7d8ec5888",
+    "semantic_hash": "2d570bebf23825ba88afa9a7d8ec5888"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_channel_menu.py": {
+    "mtime": 1780499402.2269404,
+    "ast_hash": "91177626ab9b9dc701b3695bf620209b",
+    "semantic_hash": "91177626ab9b9dc701b3695bf620209b"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_channel_selection.py": {
+    "mtime": 1778153342.221194,
+    "ast_hash": "6673b94a4af4c8ba585ad0408bc4a129",
+    "semantic_hash": "6673b94a4af4c8ba585ad0408bc4a129"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_cli_overrides.py": {
+    "mtime": 1778153342.221194,
+    "ast_hash": "5c81605e8d2dca77c86d43652c0e97da",
+    "semantic_hash": "5c81605e8d2dca77c86d43652c0e97da"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_comment.py": {
+    "mtime": 1778153342.2221942,
+    "ast_hash": "ae7df6c084d5c0926a8e6c67355f19df",
+    "semantic_hash": "ae7df6c084d5c0926a8e6c67355f19df"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_comment_persistence.py": {
+    "mtime": 1779107188.4114516,
+    "ast_hash": "27de2a9d95d28b89fb81e0a48926e9ce",
+    "semantic_hash": "27de2a9d95d28b89fb81e0a48926e9ce"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_comment_store.py": {
+    "mtime": 1779107188.4114516,
+    "ast_hash": "c28a523038ef93875abd17bbfb9746fc",
+    "semantic_hash": "c28a523038ef93875abd17bbfb9746fc"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_compare.py": {
+    "mtime": 1778153342.223195,
+    "ast_hash": "1dcc4f03e23372f6932aab20b0dee9ae",
+    "semantic_hash": "1dcc4f03e23372f6932aab20b0dee9ae"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_contact_sheet_state.py": {
+    "mtime": 1779107188.4114516,
+    "ast_hash": "fb50d6842fd9058b0a826d77de288d3b",
+    "semantic_hash": "fb50d6842fd9058b0a826d77de288d3b"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_controller_fps.py": {
+    "mtime": 1778153342.223195,
+    "ast_hash": "04c65480bcb1933010e8255fe3590fcb",
+    "semantic_hash": "04c65480bcb1933010e8255fe3590fcb"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_controller_fps_signals.py": {
+    "mtime": 1778153342.223195,
+    "ast_hash": "282821b456f0e0b651275204e4f6b28a",
+    "semantic_hash": "282821b456f0e0b651275204e4f6b28a"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_controller_play_direction.py": {
+    "mtime": 1778153342.223195,
+    "ast_hash": "21beb7f32e828a4c961601c7b4e23a7b",
+    "semantic_hash": "21beb7f32e828a4c961601c7b4e23a7b"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_controller_prefetch.py": {
+    "mtime": 1778153342.224194,
+    "ast_hash": "8cfb1470cc6a1e560b12b49426f6d4b7",
+    "semantic_hash": "8cfb1470cc6a1e560b12b49426f6d4b7"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_disk_cache.py": {
+    "mtime": 1778661428.9217775,
+    "ast_hash": "760749b74a5b611717c8d9b6e59c96e1",
+    "semantic_hash": "760749b74a5b611717c8d9b6e59c96e1"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_ephemeral_alpha.py": {
+    "mtime": 1778153342.224194,
+    "ast_hash": "9115fb86b81d8c87671457dcab41e026",
+    "semantic_hash": "9115fb86b81d8c87671457dcab41e026"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_ephemeral_manager.py": {
+    "mtime": 1778153342.224194,
+    "ast_hash": "6b3376725235b3325a947c8214841d73",
+    "semantic_hash": "6b3376725235b3325a947c8214841d73"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_export_dialog.py": {
+    "mtime": 1778153342.224194,
+    "ast_hash": "02cdbb5b4e05d8a38464d6876fd0ec7f",
+    "semantic_hash": "02cdbb5b4e05d8a38464d6876fd0ec7f"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_export_engine.py": {
+    "mtime": 1781801913.1181085,
+    "ast_hash": "fff61d2b5a19a81d023cceac71b7d05d",
+    "semantic_hash": "fff61d2b5a19a81d023cceac71b7d05d"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_export_renderer.py": {
+    "mtime": 1778153342.2251942,
+    "ast_hash": "f9b696916389243e2422d2479e16258f",
+    "semantic_hash": "f9b696916389243e2422d2479e16258f"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_export_settings.py": {
+    "mtime": 1778153342.2251942,
+    "ast_hash": "9eb99a63167828cb1e125b5709aebf41",
+    "semantic_hash": "9eb99a63167828cb1e125b5709aebf41"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_export_writers.py": {
+    "mtime": 1778153342.2251942,
+    "ast_hash": "d1c9f8019ddfa69960367e4cef7d4671",
+    "semantic_hash": "d1c9f8019ddfa69960367e4cef7d4671"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_formats.py": {
+    "mtime": 1778153342.2251942,
+    "ast_hash": "3411c44350fed719b79bf2a48242f27b",
+    "semantic_hash": "3411c44350fed719b79bf2a48242f27b"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_frame_cache.py": {
+    "mtime": 1778153342.2251942,
+    "ast_hash": "64e781a716a2145bdca5ec5eff98fac2",
+    "semantic_hash": "64e781a716a2145bdca5ec5eff98fac2"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_frame_display.py": {
+    "mtime": 1778153342.2261941,
+    "ast_hash": "6ff68f50525ba44f2aa125f2102130e5",
+    "semantic_hash": "6ff68f50525ba44f2aa125f2102130e5"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_gpu_processor.py": {
+    "mtime": 1778153342.2261941,
+    "ast_hash": "ca8ecfcff23a526b57be6cb134276e2a",
+    "semantic_hash": "ca8ecfcff23a526b57be6cb134276e2a"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_hw_profile.py": {
+    "mtime": 1778153342.226696,
+    "ast_hash": "d5d3da3ec001d3993bb28f2f44d9ac9c",
+    "semantic_hash": "d5d3da3ec001d3993bb28f2f44d9ac9c"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_icons.py": {
+    "mtime": 1778153342.226696,
+    "ast_hash": "efaff30d1992cb633147e3e65c6ec6dc",
+    "semantic_hash": "efaff30d1992cb633147e3e65c6ec6dc"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_layer_bar_geometry.py": {
+    "mtime": 1778153342.226696,
+    "ast_hash": "adb98e585d294fd37d03f735eb5fd79d",
+    "semantic_hash": "adb98e585d294fd37d03f735eb5fd79d"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_layer_basics.py": {
+    "mtime": 1778153342.226696,
+    "ast_hash": "c387040782593d4cf02bc1fabf9aae14",
+    "semantic_hash": "c387040782593d4cf02bc1fabf9aae14"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_layer_panel.py": {
+    "mtime": 1778769896.0799239,
+    "ast_hash": "bc7a6744b3b02f3c467be8518e983a98",
+    "semantic_hash": "bc7a6744b3b02f3c467be8518e983a98"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_layer_panel_audio.py": {
+    "mtime": 1778153342.2276993,
+    "ast_hash": "0c95bfdc91ea799f6ef4ece6875a35cc",
+    "semantic_hash": "0c95bfdc91ea799f6ef4ece6875a35cc"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_layer_stack.py": {
+    "mtime": 1778153342.2276993,
+    "ast_hash": "e4908c4bbfa0cccdfeff2ad7cc2c5473",
+    "semantic_hash": "e4908c4bbfa0cccdfeff2ad7cc2c5473"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_layer_still.py": {
+    "mtime": 1778153342.2276993,
+    "ast_hash": "538d22233c34d4770c2552d0d523c6e2",
+    "semantic_hash": "538d22233c34d4770c2552d0d523c6e2"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_layer_video.py": {
+    "mtime": 1778153342.2276993,
+    "ast_hash": "8f46d15acc74803a8e37f7e08c84d44d",
+    "semantic_hash": "8f46d15acc74803a8e37f7e08c84d44d"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_main_window_burnin_menu.py": {
+    "mtime": 1780392280.023385,
+    "ast_hash": "9b3efd2ac3c9d820db03c7f8fbad906f",
+    "semantic_hash": "9b3efd2ac3c9d820db03c7f8fbad906f"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_main_window_status_bar.py": {
+    "mtime": 1778153342.228702,
+    "ast_hash": "591b5b127ba3c8726d2bd2cc98a482e3",
+    "semantic_hash": "591b5b127ba3c8726d2bd2cc98a482e3"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_master_frame_cache.py": {
+    "mtime": 1781874071.4770348,
+    "ast_hash": "769b3beb3bc39d4979c5f5e35c34b2f4",
+    "semantic_hash": "769b3beb3bc39d4979c5f5e35c34b2f4"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_missing_frames.py": {
+    "mtime": 1778153342.228702,
+    "ast_hash": "78795b13fb2cc81ecf8e5e62a845ea07",
+    "semantic_hash": "78795b13fb2cc81ecf8e5e62a845ea07"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_network_staging.py": {
+    "mtime": 1781859823.6831403,
+    "ast_hash": "a2a862333b8b1aaabc72d7781b37caca",
+    "semantic_hash": "a2a862333b8b1aaabc72d7781b37caca"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_ocio_manager.py": {
+    "mtime": 1778153342.228702,
+    "ast_hash": "61315134ee87bda63a736d4252a7613a",
+    "semantic_hash": "61315134ee87bda63a736d4252a7613a"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_overlay_ephemeral.py": {
+    "mtime": 1778153342.2297025,
+    "ast_hash": "37257d6de7fedc4e7fc0321e63032ed5",
+    "semantic_hash": "37257d6de7fedc4e7fc0321e63032ed5"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_pbo_ring.py": {
+    "mtime": 1778153342.2297025,
+    "ast_hash": "5d311693644612bb7798ee2e8aa5e18f",
+    "semantic_hash": "5d311693644612bb7798ee2e8aa5e18f"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_preferences_ephemeral.py": {
+    "mtime": 1778153342.2297025,
+    "ast_hash": "3527e2d2c528ac955a9d18e65f87e9a0",
+    "semantic_hash": "3527e2d2c528ac955a9d18e65f87e9a0"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_reader.py": {
+    "mtime": 1778153342.2307024,
+    "ast_hash": "b725bdc807b064ae717e2f1cf07383b2",
+    "semantic_hash": "b725bdc807b064ae717e2f1cf07383b2"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_runtime_monitor.py": {
+    "mtime": 1778153342.2307024,
+    "ast_hash": "1b4c4f21b275375bdddc384c6dc0a21c",
+    "semantic_hash": "1b4c4f21b275375bdddc384c6dc0a21c"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_runtime_state.py": {
+    "mtime": 1778153342.2307024,
+    "ast_hash": "c34288327282e29bcd2303c2408eed52",
+    "semantic_hash": "c34288327282e29bcd2303c2408eed52"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_save_frame.py": {
+    "mtime": 1779107188.4124537,
+    "ast_hash": "0d03dc6ba26e611b4b1bafb4ca4eb423",
+    "semantic_hash": "0d03dc6ba26e611b4b1bafb4ca4eb423"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_scanner.py": {
+    "mtime": 1778153342.2317023,
+    "ast_hash": "01206f974a26714327f5a2311f1e9961",
+    "semantic_hash": "01206f974a26714327f5a2311f1e9961"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_site_config.py": {
+    "mtime": 1778674439.2951353,
+    "ast_hash": "7853d555a8896b22e84bda1136f99004",
+    "semantic_hash": "7853d555a8896b22e84bda1136f99004"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_smoke.py": {
+    "mtime": 1778153342.2317023,
+    "ast_hash": "a33887278ac3123b7040cc9a2bf51de9",
+    "semantic_hash": "a33887278ac3123b7040cc9a2bf51de9"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_source_watcher.py": {
+    "mtime": 1778617496.7348452,
+    "ast_hash": "9e88b8bd349e0ff36e6647eaa9f7b6d7",
+    "semantic_hash": "9e88b8bd349e0ff36e6647eaa9f7b6d7"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_status_format.py": {
+    "mtime": 1778153342.2317023,
+    "ast_hash": "5331752a18b80d77fc7fecc05e6fd768",
+    "semantic_hash": "5331752a18b80d77fc7fecc05e6fd768"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_toolbar_ephemeral.py": {
+    "mtime": 1778153342.2317023,
+    "ast_hash": "1a450fd32dc0b993bb80a9dfa273260a",
+    "semantic_hash": "1a450fd32dc0b993bb80a9dfa273260a"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_user_prefs.py": {
+    "mtime": 1778674960.0979934,
+    "ast_hash": "15760b652d419c80127d5e18b4a1fc13",
+    "semantic_hash": "15760b652d419c80127d5e18b4a1fc13"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_video_probe.py": {
+    "mtime": 1780476214.601845,
+    "ast_hash": "0f3142530abcc57ae53265dd0dff21b7",
+    "semantic_hash": "0f3142530abcc57ae53265dd0dff21b7"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_video_renderer.py": {
+    "mtime": 1780569891.839784,
+    "ast_hash": "18adf518d115b027d7f71f01e3951455",
+    "semantic_hash": "18adf518d115b027d7f71f01e3951455"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_video_source.py": {
+    "mtime": 1781795329.3716714,
+    "ast_hash": "bfda4d13d4d666bad60634f705ee4e7b",
+    "semantic_hash": "bfda4d13d4d666bad60634f705ee4e7b"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_worker_pool.py": {
+    "mtime": 1778769896.0799239,
+    "ast_hash": "ab93e31435559ea2b4f233c7853e231a",
+    "semantic_hash": "ab93e31435559ea2b4f233c7853e231a"
+  },
+  "C:\\dev\\FlickPlayer\\tests\\unit\\test_zoom_anchor.py": {
+    "mtime": 1778153342.2337022,
+    "ast_hash": "1c04782675482dc485b9a87d9290e747",
+    "semantic_hash": "1c04782675482dc485b9a87d9290e747"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\bench_app_decode.py": {
+    "mtime": 1781860905.240398,
+    "ast_hash": "ea671fac350da9a484114c184a631131",
+    "semantic_hash": "ea671fac350da9a484114c184a631131"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\bench_cold_only.py": {
+    "mtime": 1780503149.6632216,
+    "ast_hash": "46bcfdbbfd46ca9cf403ad522a665893",
+    "semantic_hash": "46bcfdbbfd46ca9cf403ad522a665893"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\bench_decode_at.py": {
+    "mtime": 1780510306.4999342,
+    "ast_hash": "eef3eeb5f75a755d3ecfd09648795032",
+    "semantic_hash": "eef3eeb5f75a755d3ecfd09648795032"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\bench_exr_cold.py": {
+    "mtime": 1781859427.8103788,
+    "ast_hash": "5ecbfbcc0869f6bd8461e5fe85cb712c",
+    "semantic_hash": "5ecbfbcc0869f6bd8461e5fe85cb712c"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\bench_exr_parallel.py": {
+    "mtime": 1781860335.9826262,
+    "ast_hash": "a61752694acf9b7dad74b93d1ce1f59b",
+    "semantic_hash": "a61752694acf9b7dad74b93d1ce1f59b"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\bench_exr_probe.py": {
+    "mtime": 1780502174.195235,
+    "ast_hash": "0a938672cfb88b7182b555d2caa44cd2",
+    "semantic_hash": "0a938672cfb88b7182b555d2caa44cd2"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\bench_flick_decode.py": {
+    "mtime": 1780502401.1433153,
+    "ast_hash": "de3bc465fd1b77b15bc9812450c65ded",
+    "semantic_hash": "de3bc465fd1b77b15bc9812450c65ded"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\bench_full_chain.py": {
+    "mtime": 1780513413.4043949,
+    "ast_hash": "7b7053de48ce4b579569d5b417ac1e6a",
+    "semantic_hash": "7b7053de48ce4b579569d5b417ac1e6a"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\bench_io_breakdown.py": {
+    "mtime": 1780504260.461825,
+    "ast_hash": "8b0a83f546ae9ec80d21bef5842f6f7a",
+    "semantic_hash": "8b0a83f546ae9ec80d21bef5842f6f7a"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\bench_mmap_strategy.py": {
+    "mtime": 1780504115.8701742,
+    "ast_hash": "3344c5a6b8217c886795c70767a75678",
+    "semantic_hash": "3344c5a6b8217c886795c70767a75678"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\bench_network_decode.py": {
+    "mtime": 1780502300.5457554,
+    "ast_hash": "544e951ae1a2b2bca8865449cc7aba67",
+    "semantic_hash": "544e951ae1a2b2bca8865449cc7aba67"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\bench_oiio_vs_pyexr.py": {
+    "mtime": 1780504381.8154645,
+    "ast_hash": "bab121c8b2b195d5d16dad6657b23ba6",
+    "semantic_hash": "bab121c8b2b195d5d16dad6657b23ba6"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\bench_overlapped_read.py": {
+    "mtime": 1780505125.706179,
+    "ast_hash": "3515577e3bf7d71cb0056de48686d0db",
+    "semantic_hash": "3515577e3bf7d71cb0056de48686d0db"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\bench_pyopenexr.py": {
+    "mtime": 1780504203.6329677,
+    "ast_hash": "f04db4519bdf948abb502676c7eede2e",
+    "semantic_hash": "f04db4519bdf948abb502676c7eede2e"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\bench_rgb_vs_rgba.py": {
+    "mtime": 1780502576.7916946,
+    "ast_hash": "a381cfa370d97d9bc6078121804b1928",
+    "semantic_hash": "a381cfa370d97d9bc6078121804b1928"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\bench_smb_throughput.py": {
+    "mtime": 1781861002.9387186,
+    "ast_hash": "06b51789bcb448757813a9183b96b665",
+    "semantic_hash": "06b51789bcb448757813a9183b96b665"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\bench_staging_e2e.py": {
+    "mtime": 1780507939.991783,
+    "ast_hash": "5d2bd045809acf71860d2b590be4ce4d",
+    "semantic_hash": "5d2bd045809acf71860d2b590be4ce4d"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\bench_staging_e2e2.py": {
+    "mtime": 1780508267.4321568,
+    "ast_hash": "da384cf51a15eeeac12dd55df242dd3b",
+    "semantic_hash": "da384cf51a15eeeac12dd55df242dd3b"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\bench_staging_value.py": {
+    "mtime": 1780507461.1034834,
+    "ast_hash": "aca49ae34cd472b0f863d6cbc39b69c2",
+    "semantic_hash": "aca49ae34cd472b0f863d6cbc39b69c2"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\bench_video_cache.py": {
+    "mtime": 1780511675.4382665,
+    "ast_hash": "4290355c1ff862f0be01b60cc4423c66",
+    "semantic_hash": "4290355c1ff862f0be01b60cc4423c66"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\bench_video_decode.py": {
+    "mtime": 1780510055.5968974,
+    "ast_hash": "9e5e970aad5418fe8625dab0586a8359",
+    "semantic_hash": "9e5e970aad5418fe8625dab0586a8359"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\bench_video_prefetch.py": {
+    "mtime": 1780513083.7907045,
+    "ast_hash": "a0dbe0089a094e130e16075bb7105372",
+    "semantic_hash": "a0dbe0089a094e130e16075bb7105372"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\debug_staged_read.py": {
+    "mtime": 1780508098.096037,
+    "ast_hash": "3a5885cac49e4d159770d124e75ee1e8",
+    "semantic_hash": "3a5885cac49e4d159770d124e75ee1e8"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\probe_exr_structure.py": {
+    "mtime": 1781859352.1453452,
+    "ast_hash": "7eb3807469234c20377a868d6b6fd5f2",
+    "semantic_hash": "7eb3807469234c20377a868d6b6fd5f2"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\probe_pyexr_channels.py": {
+    "mtime": 1780504338.1493692,
+    "ast_hash": "75251fc57bba9335d6d38827b636aeec",
+    "semantic_hash": "75251fc57bba9335d6d38827b636aeec"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\probe_video.py": {
+    "mtime": 1780509947.3095567,
+    "ast_hash": "0a50f4c9e9ad52845b162d8d02c6bb16",
+    "semantic_hash": "0a50f4c9e9ad52845b162d8d02c6bb16"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\regen_splash.py": {
+    "mtime": 1778587717.8907337,
+    "ast_hash": "dc41c9dcfc46d8a9f26026adfd0f40d3",
+    "semantic_hash": "dc41c9dcfc46d8a9f26026adfd0f40d3"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\repro_eviction.py": {
+    "mtime": 1781800851.3188396,
+    "ast_hash": "c399dbe0cd8d23cd6f0d6e114b4aef62",
+    "semantic_hash": "c399dbe0cd8d23cd6f0d6e114b4aef62"
+  },
+  "C:\\dev\\FlickPlayer\\tools\\repro_prefetch_order.py": {
+    "mtime": 1781862586.4034803,
+    "ast_hash": "de34fd16f5f5e7e4703c2112b8efcc5b",
+    "semantic_hash": "de34fd16f5f5e7e4703c2112b8efcc5b"
+  },
+  "C:\\dev\\FlickPlayer\\AGENTS.md": {
+    "mtime": 1780410273.7013352,
+    "ast_hash": "13b9342d28ece314f4640ea5b4e2c0d6",
+    "semantic_hash": "13b9342d28ece314f4640ea5b4e2c0d6"
+  },
+  "C:\\dev\\FlickPlayer\\BUILD.md": {
+    "mtime": 1780410273.7013352,
+    "ast_hash": "0a96964f9fe85843675c80ff3fa9acb8",
+    "semantic_hash": "0a96964f9fe85843675c80ff3fa9acb8"
+  },
+  "C:\\dev\\FlickPlayer\\CLAUDE.md": {
+    "mtime": 1781795000.0798588,
+    "ast_hash": "d6395d4c8eadd1afa7ccdf3b0ec885d3",
+    "semantic_hash": "d6395d4c8eadd1afa7ccdf3b0ec885d3"
+  },
+  "C:\\dev\\FlickPlayer\\README.md": {
+    "mtime": 1778153342.1510715,
+    "ast_hash": "cd4acc562496b8c89b7926f8ccbe9c21",
+    "semantic_hash": "cd4acc562496b8c89b7926f8ccbe9c21"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\branding\\PHILOSOPHY.md": {
+    "mtime": 1778153342.1652925,
+    "ast_hash": "b666133e27bff295e3908980db0da35c",
+    "semantic_hash": "b666133e27bff295e3908980db0da35c"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\disk_cache_roadmap.md": {
+    "mtime": 1778617496.7263405,
+    "ast_hash": "0b07deda768538ac906f788e2f115c65",
+    "semantic_hash": "0b07deda768538ac906f788e2f115c65"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\plans\\2026-04-24-img-player-v1-plan.md": {
+    "mtime": 1778153342.167799,
+    "ast_hash": "0f2cf8f7f0e5601a4db34a35f2dbac98",
+    "semantic_hash": "0f2cf8f7f0e5601a4db34a35f2dbac98"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\plans\\2026-04-26-ui-reskin-charter-plan.md": {
+    "mtime": 1778153342.167799,
+    "ast_hash": "1dde35c096d2222c62364d8afa512ba7",
+    "semantic_hash": "1dde35c096d2222c62364d8afa512ba7"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\plans\\2026-04-27-hw-adaptive-perf-plan.md": {
+    "mtime": 1778153342.167799,
+    "ast_hash": "a64771539b41e66a51a8a7294a8fc37d",
+    "semantic_hash": "a64771539b41e66a51a8a7294a8fc37d"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\specs\\2026-04-24-img-player-v1-design.md": {
+    "mtime": 1778153342.1688013,
+    "ast_hash": "b8bdd1853611263fc673152c9fee2345",
+    "semantic_hash": "b8bdd1853611263fc673152c9fee2345"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\specs\\2026-04-26-hw-adaptive-perf-design.md": {
+    "mtime": 1778153342.1688013,
+    "ast_hash": "73c068d0c1bf82a87df28030cd3e3a92",
+    "semantic_hash": "73c068d0c1bf82a87df28030cd3e3a92"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\specs\\2026-04-26-ui-reskin-charter-design.md": {
+    "mtime": 1778153342.1698015,
+    "ast_hash": "70bd51cb3ca55c71c5a3939f11083d4e",
+    "semantic_hash": "70bd51cb3ca55c71c5a3939f11083d4e"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\specs\\2026-04-27-annotations-design.md": {
+    "mtime": 1778153342.1698015,
+    "ast_hash": "b2dda37fedcbcb7fa5628bbe57c9a08f",
+    "semantic_hash": "b2dda37fedcbcb7fa5628bbe57c9a08f"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\specs\\2026-04-28-ephemeral-annotations-design.md": {
+    "mtime": 1778153342.1698015,
+    "ast_hash": "ab396f9e74de82b4200e0e2a021144aa",
+    "semantic_hash": "ab396f9e74de82b4200e0e2a021144aa"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\specs\\2026-04-29-multi-layer-design.md": {
+    "mtime": 1778153342.1698015,
+    "ast_hash": "5cfdeb89f24ed128e6d45fc4035b3880",
+    "semantic_hash": "5cfdeb89f24ed128e6d45fc4035b3880"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\website\\changelog.html": {
+    "mtime": 1781874844.6272717,
+    "ast_hash": "d1125748a5bb21dcf9f8cf47331afc66",
+    "semantic_hash": "d1125748a5bb21dcf9f8cf47331afc66"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\website\\index.html": {
+    "mtime": 1781874876.524214,
+    "ast_hash": "fa327dd444e1b469333b47844bc5b3a4",
+    "semantic_hash": "fa327dd444e1b469333b47844bc5b3a4"
+  },
+  "C:\\dev\\FlickPlayer\\environment.yml": {
+    "mtime": 1778593856.6419303,
+    "ast_hash": "e8fff7bbf8843e47188ba3ef34dd4285",
+    "semantic_hash": "e8fff7bbf8843e47188ba3ef34dd4285"
+  },
+  "C:\\dev\\FlickPlayer\\import_profile.txt": {
+    "mtime": 1779274883.5237215,
+    "ast_hash": "43f09239cbfb6ceb3e719d7fd3c75d9c",
+    "semantic_hash": "43f09239cbfb6ceb3e719d7fd3c75d9c"
+  },
+  "C:\\dev\\FlickPlayer\\installer\\README.md": {
+    "mtime": 1778153342.1743069,
+    "ast_hash": "248516353341799c458d168d0cf13474",
+    "semantic_hash": "248516353341799c458d168d0cf13474"
+  },
+  "C:\\dev\\FlickPlayer\\openrv-tech-reference.md": {
+    "mtime": 1778153342.1753058,
+    "ast_hash": "cf372a8f4f419c1cf420482e24fd8a2b",
+    "semantic_hash": "cf372a8f4f419c1cf420482e24fd8a2b"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\BASELINE.md": {
+    "mtime": 1778153342.1753058,
+    "ast_hash": "ccf4723252a744ed9bc88de925e9da7c",
+    "semantic_hash": "ccf4723252a744ed9bc88de925e9da7c"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\PBO_NOTES.md": {
+    "mtime": 1778153342.1753058,
+    "ast_hash": "68710ecb10bb24e24d36c95795d9790b",
+    "semantic_hash": "68710ecb10bb24e24d36c95795d9790b"
+  },
+  "C:\\dev\\FlickPlayer\\perf\\README.md": {
+    "mtime": 1778153342.1753058,
+    "ast_hash": "f9c43d30b187e4407105da005f7e69da",
+    "semantic_hash": "f9c43d30b187e4407105da005f7e69da"
+  },
+  "C:\\dev\\FlickPlayer\\ui_mockup.html": {
+    "mtime": 1778153342.2337022,
+    "ast_hash": "9655cfaf3e2ce8cf2fb729fa1930f0e7",
+    "semantic_hash": "9655cfaf3e2ce8cf2fb729fa1930f0e7"
+  },
+  "C:\\dev\\FlickPlayer\\_real_menubar.png": {
+    "mtime": 1779274883.5087135,
+    "ast_hash": "debff75dbc45fb75d8b8808f2bb57cf6",
+    "semantic_hash": "debff75dbc45fb75d8b8808f2bb57cf6"
+  },
+  "C:\\dev\\FlickPlayer\\assets\\icons_sheet02.png": {
+    "mtime": 1778153342.160578,
+    "ast_hash": "450cf2e08cd8e30544d8a9a6823a48d1",
+    "semantic_hash": "450cf2e08cd8e30544d8a9a6823a48d1"
+  },
+  "C:\\dev\\FlickPlayer\\assets\\icons_sheet03.png": {
+    "mtime": 1778153342.1652925,
+    "ast_hash": "fd69c7340fd40e72f9f729bff80c0770",
+    "semantic_hash": "fd69c7340fd40e72f9f729bff80c0770"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\branding\\flick_icon_1024.png": {
+    "mtime": 1778153342.1662924,
+    "ast_hash": "fcfb67bb590e51099c5e5aea2d8ccd06",
+    "semantic_hash": "fcfb67bb590e51099c5e5aea2d8ccd06"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\branding\\flick_icon_16.png": {
+    "mtime": 1778153342.1667957,
+    "ast_hash": "becabf6424d8b824d68ca24486ef47e7",
+    "semantic_hash": "becabf6424d8b824d68ca24486ef47e7"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\branding\\flick_icon_256.png": {
+    "mtime": 1778153342.1667957,
+    "ast_hash": "5bf12cdfbec0458707354dbe400370f0",
+    "semantic_hash": "5bf12cdfbec0458707354dbe400370f0"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\branding\\flick_icon_32.png": {
+    "mtime": 1778153342.1667957,
+    "ast_hash": "9b8331999f04ec3676409ef4093ed183",
+    "semantic_hash": "9b8331999f04ec3676409ef4093ed183"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\branding\\flick_icon_64.png": {
+    "mtime": 1778153342.1667957,
+    "ast_hash": "bf5224f73b9bfc7543b7e6ac0d973410",
+    "semantic_hash": "bf5224f73b9bfc7543b7e6ac0d973410"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\website\\screenshots\\annotation.gif": {
+    "mtime": 1778576137.4069033,
+    "ast_hash": "3990dbd4c38f0de8d4302842038b66ac",
+    "semantic_hash": "3990dbd4c38f0de8d4302842038b66ac"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\website\\screenshots\\burninsEditor.png": {
+    "mtime": 1780481134.616679,
+    "ast_hash": "782842acbd3e93c3f5cd99af8ce5960b",
+    "semantic_hash": "782842acbd3e93c3f5cd99af8ce5960b"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\website\\screenshots\\cache channels.png": {
+    "mtime": 1778576137.4069033,
+    "ast_hash": "90481239a4120a0f3bacc5d56b326573",
+    "semantic_hash": "90481239a4120a0f3bacc5d56b326573"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\website\\screenshots\\color_management.png": {
+    "mtime": 1778576137.4079032,
+    "ast_hash": "87cef8ee5e75d7b1531d4a4760589748",
+    "semantic_hash": "87cef8ee5e75d7b1531d4a4760589748"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\website\\screenshots\\comment.png": {
+    "mtime": 1778576137.408405,
+    "ast_hash": "8439f85d16eb0499c5323d7d6db4e2d5",
+    "semantic_hash": "8439f85d16eb0499c5323d7d6db4e2d5"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\website\\screenshots\\compare_tool.png": {
+    "mtime": 1778576137.408405,
+    "ast_hash": "dfa32da8eb0eabc8e5b4076c499db16f",
+    "semantic_hash": "dfa32da8eb0eabc8e5b4076c499db16f"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\website\\screenshots\\contact sheet mode.png": {
+    "mtime": 1779731315.4305537,
+    "ast_hash": "6921ff0c38208c8c83c809062236c40f",
+    "semantic_hash": "6921ff0c38208c8c83c809062236c40f"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\website\\screenshots\\export_sequence.png": {
+    "mtime": 1778576137.409407,
+    "ast_hash": "4bb14a08149bc8a46a76b9f116e17795",
+    "semantic_hash": "4bb14a08149bc8a46a76b9f116e17795"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\website\\screenshots\\hero.jpg": {
+    "mtime": 1778576137.4114091,
+    "ast_hash": "b018c3ae901c9e61186fc1365cfbb7d4",
+    "semantic_hash": "b018c3ae901c9e61186fc1365cfbb7d4"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\website\\screenshots\\hero.png": {
+    "mtime": 1779731315.4515624,
+    "ast_hash": "e99072befb51fa7b2b77ddbc09f16092",
+    "semantic_hash": "e99072befb51fa7b2b77ddbc09f16092"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\website\\screenshots\\save_frame_as.png": {
+    "mtime": 1778576137.4179113,
+    "ast_hash": "65926b189dd0d59b3e2a70b5df224d7f",
+    "semantic_hash": "65926b189dd0d59b3e2a70b5df224d7f"
+  },
+  "C:\\dev\\FlickPlayer\\docs\\website\\screenshots\\timeline.png": {
+    "mtime": 1778576137.4189138,
+    "ast_hash": "3322f47d27df044487f854290a38975e",
+    "semantic_hash": "3322f47d27df044487f854290a38975e"
+  },
+  "C:\\dev\\FlickPlayer\\src\\img_player\\assets\\splash.png": {
+    "mtime": 1781874914.3287828,
+    "ast_hash": "2c3240a5cafd73f79adc7c3ac8256e8e",
+    "semantic_hash": "2c3240a5cafd73f79adc7c3ac8256e8e"
   }
 }
