@@ -168,6 +168,43 @@ class TestStagingManager:
         finally:
             mgr.shutdown()
 
+    def test_skips_staging_for_large_files(
+        self, staging_root: Path, fake_network_dir: Path, monkeypatch,
+    ) -> None:
+        """Heavy multichannel EXRs skip the raw-file staging copy so
+        they don't double the cold network traffic — the per-channel
+        disk cache serves re-access instead (2026-06-18)."""
+        # Lower the cap so a tiny test file counts as "large".
+        monkeypatch.setattr(
+            "img_player.cache.network_staging._STAGE_MAX_FILE_BYTES", 100,
+        )
+        files = _make_files(fake_network_dir, 3, size_bytes=512)  # > 100
+        mgr = NetworkStagingManager(staging_root, max_total_gb=1.0)
+        mgr.start()
+        try:
+            queued = mgr.register_sequence(fake_network_dir, files)
+            assert queued == 0, "large files should not be staged"
+            assert mgr.staged_path_for(files[0]) is None
+        finally:
+            mgr.shutdown()
+
+    def test_stages_small_files_under_cap(
+        self, staging_root: Path, fake_network_dir: Path, monkeypatch,
+    ) -> None:
+        """Files under the cap still stage — the size guard must not
+        over-skip small beauty EXRs / DPX / TIFF."""
+        monkeypatch.setattr(
+            "img_player.cache.network_staging._STAGE_MAX_FILE_BYTES", 10_000,
+        )
+        files = _make_files(fake_network_dir, 2, size_bytes=512)  # < 10000
+        mgr = NetworkStagingManager(staging_root, max_total_gb=1.0)
+        mgr.start()
+        try:
+            queued = mgr.register_sequence(fake_network_dir, files)
+            assert queued == 2, "small files should still stage"
+        finally:
+            mgr.shutdown()
+
     def test_returns_none_for_unregistered(
         self, staging_root: Path, tmp_path: Path,
     ) -> None:

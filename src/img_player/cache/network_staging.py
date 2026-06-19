@@ -66,6 +66,23 @@ from typing import Callable
 log = logging.getLogger(__name__)
 
 
+# Files larger than this skip the raw-file staging copy. Heavy
+# multichannel EXRs (AOV-laden Maya / Arnold renders — 100s of MB
+# each) would otherwise DOUBLE the cold network traffic: the decode
+# worker reads the file direct from the share AND the staging worker
+# copies the same file again, for negligible gain. The per-channel
+# disk cache (lz4 half-float, ~13 MB/frame for RGBA, filled for every
+# channel group by the idle alt-prefetch) already serves re-access
+# faster than re-decoding a staged raw file. Small beauty EXRs / DPX
+# / TIFF stay staged — the copy is cheap and the 3× local-decode
+# speedup is worth it. 64 MB cleanly separates a beauty pass
+# (~5-20 MB) from an AOV dump (100-500 MB). Added 2026-06-18 after a
+# 325 MB/frame 48-channel CHARS render took >1 min to load (the
+# double-read), while OpenRV — which reads RGBA progressively without
+# staging — showed it in seconds.
+_STAGE_MAX_FILE_BYTES = 64 * 1024 ** 2
+
+
 # ---------------------------------------------------------------------------
 # Network-path detection
 # ---------------------------------------------------------------------------
@@ -232,6 +249,23 @@ class NetworkStagingManager:
             return 0
         if not is_network_path(directory):
             log.debug("[staging] %s is not a network path; not staging", directory)
+            return 0
+        # Heavy multichannel frames (big EXRs): skip the raw-file copy
+        # so we don't double the cold network traffic. The first file
+        # is representative — a render sequence is uniform. See
+        # ``_STAGE_MAX_FILE_BYTES``.
+        try:
+            first_size = files[0].stat().st_size if files else 0
+        except OSError:
+            first_size = 0
+        if first_size > _STAGE_MAX_FILE_BYTES:
+            log.info(
+                "[staging] %s: ~%.0f MB/file > %.0f MB cap — skipping "
+                "raw-file staging (per-channel disk cache serves "
+                "re-access; avoids doubling cold network traffic)",
+                directory.name, first_size / 1024**2,
+                _STAGE_MAX_FILE_BYTES / 1024**2,
+            )
             return 0
         seq_hash = _sequence_hash(directory)
         with self._lock:
