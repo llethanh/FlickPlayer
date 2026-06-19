@@ -582,6 +582,67 @@ class TestAltChannelProgress:
         finally:
             cache.shutdown()
 
+    def _aov_seq(self, names: tuple[str, ...]) -> SequenceInfo:
+        frames = tuple(
+            FrameInfo(path=Path(f"/fake/{n}.exr"), frame_number=n)
+            for n in range(1001, 1011)
+        )
+        return SequenceInfo(
+            base_name="x", extension=".exr", directory=Path("/fake"),
+            padding=4, frames=frames, width=64, height=64,
+            channel_names=names,
+        )
+
+    def test_alt_prefetch_suppressed_for_aov_dump(self, qtbot) -> None:
+        """The 2026-06-19 fix: an AOV-heavy EXR (> 8 channel groups)
+        suppresses the auto alt-channel prefetch. Each AOV decode
+        re-reads the whole single-part multichannel file, so
+        pre-caching dozens of them floods the workers + RAM and
+        starves the active channel (the 'cache fills from the middle,
+        RAM crawls, cache N > frame count' report)."""
+        names = (
+            "R", "G", "B",
+            "albedo.R", "albedo.G", "albedo.B",
+            "diffuse.R", "diffuse.G", "diffuse.B",
+            "specular.R", "specular.G", "specular.B",
+            "sss.R", "sss.G", "sss.B",
+            "emission.R", "emission.G", "emission.B",
+            "Z",
+            "N.X", "N.Y", "N.Z",
+            "P.X", "P.Y", "P.Z",
+            "crypto00.R", "crypto00.G", "crypto00.B",
+            "crypto01.R", "crypto01.G", "crypto01.B",
+        )
+        from img_player.sequence.channels import group_channels
+        assert len(group_channels(names)) > 8  # precondition
+        seq = self._aov_seq(names)
+        layer = self._layer_with_active(seq, "RGB")
+        stack = LayerStack()
+        stack.add(layer)
+        cache = MasterFrameCache(stack, num_workers=1)
+        try:
+            assert cache._alt_groups_for_layer(layer) == (), (
+                "AOV-dump EXR should suppress the alt-channel prefetch"
+            )
+        finally:
+            cache.shutdown()
+
+    def test_alt_prefetch_kept_for_light_multichannel(self, qtbot) -> None:
+        """A light multichannel plate (≤ 8 groups) keeps the
+        convenience pre-cache."""
+        seq = self._multi_aov_seq()  # RGB + albedo = 2 groups
+        layer = self._layer_with_active(seq, "RGB")
+        stack = LayerStack()
+        stack.add(layer)
+        cache = MasterFrameCache(stack, num_workers=1)
+        try:
+            groups = cache._alt_groups_for_layer(layer)
+            # albedo survives (RGB is active, excluded).
+            assert len(groups) == 1
+            assert groups[0][0] == "albedo"
+        finally:
+            cache.shutdown()
+
     def test_real_frames_under_active_signature_count(self, qtbot) -> None:
         """Sanity: the *active* group's bar advances when real frames
         land under the live signature. Belt-and-braces — covers the

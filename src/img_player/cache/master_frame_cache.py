@@ -66,6 +66,21 @@ log = logging.getLogger(__name__)
 # scrub-back into a wait-timer poll.
 _NEAR_REAR_WINDOW = 8
 
+# Above this many channel groups, the background alt-channel prefetch
+# is suppressed. A single-part multichannel EXR (Maya/Arnold AOV dump:
+# RGBA + crypto + denoised + N/P + …) interleaves every AOV per
+# scanline, so decoding ANY group re-reads + re-decompresses the WHOLE
+# file. Pre-caching 40+ groups × N frames therefore costs (groups × N)
+# full-file reads — ruinous over the network (each ~325 MB) and a CPU
+# sink even locally. It also floods the worker pool with low-priority
+# decodes that starve the active channel and explode the RAM cache
+# with stale-signature variants (the 2026-06-19 "cache fills from the
+# middle / RAM crawls / cache N > frame count" report). A light
+# multichannel plate (RGBA + Z + a couple of AOVs) stays under the cap
+# and keeps the convenience pre-cache; AOV-heavy dumps decode their
+# AOVs on demand when the user actually selects one.
+_ALT_PREFETCH_MAX_GROUPS = 8
+
 # How many frames before the loop end we start protecting the loop's
 # first frames from eviction. Mirrors the controller's forward
 # prefetch window so the wrap target is warm exactly when playback is
@@ -1402,6 +1417,11 @@ class MasterFrameCache:
         from img_player.sequence.channels import group_channels
         groups = group_channels(layer.sequence.channel_names)
         if len(groups) <= 1:
+            return ()
+        # AOV-dump guard: suppress the auto pre-cache when the file has
+        # many groups (each one re-reads the whole multichannel EXR).
+        # See ``_ALT_PREFETCH_MAX_GROUPS``.
+        if len(groups) > _ALT_PREFETCH_MAX_GROUPS:
             return ()
         active_label = (
             layer.channel_selection.active.label
