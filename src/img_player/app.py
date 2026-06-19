@@ -324,6 +324,7 @@ class ImgPlayerApp:
             budget_bytes=cache_budget_bytes,
             num_workers=num_workers,
             disk_cache=disk_cache,
+            network_decode_workers=self._prefs.network_decode_workers,
         )
         # Network staging cache: bulk-copy network-source frames to a
         # local SSD so the image readers (OIIO / PyOpenEXR / DPX /

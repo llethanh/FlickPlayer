@@ -514,6 +514,15 @@ def apply_scan_result(app: ImgPlayerApp, path: Path, result: object) -> None:
     # ``channel_selection`` field stays ``None``, causing the
     # cache to decode the reader's RGB(A) default rather than
     # what the menu shows.
+    # Pick up the (possibly just-changed) network-decode-concurrency
+    # pref before the prefetch wave load_sequence kicks off, so a
+    # Preferences tweak applies on this open without a restart.
+    try:
+        app._cache.set_network_decode_workers(
+            app._prefs.network_decode_workers,
+        )
+    except AttributeError:
+        pass  # FrameCache path has no limiter
     app._controller.load_sequence(seq)
     # If the multi-pick gave us extra sequences (single-folder picker
     # with several boxes ticked), append each as a top-of-stack layer

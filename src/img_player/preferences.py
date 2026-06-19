@@ -1010,6 +1010,39 @@ class Preferences:
         _set_user_pref("video_cache.budget_gb", max(0, int(value)))
 
     @property
+    def network_decode_workers(self) -> int:
+        """How many frames to decode **at once** from a NETWORK source
+        (a mapped drive / UNC share).
+
+        Why a separate, smaller limit than the local worker count:
+        decoding a frame from a network share is bottlenecked by the
+        SMB link, not the CPU. Letting all (say) 12-32 decode workers
+        pull frames simultaneously does NOT make the sequence load
+        faster — the link is already saturated — but it *does* scramble
+        the order the cache fills in: a dozen frames are all in flight
+        and finish in whatever order the file server happens to return
+        them, so the cache bar fills in scattered chunks from the
+        middle instead of cleanly left-to-right from the playhead. That
+        also delays the moment playback can start (it needs a
+        contiguous run from the cursor).
+
+        Capping network decodes to a handful keeps a couple of reads
+        overlapping (enough to keep the link busy) while the cache
+        fills in playhead order — same total load time, but usable
+        sooner and easier to read. Local (SSD / same-disk) sequences
+        ignore this cap and use the full worker pool, where extra
+        parallelism really is faster.
+
+        Default 4. Set higher if your network link is fast enough that
+        ordering doesn't matter; set to 1 for strictly sequential
+        fill. Applies on the next sequence open."""
+        return max(1, _layered_int("network.decode_workers", 4))
+
+    @network_decode_workers.setter
+    def network_decode_workers(self, value: int) -> None:
+        _set_user_pref("network.decode_workers", max(1, int(value)))
+
+    @property
     def disk_cache_compression(self) -> bool:
         """Legacy bool view of :attr:`disk_cache_compression_mode`.
 

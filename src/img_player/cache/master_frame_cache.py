@@ -81,6 +81,39 @@ _NEAR_REAR_WINDOW = 8
 # AOVs on demand when the user actually selects one.
 _ALT_PREFETCH_MAX_GROUPS = 8
 
+
+class _ConcurrencyLimiter:
+    """A counting gate with a **live-adjustable** limit.
+
+    Unlike a plain ``threading.Semaphore``, the cap can change at
+    runtime (waiters are woken on the new value). Used to throttle how
+    many frames decode *at once* from a network source so the cache
+    fills in playhead order instead of a scramble of all-at-once reads
+    that finish in file-server order. Local decodes don't go through
+    it.
+    """
+
+    def __init__(self, limit: int) -> None:
+        self._limit = max(1, int(limit))
+        self._active = 0
+        self._cond = threading.Condition()
+
+    def set_limit(self, limit: int) -> None:
+        with self._cond:
+            self._limit = max(1, int(limit))
+            self._cond.notify_all()
+
+    def acquire(self) -> None:
+        with self._cond:
+            while self._active >= self._limit:
+                self._cond.wait()
+            self._active += 1
+
+    def release(self) -> None:
+        with self._cond:
+            self._active -= 1
+            self._cond.notify()
+
 # How many frames before the loop end we start protecting the loop's
 # first frames from eviction. Mirrors the controller's forward
 # prefetch window so the wrap target is warm exactly when playback is
@@ -241,10 +274,15 @@ class MasterFrameCache:
         budget_bytes: int = _DEFAULT_BUDGET_BYTES,
         num_workers: int = _DEFAULT_NUM_WORKERS,
         disk_cache: DiskCache | None = None,
+        network_decode_workers: int = 4,
     ) -> None:
         self._stack = stack
         self._budget = budget_bytes
         self._lock = threading.RLock()
+        # Caps concurrent NETWORK-source decodes (see
+        # ``_ConcurrencyLimiter`` + Preferences > network decode
+        # workers). Local decodes bypass it for full parallelism.
+        self._net_limiter = _ConcurrencyLimiter(network_decode_workers)
         if _DIAG_EVICT:
             log.info(
                 "[diag-evict] eviction diagnostics ENABLED "
@@ -1065,6 +1103,12 @@ class MasterFrameCache:
         scoring)."""
         with self._lock:
             self._current_frame = master_frame
+
+    def set_network_decode_workers(self, n: int) -> None:
+        """Live-update the concurrent-network-decode cap (Preferences
+        > network decode workers). Takes effect immediately for
+        in-flight prefetch waves."""
+        self._net_limiter.set_limit(n)
 
     def set_direction(self, direction: int) -> None:
         """+1 forward / -1 reverse — drives the eviction skew."""
@@ -2651,9 +2695,22 @@ class MasterFrameCache:
                     )
                     self._evict_if_over_budget()
                 return
+        # Throttle concurrent NETWORK reads so the cache fills in
+        # playhead order instead of a scramble of all-at-once reads
+        # that finish in file-server order (Preferences > network
+        # decode workers). Local reads bypass the gate. The gate wraps
+        # ONLY the read — the cheap RAM/store work below stays fully
+        # parallel.
+        from img_player.cache.network_staging import (  # noqa: PLC0415
+            is_network_path,
+        )
+        _net_read = is_network_path(path)
+        if _net_read:
+            self._net_limiter.acquire()
         try:
             arr = read_frame(path, channels=channels)
         except FrameReadError as err:
+            self._net_limiter.release() if _net_read else None
             log.warning(
                 "decode failed master=%d path=%s: %s",
                 master_frame, path, err,
@@ -2680,6 +2737,10 @@ class MasterFrameCache:
                 self._frames[key] = placeholder
                 self._missing.add(key)
             return
+        # Network read succeeded — free the slot before the (local,
+        # cheap) compose/store work so the next network frame can start.
+        if _net_read:
+            self._net_limiter.release()
 
         if strip_alpha and arr.ndim == 3 and arr.shape[2] == 4:
             # Slice the alpha channel out + ensure the result is

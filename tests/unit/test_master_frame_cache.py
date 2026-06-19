@@ -97,6 +97,65 @@ class TestResolution:
 
 
 # ============================================================================
+# Network decode concurrency limiter
+# ============================================================================
+
+
+class TestConcurrencyLimiter:
+    """The 2026-06-19 network-fill-order fix: cap concurrent network
+    decodes so the cache fills in playhead order. The gate must block
+    past its limit and honour a live resize."""
+
+    def test_blocks_past_limit_and_resizes_live(self) -> None:
+        import threading
+        import time
+
+        from img_player.cache.master_frame_cache import _ConcurrencyLimiter
+
+        lim = _ConcurrencyLimiter(1)
+        lim.acquire()  # only slot taken
+        got: list[int] = []
+
+        def worker() -> None:
+            lim.acquire()
+            got.append(1)
+            lim.release()
+
+        t = threading.Thread(target=worker)
+        t.start()
+        time.sleep(0.1)
+        assert got == [], "worker should block past the limit of 1"
+        # Live resize to 2 opens a slot → the worker proceeds.
+        lim.set_limit(2)
+        t.join(timeout=1.0)
+        assert got == [1], "worker should run after the limit is raised"
+        lim.release()
+
+    def test_release_unblocks_a_waiter(self) -> None:
+        import threading
+        import time
+
+        from img_player.cache.master_frame_cache import _ConcurrencyLimiter
+
+        lim = _ConcurrencyLimiter(1)
+        lim.acquire()
+        got: list[int] = []
+
+        def worker() -> None:
+            lim.acquire()
+            got.append(1)
+            lim.release()
+
+        t = threading.Thread(target=worker)
+        t.start()
+        time.sleep(0.1)
+        assert got == []
+        lim.release()  # free the slot → waiter proceeds
+        t.join(timeout=1.0)
+        assert got == [1]
+
+
+# ============================================================================
 # Eviction scoring (loop-mode window)
 # ============================================================================
 

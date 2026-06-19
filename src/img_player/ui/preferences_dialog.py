@@ -767,6 +767,85 @@ class _VideoCachePage(QWidget):
         return True
 
 
+class _NetworkPage(QWidget):
+    """Network image-loading settings — how many frames to decode at
+    once from a network share."""
+
+    def __init__(
+        self,
+        prefs: Preferences,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._prefs = prefs
+        self._initial = prefs.network_decode_workers
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        title = QLabel("Network loading")
+        title.setStyleSheet("font-size: 14px; font-weight: 600;")
+        layout.addWidget(title)
+
+        intro = QLabel(
+            "When a sequence lives on a network share (a mapped drive "
+            "or UNC path), decoding a frame is limited by the network "
+            "link, not the CPU. Letting every decode worker pull frames "
+            "at once does NOT load the sequence any faster — the link "
+            "is already saturated — but it scrambles the order the "
+            "cache fills in: a dozen frames are all in flight and "
+            "finish in whatever order the file server returns them, so "
+            "the cache bar fills in scattered chunks from the middle "
+            "instead of cleanly left-to-right from the playhead (which "
+            "also delays when playback can start).\n\n"
+            "Capping concurrent network decodes keeps a couple of reads "
+            "overlapping — enough to keep the link busy — while the "
+            "cache fills in playhead order. Same total load time, "
+            "usable sooner. Local (SSD / same-disk) sequences ignore "
+            "this and use the full worker pool, where more parallelism "
+            "really is faster."
+        )
+        intro.setWordWrap(True)
+        intro.setStyleSheet("color: #aaa;")
+        layout.addWidget(intro)
+
+        lbl = QLabel("Concurrent network decodes")
+        lbl.setStyleSheet("font-weight: 600; margin-top: 6px;")
+        layout.addWidget(lbl)
+
+        row = QHBoxLayout()
+        self._spin = QSpinBox()
+        # 1 = strictly sequential fill; 32 = effectively unlimited for
+        # a typical worker pool. 4 is the balanced default.
+        self._spin.setRange(1, 32)
+        self._spin.setSuffix(" frames at once")
+        self._spin.setValue(self._initial)
+        row.addWidget(self._spin)
+        row.addStretch(1)
+        layout.addLayout(row)
+
+        hint = QLabel(
+            "<i>Default 4. Lower = cleaner left-to-right fill; 1 = "
+            "strictly sequential. Higher only helps if your link is "
+            "fast enough that fill order doesn't matter. Takes effect "
+            "on the next sequence open.</i>"
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(hint)
+
+        layout.addStretch(1)
+
+    def apply(self) -> bool:
+        new = int(self._spin.value())
+        if new == self._initial:
+            return False
+        self._prefs.network_decode_workers = new
+        self._initial = new
+        return True
+
+
 class _DiskCachePage(QWidget):
     """Disk-cache settings — enable/disable, location, budget, clear.
 
@@ -1243,6 +1322,10 @@ class PreferencesDialog(QDialog):
         self._add_section(
             "Video cache",
             _VideoCachePage(prefs, parent=self),
+        )
+        self._add_section(
+            "Network loading",
+            _NetworkPage(prefs, parent=self),
         )
         self._add_section(
             "Disk cache",
