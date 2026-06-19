@@ -47,8 +47,8 @@
   <div class="ctas">
     <a
       class="btn btn-primary"
-      href="https://github.com/llethanh/FlickPlayer/releases/download/v1.8.6/FlickPlayer_v1.8.6.zip"
-    >Download for Windows — v1.8.6</a>
+      href="https://github.com/llethanh/FlickPlayer/releases/download/v1.8.7/FlickPlayer_v1.8.7.zip"
+    >Download for Windows — v1.8.7</a>
     <a class="btn btn-ghost" href="#features">See features →</a>
   </div>
   <p class="dl-note" style="margin-top: var(--s-sm); font-size: 0.9em; opacity: 0.6;">
@@ -743,20 +743,23 @@
 <section id="changelog" class="changelog-teaser">
   <h2>What's <span class="accent">new</span>.</h2>
   <p class="lede">
-    Latest release: <strong>v1.8.6</strong> — <strong>export video
-    layers</strong>. Decoding a <code>.mov</code> / <code>.mp4</code>
-    source to a sequence or a reel used to crash with "OpenImageIO
-    could not find a format reader" — a video layer's synthetic
-    sequence points every frame at the same container, and the export
-    was handing that to the still-image loader. The renderer now
-    detects a video source and decodes each frame through PyAV (the
-    same decoder the live viewport uses) before the OCIO / resize /
-    annotation / burn-in steps, including the A/B compare bake.
-    Follows <strong>v1.8.5</strong>, where cache eviction started
-    following the playhead — no more hole behind the cursor on long
-    sequences in loop playback, the timeline start is evicted first.
-    The full history — every public release, what changed, why it
-    changed — lives on its own page.
+    Latest release: <strong>v1.8.7</strong> — <strong>faster, cleaner
+    EXR review over the network</strong>. A heavy multichannel render
+    (a 48-channel, 326&nbsp;MB/frame Maya AOV dump) used to choke the
+    cache: the background channel pre-cache tried to decode every AOV
+    group, and since a single-part ZIPS EXR interleaves all AOVs per
+    scanline, each one re-read the whole 326&nbsp;MB file — flooding
+    the workers and exploding the RAM cache. Flick now skips the auto
+    AOV pre-cache above 8 channel groups (AOVs decode on demand), and
+    a new throttle caps concurrent <em>network</em> decodes so the
+    cache bar fills cleanly left-to-right from the playhead instead of
+    in scattered chunks — playback can start sooner, same total load
+    time. Tunable in <strong>Preferences → Network loading</strong>.
+    Plus: no more double network read on big EXRs, and the EXR decode
+    path now scales across the worker pool. Follows
+    <strong>v1.8.6</strong>'s video-layer export. The full history —
+    every public release, what changed, why it changed — lives on its
+    own page.
   </p>
   <p style="margin-top: var(--s-md);">
     <a class="btn btn-primary" href="changelog.html">Read the full changelog →</a>
@@ -766,7 +769,7 @@
 <!-- ============================================================ Footer -->
 <footer id="download">
   <p>
-    <strong>Flick Player</strong> · open-source VFX sequence viewer · <a href="https://github.com/llethanh/FlickPlayer/releases/download/v1.8.6/FlickPlayer_v1.8.6.zip">Download v1.8.6</a> · <a href="https://github.com/llethanh/FlickPlayer">GitHub</a> · <a href="changelog.html">Changelog</a>
+    <strong>Flick Player</strong> · open-source VFX sequence viewer · <a href="https://github.com/llethanh/FlickPlayer/releases/download/v1.8.7/FlickPlayer_v1.8.7.zip">Download v1.8.7</a> · <a href="https://github.com/llethanh/FlickPlayer">GitHub</a> · <a href="changelog.html">Changelog</a>
   </p>
   <p style="margin-top: var(--s-sm);">
     Built with PySide6, OpenColorIO, OpenImageIO and PyAV. Designed for Windows.

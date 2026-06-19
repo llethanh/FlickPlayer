@@ -44,6 +44,23 @@
 
     <article class="release">
       <div class="release-meta">
+        <span class="ver">v1.8.7</span>
+        <span class="date">2026-06-19</span>
+        <span class="tagline">Faster, cleaner EXR review over the network — AOV dumps no longer choke the cache, and the cache bar fills in order from the playhead.</span>
+      </div>
+      <div class="release-body">
+        <h4>Network EXR review</h4>
+        <ul>
+          <li class="fix"><strong>Heavy multichannel EXRs no longer drown the cache.</strong> Opening a 48-channel, 326 MB/frame Maya/Arnold AOV render made the cache fill from the middle, the RAM crawl, and the "cache N / 55" counter sail past the frame count. Root cause: the background channel pre-cache queued a decode for <em>every</em> AOV group — and a single-part ZIPS EXR interleaves all AOVs per scanline, so decoding any one group re-reads the <em>whole</em> 326 MB file. Pre-caching ~47 groups × N frames over the network flooded the worker pool and exploded the RAM cache with one signature per (frame × AOV). Flick now suppresses the auto AOV pre-cache above 8 channel groups: an AOV dump decodes its passes on demand when you actually pick one, while a light plate (RGBA + Z + a couple of AOVs) keeps the convenience pre-cache.</li>
+          <li class="new"><strong>The cache bar now fills left-to-right from the playhead, not in scattered chunks.</strong> On a network share, decoding is limited by the link, not the CPU — so letting every worker pull frames at once doesn't load faster, it just scrambles the fill order (a dozen frames finish in whatever order the file server returns them). A new throttle caps concurrent <em>network</em> decodes (default 4) so a couple of reads overlap to keep the link busy while the cache fills in playhead order — same total load time, but playback can start sooner. Local sequences keep the full worker pool. Tunable in <strong>Preferences → Network loading</strong> with a 1–32 slider.</li>
+          <li class="fix"><strong>No more double network read on big EXRs.</strong> The local staging copy used to read each 326 MB file a second time while the decoder was already reading it — for AOV dumps that the per-channel disk cache already covers. Staging is now skipped for frames over 64 MB, halving the cold network traffic.</li>
+          <li class="perf"><strong>EXR decode scales across the worker pool.</strong> Switched the EXR read path to OpenImageIO's channel-subset reader, which releases the GIL during decode (the old PyOpenEXR path held it through the zlib decompress, so 12+ workers barely scaled). On a local AOV sequence this is ~5× faster batch decode; over a saturated network the win is in the fill order above.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <div class="release-meta">
         <span class="ver">v1.8.6</span>
         <span class="date">2026-06-18</span>
         <span class="tagline">Export video layers — decoding a .mov / .mp4 source to a sequence or reel no longer crashes.</span>
