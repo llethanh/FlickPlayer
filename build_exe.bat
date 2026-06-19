@@ -77,10 +77,17 @@ if errorlevel 1 (
     )
 )
 
-REM ---- Clean previous build outputs -----------------------------------
+REM ---- Clean the PyInstaller work cache -------------------------------
 REM (pushd already done at the top of the file.)
+REM Wipe ``build\`` every time: a stale ``build\`` cache made a bumped
+REM version ship under the PREVIOUS version's folder name (v1.8.6 built
+REM as v1.8.5). PyInstaller rewrites it cleanly when it's gone.
+REM
+REM Do NOT wipe ``dist\`` — each release lives in its own
+REM ``FlickPlayer_v<X.Y.Z>\`` folder + ``.zip``, so building a new
+REM version leaves the older bundles in place for local archiving.
+REM ``--noconfirm`` below overwrites only THIS version's folder.
 if exist build  rmdir /s /q build
-if exist dist   rmdir /s /q dist
 
 REM ---- Run PyInstaller -------------------------------------------------
 echo.
