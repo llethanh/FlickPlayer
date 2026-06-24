@@ -212,6 +212,124 @@ class TestCancel:
 
 
 # ============================================================================
+# Parallel image-sequence pipeline
+# ============================================================================
+
+
+class TestParallelImageSeq:
+    """Image-sequence export fans the OCIO/resize/bake/encode tail out
+    across a thread pool once the frame count clears the pipeline depth
+    (``2 × workers``). Decode stays serial; each worker writes its own
+    numbered file, so out-of-order completion must still be correct."""
+
+    def _video_engine(self, store, out_dir: Path, n: int, monkeypatch, workers: int = 2):
+        # Force the parallel branch deterministically regardless of the
+        # host core count: workers=2 → pipeline floor 4 → n>4 parallels.
+        monkeypatch.setattr(
+            ExportEngine, "_worker_count", staticmethod(lambda: workers),
+        )
+        vid = out_dir.parent / "clip.mp4"
+        _make_test_video(vid, n_frames=n)
+        layer = Layer.from_video(probe_video(vid))
+        seq = layer.sequence
+        settings = ExportSettings(
+            output_dir=out_dir,
+            in_frame=seq.first_frame, out_frame=seq.last_frame,
+            format_key="png", start_frame=0,
+            apply_display_transform=False, bake_annotations=False,
+        )
+        engine = ExportEngine(
+            settings=settings, sequence=seq, annotation_store=store,
+            ocio_manager=None, source_colorspace=None, display=None, view=None,
+        )
+        return engine
+
+    def test_parallel_export_writes_every_frame_once(
+        self, store, tmp_path: Path, _qapp, monkeypatch,
+    ) -> None:
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        n = 12
+        engine = self._video_engine(store, out_dir, n, monkeypatch)
+        result = engine.run()
+        assert result.canceled is False
+        assert result.frames_written == n
+        files = sorted(out_dir.glob("*.png"))
+        assert len(files) == n
+        # Exactly one file per source-frame index — no collisions or
+        # holes under concurrent out-of-order writes.
+        numbers = sorted(int(p.stem.split(".")[-1]) for p in files)
+        assert numbers == list(range(n))
+        # Every file is a real 64×48 image (not a 1×1 stub from a race).
+        import OpenImageIO as oiio
+        for p in files:
+            inp = oiio.ImageInput.open(str(p))
+            assert inp is not None
+            spec = inp.spec()
+            inp.close()
+            assert (spec.width, spec.height) == (64, 48)
+
+    def test_parallel_matches_serial_output(
+        self, store, tmp_path: Path, _qapp, monkeypatch,
+    ) -> None:
+        """Parallel and serial paths must produce byte-identical files
+        for the same source — the pipeline only changes scheduling."""
+        n = 12
+        par_dir = tmp_path / "par"
+        par_dir.mkdir()
+        par = self._video_engine(store, par_dir, n, monkeypatch)
+        par.run()
+        # Re-export the SAME clip through the serial branch by raising
+        # the worker count so the pipeline floor (2 × workers) exceeds
+        # the frame count — the run() gate then picks _run_serial.
+        ser_dir = tmp_path / "ser"
+        ser_dir.mkdir()
+        monkeypatch.setattr(
+            ExportEngine, "_worker_count", staticmethod(lambda: 50),
+        )
+        vid = par_dir.parent / "clip.mp4"  # the clip _video_engine wrote
+        layer = Layer.from_video(probe_video(vid))
+        seq = layer.sequence
+        settings = ExportSettings(
+            output_dir=ser_dir,
+            in_frame=seq.first_frame, out_frame=seq.last_frame,
+            format_key="png", start_frame=0,
+            apply_display_transform=False, bake_annotations=False,
+        )
+        ser = ExportEngine(
+            settings=settings, sequence=seq, annotation_store=store,
+            ocio_manager=None, source_colorspace=None, display=None, view=None,
+        )
+        ser.run()
+        par_files = sorted(par_dir.glob("*.png"))
+        ser_files = sorted(ser_dir.glob("*.png"))
+        assert len(par_files) == len(ser_files) == n
+        for pf, sf in zip(par_files, ser_files):
+            assert pf.read_bytes() == sf.read_bytes()
+
+    def test_parallel_cancel_reports_canceled_and_is_discardable(
+        self, store, tmp_path: Path, _qapp, monkeypatch,
+    ) -> None:
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        n = 12
+        engine = self._video_engine(store, out_dir, n, monkeypatch)
+
+        def _cb(current: int, _t: int, _f: float) -> None:
+            if current == 2:
+                engine.cancel()
+
+        result = engine.run(progress_cb=_cb)
+        assert result.canceled is True
+        # Cancel stops promptly: a few in-flight frames may flush, but
+        # never the whole sequence. On-disk count matches the report.
+        assert 2 <= result.frames_written < n
+        assert len(list(out_dir.glob("*.png"))) == result.frames_written
+        engine.discard_partial_output()
+        assert list(out_dir.glob("*.png")) == []
+
+
+# ============================================================================
 # Error path
 # ============================================================================
 

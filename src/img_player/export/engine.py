@@ -13,9 +13,12 @@ up a QThread.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import time
+from collections import deque
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -37,6 +40,14 @@ log = logging.getLogger(__name__)
 # output_size when the user picks a custom resolution that lands odd.
 def _even(n: int) -> int:
     return n if n % 2 == 0 else n + 1
+
+
+# Upper bound on the image-sequence export worker pool. Both heavy
+# stages (OCIO applyRGB, OIIO encode) release the GIL, so a thread
+# pool scales ~5-7× on 8 workers (measured); beyond that, disk-write
+# contention and the per-frame RAM footprint (one decoded float RGBA
+# frame held in flight per worker) outweigh the gains.
+_EXPORT_MAX_WORKERS = 8
 
 
 @dataclass
@@ -169,34 +180,38 @@ class ExportEngine:
         self._writer.open(settings, out_w, out_h, out_fps)
 
         start = time.monotonic()
-        frames_written = 0
         try:
-            for i in range(settings.total_frames):
-                if self._cancel:
-                    log.info("[export] canceled at frame %d / %d",
-                             i, settings.total_frames)
-                    # Close the writer cleanly so partial files stay
-                    # readable on disk. The orchestrator decides
-                    # whether to keep or discard them via
-                    # :meth:`discard_partial_output` after asking the
-                    # user — auto-deleting here would steal that
-                    # choice.
-                    self._writer.close()
-                    return EngineResult(
-                        output_path=self._writer.output_path(),
-                        frames_written=frames_written,
-                        duration_s=time.monotonic() - start,
-                        canceled=True,
-                    )
-                source_frame = settings.in_frame + i
-                arr = self._renderer.render(source_frame, (out_w, out_h))
-                self._writer.write_frame(arr, i)
-                frames_written += 1
-                if progress_cb is not None:
-                    elapsed = max(1e-6, time.monotonic() - start)
-                    fps_running = frames_written / elapsed
-                    progress_cb(frames_written, settings.total_frames, fps_running)
+            # Image-sequence output writes one independent file per
+            # frame, so the OCIO + resize + bake + encode tail can fan
+            # out across a thread pool (those stages release the GIL).
+            # Video output must stay serial — the container encoder
+            # demands frames in order. Tiny exports also stay serial:
+            # below the pipeline depth the pool can't fill, the thread
+            # overhead isn't worth it, and the serial path gives
+            # frame-exact cancellation (the parallel path can flush a
+            # few already-decoded frames past the cancel point).
+            parallel_floor = self._worker_count() * 2
+            if settings.is_image_sequence and settings.total_frames > parallel_floor:
+                frames_written, canceled = self._run_parallel(
+                    settings, out_w, out_h, start, progress_cb,
+                )
+            else:
+                frames_written, canceled = self._run_serial(
+                    settings, out_w, out_h, start, progress_cb,
+                )
+            # Close the writer cleanly so partial files stay readable on
+            # disk. On cancel the orchestrator decides whether to keep
+            # or discard them via :meth:`discard_partial_output` after
+            # asking the user — auto-deleting here would steal that
+            # choice.
             self._writer.close()
+            if canceled:
+                return EngineResult(
+                    output_path=self._writer.output_path(),
+                    frames_written=frames_written,
+                    duration_s=time.monotonic() - start,
+                    canceled=True,
+                )
             # Optional sidecar copy.
             if (
                 settings.bake_annotations
@@ -232,6 +247,129 @@ class ExportEngine:
                 self._renderer.close()
             except Exception:  # pragma: no cover — defensive
                 log.debug("[export] renderer close failed", exc_info=True)
+
+    # ------------------------------------------------------------------ Loop bodies
+
+    def _run_serial(
+        self,
+        settings: ExportSettings,
+        out_w: int,
+        out_h: int,
+        start: float,
+        progress_cb: Callable[[int, int, float], None] | None,
+    ) -> tuple[int, bool]:
+        """Original in-order loop. Used for video output (the encoder
+        needs frames sequentially) and as the simple reference path.
+
+        Returns ``(frames_written, canceled)``.
+        """
+        frames_written = 0
+        for i in range(settings.total_frames):
+            if self._cancel:
+                log.info("[export] canceled at frame %d / %d",
+                         i, settings.total_frames)
+                return frames_written, True
+            source_frame = settings.in_frame + i
+            arr = self._renderer.render(source_frame, (out_w, out_h))
+            self._writer.write_frame(arr, i)
+            frames_written += 1
+            if progress_cb is not None:
+                elapsed = max(1e-6, time.monotonic() - start)
+                progress_cb(
+                    frames_written, settings.total_frames,
+                    frames_written / elapsed,
+                )
+        return frames_written, False
+
+    def _run_parallel(
+        self,
+        settings: ExportSettings,
+        out_w: int,
+        out_h: int,
+        start: float,
+        progress_cb: Callable[[int, int, float], None] | None,
+    ) -> tuple[int, bool]:
+        """Pipelined loop for image-sequence output.
+
+        The decode stays on this (producer) thread — mandatory for the
+        single non-thread-safe PyAV :class:`VideoSource`, and harmless
+        for OIIO image reads. Each decoded frame's heavy tail
+        (:meth:`FrameRenderer.finalize` → OCIO + resize + bake) and the
+        PNG/EXR encode are submitted to a worker pool. The writer names
+        each file from its frame index, so out-of-order completion is
+        fine.
+
+        In-flight work is capped at ``2 × workers`` so the producer
+        can't race ahead and balloon RAM with decoded frames.
+
+        Returns ``(frames_written, canceled)``.
+        """
+        workers = self._worker_count()
+        max_inflight = max(2, workers * 2)
+        frames_written = 0
+        canceled = False
+        inflight: deque = deque()
+
+        def drain_one() -> None:
+            nonlocal frames_written
+            fut = inflight.popleft()
+            fut.result()  # re-raise any worker exception on this thread
+            frames_written += 1
+            if progress_cb is not None:
+                elapsed = max(1e-6, time.monotonic() - start)
+                progress_cb(
+                    frames_written, settings.total_frames,
+                    frames_written / elapsed,
+                )
+
+        with ThreadPoolExecutor(
+            max_workers=workers, thread_name_prefix="export",
+        ) as ex:
+            for i in range(settings.total_frames):
+                if self._cancel:
+                    log.info("[export] canceled at frame %d / %d",
+                             i, settings.total_frames)
+                    canceled = True
+                    break
+                source_frame = settings.in_frame + i
+                arr, finalized = self._renderer.decode_raw(
+                    source_frame, out_w, out_h,
+                )
+                inflight.append(ex.submit(
+                    self._finalize_and_write,
+                    arr, finalized, source_frame, i, out_w, out_h,
+                ))
+                while len(inflight) >= max_inflight:
+                    drain_one()
+            # Drain whatever is still in flight — including after a
+            # cancel, so already-submitted frames finish cleanly rather
+            # than leaving half-written files.
+            while inflight:
+                drain_one()
+        # A cancel can land mid-drain (the progress callback that flips
+        # the flag fires from ``drain_one``), after the producer loop
+        # has exited. Report cancellation whenever the flag is set.
+        return frames_written, canceled or self._cancel
+
+    def _finalize_and_write(
+        self,
+        arr,
+        finalized: bool,
+        source_frame: int,
+        frame_idx: int,
+        out_w: int,
+        out_h: int,
+    ) -> None:
+        """Worker task: finish the render tail and encode one frame."""
+        final = (
+            arr if finalized
+            else self._renderer.finalize(arr, source_frame, out_w, out_h)
+        )
+        self._writer.write_frame(final, frame_idx)
+
+    @staticmethod
+    def _worker_count() -> int:
+        return max(1, min(_EXPORT_MAX_WORKERS, os.cpu_count() or 4))
 
     # ------------------------------------------------------------------ Internals
 

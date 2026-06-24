@@ -147,7 +147,36 @@ class FrameRenderer:
         hole in the sequence.
         """
         out_w, out_h = output_size
+        arr, finalized = self.decode_raw(source_frame, out_w, out_h)
+        if finalized:
+            return arr
+        return self.finalize(arr, source_frame, out_w, out_h)
 
+    # ------------------------------------------------------------------ Split entry points
+
+    def decode_raw(
+        self, source_frame: int, out_w: int, out_h: int,
+    ) -> tuple[np.ndarray, bool]:
+        """Decode source pixels for ``source_frame`` WITHOUT the
+        OCIO / resize / annotation-bake tail.
+
+        Returns ``(arr, finalized)``:
+
+        * ``finalized=True`` — ``arr`` is already in the writer's
+          target dtype and must skip :meth:`finalize`. Only the
+          missing-frame substitute takes this branch: it is generated
+          at output size and must not be colour-transformed.
+        * ``finalized=False`` — ``arr`` is float RGBA awaiting
+          :meth:`finalize`.
+
+        Split out from :meth:`render` so the export engine can keep the
+        decode on a single producer thread — mandatory for the lone
+        PyAV :class:`VideoSource`, which is not thread-safe — while the
+        heavy :meth:`finalize` tail fans out across a worker pool.
+        Decode-only side effects (the lazy ``_missing_substitute_cache``
+        and the lazy ``_video_source`` open) therefore always run
+        single-threaded.
+        """
         # Compare path: blend layer A + layer B per the captured
         # CompareState before any of the existing OCIO / resize /
         # annotation steps. Each contributor brings its own channel
@@ -158,17 +187,14 @@ class FrameRenderer:
         if self._ctx.compare is not None:
             arr = self._render_compare(source_frame, out_w, out_h)
             if arr is not None:
-                return self._post_compose(
-                    arr, source_frame, out_w, out_h,
-                )
+                return arr, False
             # Fallthrough — at least one side is out of range, we
-            # render the active sequence's frame normally.
+            # decode the active sequence's frame normally.
 
         # Video source: decode through PyAV, not OIIO. ``source_frame``
         # is the 0-based video frame index.
         if self._is_video:
-            arr = self._ensure_rgba(self._decode_video_frame(source_frame))
-            return self._post_compose(arr, source_frame, out_w, out_h)
+            return self._ensure_rgba(self._decode_video_frame(source_frame)), False
 
         if source_frame not in self._frame_paths:
             policy = self._settings.missing_frame_policy
@@ -184,7 +210,7 @@ class FrameRenderer:
                 self._missing_substitute_cache = (
                     self._build_missing_substitute(out_w, out_h, policy)
                 )
-            return self._to_writer_dtype(self._missing_substitute_cache)
+            return self._to_writer_dtype(self._missing_substitute_cache), True
         selection = self._ctx.channel_selection
 
         # ----- 1. Read from disk in float32 (we'll do colour math) ----
@@ -200,7 +226,19 @@ class FrameRenderer:
             arr = read_frame(self._frame_paths[source_frame], as_half=False)
         # Always operate in 4-channel RGBA in our pipeline. Unpadded
         # source becomes RGBA with alpha=1.
-        arr = self._ensure_rgba(arr)
+        return self._ensure_rgba(arr), False
+
+    def finalize(
+        self, arr: np.ndarray, source_frame: int, out_w: int, out_h: int,
+    ) -> np.ndarray:
+        """Apply the OCIO / resize / annotation-bake / dtype tail.
+
+        Safe to call concurrently across distinct frames: the OCIO CPU
+        processor's ``applyRGB`` is const and re-entrant (and releases
+        the GIL), the resize builds its own OIIO ``ImageBuf``, and the
+        annotation bake builds its own ``QImage`` — no shared mutable
+        renderer state is written here.
+        """
         return self._post_compose(arr, source_frame, out_w, out_h)
 
     # ------------------------------------------------------------------ Compose-and-finalise tail
