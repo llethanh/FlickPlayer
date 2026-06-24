@@ -47,8 +47,8 @@
   <div class="ctas">
     <a
       class="btn btn-primary"
-      href="https://github.com/llethanh/FlickPlayer/releases/download/v1.8.7/FlickPlayer_v1.8.7.zip"
-    >Download for Windows — v1.8.7</a>
+      href="https://github.com/llethanh/FlickPlayer/releases/download/v1.8.8/FlickPlayer_v1.8.8.zip"
+    >Download for Windows — v1.8.8</a>
     <a class="btn btn-ghost" href="#features">See features →</a>
   </div>
   <p class="dl-note" style="margin-top: var(--s-sm); font-size: 0.9em; opacity: 0.6;">
@@ -743,23 +743,20 @@
 <section id="changelog" class="changelog-teaser">
   <h2>What's <span class="accent">new</span>.</h2>
   <p class="lede">
-    Latest release: <strong>v1.8.7</strong> — <strong>faster, cleaner
-    EXR review over the network</strong>. A heavy multichannel render
-    (a 48-channel, 326&nbsp;MB/frame Maya AOV dump) used to choke the
-    cache: the background channel pre-cache tried to decode every AOV
-    group, and since a single-part ZIPS EXR interleaves all AOVs per
-    scanline, each one re-read the whole 326&nbsp;MB file — flooding
-    the workers and exploding the RAM cache. Flick now skips the auto
-    AOV pre-cache above 8 channel groups (AOVs decode on demand), and
-    a new throttle caps concurrent <em>network</em> decodes so the
-    cache bar fills cleanly left-to-right from the playhead instead of
-    in scattered chunks — playback can start sooner, same total load
-    time. Tunable in <strong>Preferences → Network loading</strong>.
-    Plus: no more double network read on big EXRs, and the EXR decode
-    path now scales across the worker pool. Follows
-    <strong>v1.8.6</strong>'s video-layer export. The full history —
-    every public release, what changed, why it changed — lives on its
-    own page.
+    Latest release: <strong>v1.8.8</strong> — <strong>image-sequence
+    export, ~5× faster</strong>. Rendering a clip out to a PNG/EXR/TIFF
+    sequence used to grind one frame at a time: decode → ACES colour
+    math → resize → encode, all serial, pinned near 2&nbsp;fps no matter
+    how many cores you had. The decode has to stay in order (the video
+    decoder isn't thread-safe), but everything after it — the OCIO
+    transform and the file encode — is independent per frame and, it
+    turns out, releases the GIL. Flick now fans those stages across a
+    worker pool: measured <strong>2.0 → 10.2&nbsp;fps</strong> at 1080p
+    with the ACES display transform on. A 1219-frame export drops from
+    ~14&nbsp;min to ~3. Video-container output (MOV/MP4) stays serial,
+    as the encoder demands. Follows <strong>v1.8.7</strong>'s faster
+    network EXR review. The full history — every public release, what
+    changed, why it changed — lives on its own page.
   </p>
   <p style="margin-top: var(--s-md);">
     <a class="btn btn-primary" href="changelog.html">Read the full changelog →</a>
@@ -769,7 +766,7 @@
 <!-- ============================================================ Footer -->
 <footer id="download">
   <p>
-    <strong>Flick Player</strong> · open-source VFX sequence viewer · <a href="https://github.com/llethanh/FlickPlayer/releases/download/v1.8.7/FlickPlayer_v1.8.7.zip">Download v1.8.7</a> · <a href="https://github.com/llethanh/FlickPlayer">GitHub</a> · <a href="changelog.html">Changelog</a>
+    <strong>Flick Player</strong> · open-source VFX sequence viewer · <a href="https://github.com/llethanh/FlickPlayer/releases/download/v1.8.8/FlickPlayer_v1.8.8.zip">Download v1.8.8</a> · <a href="https://github.com/llethanh/FlickPlayer">GitHub</a> · <a href="changelog.html">Changelog</a>
   </p>
   <p style="margin-top: var(--s-sm);">
     Built with PySide6, OpenColorIO, OpenImageIO and PyAV. Designed for Windows.

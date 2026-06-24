@@ -44,6 +44,22 @@
 
     <article class="release">
       <div class="release-meta">
+        <span class="ver">v1.8.8</span>
+        <span class="date">2026-06-24</span>
+        <span class="tagline">Image-sequence export runs ~5× faster — the colour transform and file encode now fan out across a worker pool instead of grinding one frame at a time.</span>
+      </div>
+      <div class="release-body">
+        <h4>Export</h4>
+        <ul>
+          <li class="perf"><strong>Exporting to a PNG / EXR / TIFF sequence is now ~5× faster.</strong> The export loop ran fully serial — decode → ACES colour math → resize → encode, one frame at a time — so it sat near 2&nbsp;fps no matter how many cores the machine had. With the display transform on, two stages dominate: the CPU OCIO transform (~250&nbsp;ms/1080p frame) and the file encode (~335&nbsp;ms). Both are independent per frame, and both release the GIL — so Flick now keeps the decode on a single ordered thread (the video decoder isn't thread-safe) and fans the OCIO + resize + bake + encode tail out across a worker pool. Measured <strong>2.0&nbsp;→&nbsp;10.2&nbsp;fps</strong> at 1080p with the ACES display transform on; a 1219-frame export drops from ~14&nbsp;min to ~3. In-flight frames are bounded so RAM stays capped, and cancellation still leaves a clean, discardable partial sequence on disk.</li>
+          <li class="perf"><strong>PNG encode trimmed ~30%.</strong> Export now writes PNGs at zlib level 1 instead of OIIO's default level 6 — still fully lossless, ~3% larger files, noticeably faster to write for an intermediate that's usually handed straight to another tool.</li>
+          <li class="fix"><strong>Video-container output stays in order.</strong> MOV / MP4 export keeps the serial path — the encoder needs frames sequentially — and tiny exports below the pipeline depth also stay serial, so single-frame cancellation remains frame-exact.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <div class="release-meta">
         <span class="ver">v1.8.7</span>
         <span class="date">2026-06-19</span>
         <span class="tagline">Faster, cleaner EXR review over the network — AOV dumps no longer choke the cache, and the cache bar fills in order from the playhead.</span>
