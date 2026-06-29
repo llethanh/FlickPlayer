@@ -47,8 +47,8 @@
   <div class="ctas">
     <a
       class="btn btn-primary"
-      href="https://github.com/llethanh/FlickPlayer/releases/download/v1.8.8/FlickPlayer_v1.8.8.zip"
-    >Download for Windows — v1.8.8</a>
+      href="https://github.com/llethanh/FlickPlayer/releases/download/v1.8.9/FlickPlayer_v1.8.9.zip"
+    >Download for Windows — v1.8.9</a>
     <a class="btn btn-ghost" href="#features">See features →</a>
   </div>
   <p class="dl-note" style="margin-top: var(--s-sm); font-size: 0.9em; opacity: 0.6;">
@@ -743,20 +743,20 @@
 <section id="changelog" class="changelog-teaser">
   <h2>What's <span class="accent">new</span>.</h2>
   <p class="lede">
-    Latest release: <strong>v1.8.8</strong> — <strong>image-sequence
-    export, ~5× faster</strong>. Rendering a clip out to a PNG/EXR/TIFF
-    sequence used to grind one frame at a time: decode → ACES colour
-    math → resize → encode, all serial, pinned near 2&nbsp;fps no matter
-    how many cores you had. The decode has to stay in order (the video
-    decoder isn't thread-safe), but everything after it — the OCIO
-    transform and the file encode — is independent per frame and, it
-    turns out, releases the GIL. Flick now fans those stages across a
-    worker pool: measured <strong>2.0 → 10.2&nbsp;fps</strong> at 1080p
-    with the ACES display transform on. A 1219-frame export drops from
-    ~14&nbsp;min to ~3. Video-container output (MOV/MP4) stays serial,
-    as the encoder demands. Follows <strong>v1.8.7</strong>'s faster
-    network EXR review. The full history — every public release, what
-    changed, why it changed — lives on its own page.
+    Latest release: <strong>v1.8.9</strong> — <strong>load a render in
+    progress as a snapshot</strong>. Opening a sequence that's still
+    being written used to grow the timeline under your cursor — the
+    player watched the folder and pulled in every new frame the instant
+    it landed. Flick now loads the sequence as a <em>snapshot</em> at
+    open time and holds it there. When you want the frames rendered
+    since, you ask for them: right-click a layer → <strong>Reload from
+    disk</strong> (keeps what's cached, adds the new frames), or
+    <em>Reload from disk (force)</em> to re-read everything — same as
+    Ctrl+R / Ctrl+Shift+R. The old hands-free auto-reload is still
+    there as a toggle in <strong>Preferences → General → Loading</strong>,
+    off by default. Follows <strong>v1.8.8</strong>'s ~5× faster
+    image-sequence export. The full history — every public release,
+    what changed, why it changed — lives on its own page.
   </p>
   <p style="margin-top: var(--s-md);">
     <a class="btn btn-primary" href="changelog.html">Read the full changelog →</a>
@@ -766,7 +766,7 @@
 <!-- ============================================================ Footer -->
 <footer id="download">
   <p>
-    <strong>Flick Player</strong> · open-source VFX sequence viewer · <a href="https://github.com/llethanh/FlickPlayer/releases/download/v1.8.8/FlickPlayer_v1.8.8.zip">Download v1.8.8</a> · <a href="https://github.com/llethanh/FlickPlayer">GitHub</a> · <a href="changelog.html">Changelog</a>
+    <strong>Flick Player</strong> · open-source VFX sequence viewer · <a href="https://github.com/llethanh/FlickPlayer/releases/download/v1.8.9/FlickPlayer_v1.8.9.zip">Download v1.8.9</a> · <a href="https://github.com/llethanh/FlickPlayer">GitHub</a> · <a href="changelog.html">Changelog</a>
   </p>
   <p style="margin-top: var(--s-sm);">
     Built with PySide6, OpenColorIO, OpenImageIO and PyAV. Designed for Windows.

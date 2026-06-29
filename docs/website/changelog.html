@@ -44,6 +44,22 @@
 
     <article class="release">
       <div class="release-meta">
+        <span class="ver">v1.8.9</span>
+        <span class="date">2026-06-29</span>
+        <span class="tagline">Load a render in progress as a snapshot — the timeline no longer grows under your cursor; you pull new frames on demand with Reload from disk.</span>
+      </div>
+      <div class="release-body">
+        <h4>Loading</h4>
+        <ul>
+          <li class="new"><strong>A loaded sequence is now a snapshot at open time.</strong> Opening a sequence that a render was still writing used to grow the timeline live — a file-system watcher fired a smart re-scan ~200&nbsp;ms after every write burst, so the frame range kept extending under the cursor while you were trying to review. That auto-grow is now <strong>off by default</strong>: the sequence is captured at load time and held there, the way OpenRV or Nuke hold a loaded clip.</li>
+          <li class="new"><strong>Reload from disk, on demand.</strong> Right-click a layer → <strong>Reload from disk</strong> to pull the frames rendered since you loaded — a smart re-scan that keeps unchanged frames hot in RAM, adds the new ones, and re-decodes any that changed (mtime diff). <strong>Reload from disk (force)</strong> drops every cached frame and re-reads the lot. Both mirror the existing Ctrl+R / Ctrl+Shift+R shortcuts, now surfaced in the right-click menu where the gesture is most natural.</li>
+          <li class="fix"><strong>The old hands-free auto-reload is still available as a toggle.</strong> <strong>Preferences → General → Loading → "Auto-reload sequences when source files change on disk"</strong> brings back the watch-and-grow behaviour for anyone who relied on it. Off by default. The watcher keeps running either way and the toggle is read live, so flipping it takes effect immediately — no restart.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <div class="release-meta">
         <span class="ver">v1.8.8</span>
         <span class="date">2026-06-24</span>
         <span class="tagline">Image-sequence export runs ~5× faster — the colour transform and file encode now fan out across a worker pool instead of grinding one frame at a time.</span>
