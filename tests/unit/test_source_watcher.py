@@ -186,3 +186,50 @@ class TestDebounce:
             assert fires["count"] == 0
         finally:
             w.stop()  # idempotent
+
+
+# ============================================================================
+# App gate: auto-reload preference controls whether a fire reloads
+# ============================================================================
+
+
+class TestAutoReloadGate:
+    """`_on_source_watcher_fired` only triggers a reload when the
+    `auto_reload_on_source_change` preference is on. Off (default) =
+    snapshot: the watcher still fires, but the handler no-ops."""
+
+    def _fake_app(self, *, auto: bool, has_seq: bool = True):
+        from types import SimpleNamespace
+
+        calls = {"reload": 0}
+        app = SimpleNamespace(
+            _prefs=SimpleNamespace(auto_reload_on_source_change=auto),
+            _controller=SimpleNamespace(
+                sequence=object() if has_seq else None,
+            ),
+            _on_reload_sequence=lambda: calls.__setitem__(
+                "reload", calls["reload"] + 1,
+            ),
+        )
+        return app, calls
+
+    def test_off_does_not_reload(self) -> None:
+        from img_player.app import ImgPlayerApp
+
+        app, calls = self._fake_app(auto=False)
+        ImgPlayerApp._on_source_watcher_fired(app)
+        assert calls["reload"] == 0
+
+    def test_on_triggers_reload(self) -> None:
+        from img_player.app import ImgPlayerApp
+
+        app, calls = self._fake_app(auto=True)
+        ImgPlayerApp._on_source_watcher_fired(app)
+        assert calls["reload"] == 1
+
+    def test_on_but_no_sequence_does_not_reload(self) -> None:
+        from img_player.app import ImgPlayerApp
+
+        app, calls = self._fake_app(auto=True, has_seq=False)
+        ImgPlayerApp._on_source_watcher_fired(app)
+        assert calls["reload"] == 0

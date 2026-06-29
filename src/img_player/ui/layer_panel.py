@@ -869,6 +869,13 @@ class LayerPanel(QFrame):  # type: ignore[misc]
     # stay attached. Carries ``(layer_id, picked_path_as_str)``.
     replace_source_requested = Signal(str, str)
 
+    # Reload a layer's source from disk — re-scan the sequence folder to
+    # pull frames written since load (a render in progress). Carries
+    # ``(layer_id, force)``: ``force=False`` keeps unchanged frames in
+    # RAM and only re-decodes changed ones (smart, = Ctrl+R); ``True``
+    # drops every cached frame and re-reads all (= Ctrl+Shift+R).
+    reload_source_requested = Signal(str, bool)
+
     def __init__(
         self,
         stack: LayerStack,
@@ -1478,6 +1485,22 @@ class LayerPanel(QFrame):  # type: ignore[misc]
         act_replace.triggered.connect(
             lambda: self._on_row_replace_source_requested(layer_id),
         )
+
+        # Reload from disk — re-scan the sequence folder so frames
+        # written after load (a render in progress) show up. A loaded
+        # sequence is a snapshot by default; this is the explicit
+        # "pick up what's been rendered since" gesture. Image
+        # sequences only — a video container has no per-frame folder
+        # to re-glob.
+        if not layer.is_video:
+            act_reload = menu.addAction("Reload from disk")
+            act_reload.triggered.connect(
+                lambda: self.reload_source_requested.emit(layer_id, False),
+            )
+            act_reload_force = menu.addAction("Reload from disk (force)")
+            act_reload_force.triggered.connect(
+                lambda: self.reload_source_requested.emit(layer_id, True),
+            )
 
         menu.addSeparator()
 

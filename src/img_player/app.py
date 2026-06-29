@@ -960,6 +960,14 @@ class ImgPlayerApp:
                 self._on_replace_source_requested,
             )
 
+            # Right-click "Reload from disk" — re-scan the sequence
+            # folder for frames written since load (a render in
+            # progress). Routes to the same smart / force reload as
+            # Ctrl+R / Ctrl+Shift+R.
+            panel.reload_source_requested.connect(
+                self._on_reload_source_requested,
+            )
+
         # Contact-sheet per-tile scrub: the GL viewport emits
         # ``(tile_idx, delta_frames)`` on each mouse-move during a
         # left-button drag while contact-sheet grid mode is active.
@@ -4159,14 +4167,35 @@ class ImgPlayerApp:
 
         Squashed to a no-op when no sequence is loaded (e.g. the
         watcher fires during teardown while we still have a stale
-        directory in the list).
+        directory in the list), or when auto-reload is off (the
+        default — a loaded sequence is a snapshot; the user reloads
+        explicitly). The watcher keeps running either way; gating here
+        means the Preferences toggle takes effect live without
+        re-wiring the watch list.
         """
+        if not self._prefs.auto_reload_on_source_change:
+            return
         if self._controller.sequence is None:
             return
         try:
             self._on_reload_sequence()
         except Exception:  # pragma: no cover — defensive
             log.exception("auto-reload from source watcher failed (non-fatal)")
+
+    def _on_reload_source_requested(self, layer_id: str, force: bool) -> None:
+        """Right-click "Reload from disk" on a layer row.
+
+        Routes to the same smart / force reload as Ctrl+R /
+        Ctrl+Shift+R. ``layer_id`` identifies the row the user clicked;
+        the reload operates on the controller's active sequence (the
+        single-sequence review case), same scope as the keyboard
+        shortcuts.
+        """
+        del layer_id  # reload targets the active sequence, as Ctrl+R does
+        if force:
+            self._on_force_reload_sequence()
+        else:
+            self._on_reload_sequence()
 
     def _on_reload_sequence(self) -> None:
         """Reload (Ctrl+R / 🔄): smart re-scan.

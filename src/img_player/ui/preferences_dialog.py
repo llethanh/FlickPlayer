@@ -163,7 +163,52 @@ class _GeneralPage(QWidget):
             ),
         )
 
+        # ---- Loading behaviour -----------------------------------------
+        loading_title = QLabel("Loading")
+        loading_title.setStyleSheet(
+            "font-size: 13px; font-weight: 600; margin-top: 8px;"
+        )
+        layout.addWidget(loading_title)
+
+        self._auto_reload_chk = QCheckBox(
+            "Auto-reload sequences when source files change on disk"
+        )
+        self._auto_reload_chk.setChecked(
+            bool(self._prefs.auto_reload_on_source_change)
+        )
+        self._auto_reload_chk.setToolTip(
+            "Off (default): a loaded sequence is a snapshot at load "
+            "time — frames written afterwards (a render in progress) "
+            "are picked up only when you choose Reload from disk "
+            "(right-click a layer, or Ctrl+R).\n"
+            "On: Flick watches the source folders and re-scans "
+            "automatically ~200 ms after each write burst, so "
+            "re-rendered frames appear hands-free."
+        )
+        layout.addWidget(self._auto_reload_chk)
+
+        hint = QLabel(
+            "When off, use right-click → Reload from disk (or Ctrl+R) "
+            "to pull frames rendered since you loaded the sequence."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #9aa0a6; font-size: 11px;")
+        layout.addWidget(hint)
+
         layout.addStretch(1)
+
+    # ------------------------------------------------------------------ Apply
+
+    def apply(self) -> bool:
+        """Persist the loading toggle. Returns True if it changed.
+
+        Read live by ``_on_source_watcher_fired`` so the new value
+        takes effect immediately — no restart, no re-wiring."""
+        new_val = self._auto_reload_chk.isChecked()
+        if new_val == bool(self._prefs.auto_reload_on_source_change):
+            return False
+        self._prefs.auto_reload_on_source_change = new_val
+        return True
 
     # ------------------------------------------------------------------ Helpers
 

@@ -984,6 +984,26 @@ class Preferences:
     def network_staging_budget_gb(self, value: int) -> None:
         _set_user_pref("network_staging.budget_gb", max(0, int(value)))
 
+    # ------------------------------------------------------------------ Source auto-reload
+
+    @property
+    def auto_reload_on_source_change(self) -> bool:
+        """Auto-reload a loaded sequence when its source files change
+        on disk (a render writing new / re-rendered frames).
+
+        Default ``False`` — a loaded sequence is a **snapshot** at load
+        time. Watching a render-in-progress and growing the timeline
+        under the user's cursor is usually unwanted; instead the user
+        explicitly picks **Reload from disk** (right-click, or Ctrl+R)
+        to pull frames written since. Flip ``True`` for the legacy
+        behaviour: a :class:`SourceWatcher` fires a smart re-scan ~200 ms
+        after each write burst so re-rendered EXRs appear hands-free."""
+        return _layered_bool("source.auto_reload", False)
+
+    @auto_reload_on_source_change.setter
+    def auto_reload_on_source_change(self, value: bool) -> None:
+        _set_user_pref("source.auto_reload", bool(value))
+
     # ------------------------------------------------------------------ Video cache
 
     @property

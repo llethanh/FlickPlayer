@@ -286,3 +286,47 @@ class TestLayeredPreferences:
             )
         finally:
             page.deleteLater()
+
+
+# ============================================================================
+# Source auto-reload toggle (snapshot-by-default)
+# ============================================================================
+
+
+class TestAutoReloadPref:
+    def test_default_is_snapshot_off(
+        self, qtbot, isolated_qsettings, isolated_stores,
+    ) -> None:
+        from img_player.preferences import Preferences
+
+        # A loaded sequence is a snapshot by default — no auto-grow.
+        assert Preferences().auto_reload_on_source_change is False
+
+    def test_set_round_trips(
+        self, qtbot, isolated_qsettings, isolated_stores,
+    ) -> None:
+        from img_player.preferences import Preferences
+
+        prefs = Preferences()
+        prefs.auto_reload_on_source_change = True
+        # Fresh instance reads the persisted value.
+        assert Preferences().auto_reload_on_source_change is True
+
+    def test_general_page_apply_persists_toggle(
+        self, qtbot, isolated_qsettings, isolated_stores,
+    ) -> None:
+        from img_player.preferences import Preferences
+        from img_player.ui.preferences_dialog import _GeneralPage
+
+        page = _GeneralPage(Preferences())
+        try:
+            # Pristine: default off, apply reports no change.
+            assert page.apply() is False
+            # User ticks the box.
+            page._auto_reload_chk.setChecked(True)
+            assert page.apply() is True
+            assert Preferences().auto_reload_on_source_change is True
+            # Idempotent: a second apply with no further edit is a no-op.
+            assert page.apply() is False
+        finally:
+            page.deleteLater()
