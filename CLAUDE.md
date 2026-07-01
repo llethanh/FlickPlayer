@@ -49,12 +49,23 @@ conda activate img_player
 pytest tests/
 ```
 
-**Toute la suite doit passer au vert** (971 tests, ~20 s en local).
-Pas de deselects pré-existants : la dette d'anciens tests obsolètes
-qui traînait jusqu'à mai 2026 a été nettoyée dans le pass
-"Mock-fragility + behavior-drift" — voir le commit `tests: revive 36
-broken tests` pour le détail (FrameCache duck-typing + master-frame
-vs source-frame confusion + obsolete UI feature removed).
+**~1261 tests**, ~40 s en local. La suite doit passer au vert **sauf
+3 échecs pré-existants connus** (juillet 2026), sans rapport avec le
+travail courant — ne pas paniquer :
+
+- `test_reader.py::test_read_exr_returns_rgba` + `test_read_multichannel_exr_default_is_rgba`
+  attendent 4 canaux (RGBA) mais le reader renvoie 3 (RGB) **par
+  design** — commit `ae8998f perf(io): default to RGB over RGBA for
+  8x cold-decode speedup`. L'alpha se lit à la demande via le groupe
+  RGBA du menu canaux. Tests périmés, pas un bug.
+- `test_burnin_renderer.py::...test_disabled_bar_records_nothing`
+  (top vs bottom) — pré-existant.
+- `test_burnin_overlay.py` : erreur de collection (`Signal` non
+  importé) — pré-existant, bloque la collecte de ce fichier seul
+  (`pytest --ignore=tests/unit/test_burnin_overlay.py` pour le reste).
+
+Lancer pytest depuis l'env conda activé (sinon PyAV/OIIO DLLs
+manquantes) — `FlickPlayer.bat` ou `conda activate img_player` d'abord.
 
 ## Builder un bundle
 
@@ -74,44 +85,69 @@ GitHub via `gh release create` — plus de copie vers Drive/dist/.
 
 Pour wrap en installer Inno Setup voir `installer/README.md`.
 
-## État courant (mai 2026)
+## Workflow de release (quand user dit "release", "bump une version", "lance tout")
 
-- **v1.5.13** sur main — release "Smoother playback + code health"
-- **Perf hot path (Tier 1)** : OpenGL uniform-location caching +
-  LUT bind-once → paint mean −25 % (6 802 → 5 089 µs), paint max
-  −92 % (593 → 47 ms, plus de spikes visibles). OCIO shader bundle
-  LRU. Composite math `np.multiply(out=tmp)` scratch buffer.
-  Scanner `os.scandir`. Lazy imports hot-path hoistés.
-- **Refacto structurel (Tier 2)** : 180-LOC `_evict_if_over_budget`
-  split en 25 + 5 helpers ; `_on_frame_changed` + `_refresh_after_stack_change`
-  splittés en helpers nommés ; `cache/_common.py` extrait ; canonical
-  `enrich_with_header` ; `_signature_token` helper.
-- **Dette de tests purgée** : suite 971/0/0 (avant : 20 failed,
-  16 errors, 3 deselected). Causes racines : Mock `spec=FrameCache`
-  rejetait nouvelles méthodes ; master-frame vs source-frame
-  confusion ; comportement changé non répercuté ; features UI
-  obsolètes.
-- Disk cache 3-tiers (RAM → disque lz4+half-float → source decode)
-  livré v1.5.5. Survit close/reopen. Pre-paint timeline en orange
-  clair pour les frames disponibles disque.
-- **Disk cache roadmap E + F livrée** :
-  E1 shutdown drain 10s + FlushIndicator, E2 sweep blobs orphelins,
-  E3 auto-reload via QFileSystemWatcher, E4 PRAGMA user_version
-  migration, F lock cross-process + read-only fallback.
-- **Perf disk-cache** : format v2 struct-header (1.5× faster) +
-  v3 no-compression option pour NVMe rapides (5.3× faster, toggle
-  dans Preferences > Disk cache > Storage).
-- **3-tier prefs system** (v1.5.8+) : user TOML > site TOML >
-  hardcoded. `flick.toml` à côté de `FlickPlayer.exe` ou dans
-  `%APPDATA%\FlickPlayer\flick.toml`.
-- **8 builtin OCIO configs** (v1.5.10) : ACES 1.3 / 2.0, CG / Studio,
-  default ACES 1.3 matchant Nuke / Maya / OpenRV.
-- Lecture vidéo (mp4/mov/mkv/m4v/avi) + audio sounddevice opérationnels
-- Toggles M/S par layer pour mute/solo audio
-- PlayerController en mode wall-clock (anti-drift A/V)
-- PyAV + FFmpeg DLLs bundlés via `img_player.spec`
-- Inno Setup template prêt dans `installer/`
-- Site `docs/website/index.html` à jour avec hero / features / changelog
+"**version mineure**" / "**une version**" = bump **PATCH** (3e chiffre),
+pas le 2e. Séquence complète, tout depuis `C:\dev\FlickPlayer\` :
+
+1. `git pull --ff-only origin main`.
+2. Bump la version dans **2 fichiers** : `pyproject.toml` (`version =`)
+   + `src/img_player/__init__.py` (`__version__ =`).
+3. Regen le splash : `python tools/regen_splash.py` (bake la version
+   dans `src/img_player/assets/splash.png` — sinon splash périmé).
+4. Website `docs/website/` : `index.html` (bouton download href +
+   label + lede "Latest release") et `changelog.html` (nouveau bloc
+   `<article class="release">` en TÊTE, classes `new`/`fix`/`perf`).
+5. Commit "release: vX.Y.Z" + `git push origin main`.
+6. Build : tuer `FlickPlayer.exe`, `rmdir /s /q build` (**garder
+   `dist/`** — chaque version y coexiste), puis
+   `cmd /c "C:\dev\FlickPlayer\build_exe.bat < nul"`. **Vérifier que
+   le dossier produit = `FlickPlayer_vX.Y.Z`** (piège cache PyInstaller
+   stale → shippe sous l'ancien nom). Sortie : dossier + `.zip` ~136 MB.
+7. `gh release create vX.Y.Z dist\FlickPlayer_vX.Y.Z.zip --target main
+   --title "..." --notes "..."`. Vérifier l'URL asset (HTTP 200).
+
+Pièges commit multi-lignes en PowerShell : les here-strings `@'...'@`
+et les caractères `>` / `"` cassent le parsing → écrire le message
+dans un fichier et `git commit -F <fichier>`. Footer commit :
+`Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
+
+## État courant (juillet 2026) — **v1.8.9** sur main
+
+Historique récent (v1.8.4 → v1.8.9), toutes releasées sur GitHub :
+
+- **v1.8.9 — snapshot-on-load + Reload manuel.** Une séquence chargée
+  est un **snapshot** à l'instant du load : plus d'auto-grow quand un
+  rendu écrit des frames. `SourceWatcher` (QFileSystemWatcher) tourne
+  toujours mais `_on_source_watcher_fired` est gated sur la pref
+  `source.auto_reload` (**défaut False**, `Preferences → General →
+  Loading`). Reload à la demande : clic-droit layer → "Reload from
+  disk" (smart) / "(force)", = Ctrl+R / Ctrl+Shift+R.
+- **v1.8.8 — export séquence d'images ~5× plus rapide.** Le tail
+  post-decode (OCIO + resize + bake + encode) est fanned out sur un
+  `ThreadPoolExecutor` dans `export/engine.py::_run_parallel` (les 2
+  étapes lourdes libèrent le GIL). Decode reste séquentiel (le
+  `VideoSource` PyAV n'est pas thread-safe). Video output (mov/mp4)
+  + petits exports restent serial. Mesuré 1080p+ACES : 2.0 → 10.2 fps.
+  PNG `compressionLevel=1`.
+- **v1.8.6/1.8.7** — export vidéo via PyAV (plus OIIO), EXR réseau
+  plus rapide (AOV prefetch throttle + OIIO channel-subset GIL-free).
+- **EXR reader = RGB par défaut** (3 canaux), pas RGBA — perf, alpha
+  à la demande. Commit `ae8998f`. (Voir note tests plus haut.)
+- **Politique d'éviction cache** (choix user, ne pas re-proposer FIFO
+  pour les images) : `VideoSource` = FIFO strict ; `MasterFrameCache`
+  (images) = score distance-au-playhead, fenêtre contiguë, timeline
+  start vidé en premier.
+
+Socle (livré avant v1.8.4, toujours valide) : disk cache 3-tiers
+(RAM → lz4+half-float → decode), 3-tier prefs (user TOML > site TOML >
+hardcodé), 8 OCIO builtin (défaut ACES 1.3 CG), lecture vidéo+audio,
+PlayerController wall-clock anti-drift, PyAV+FFmpeg bundlés via
+`img_player.spec`, Inno Setup dans `installer/`, site + changelog à jour.
+
+**graphify** : graphe de connaissance dans `graphify-out/` (commité,
+trackée). Rebuild = `/graphify` (ou skill graphify). Dernier : 5974
+nodes / 295 communities, god node `ImgPlayerApp`.
 
 ## Mémoire transverse (~/.claude/MEMORY.md)
 
